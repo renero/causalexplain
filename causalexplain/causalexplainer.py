@@ -353,7 +353,7 @@ class GraphDiscovery:
             print(metrics)
 
 
-    def export(self, output_file: str) -> str:
+    def export(self, output_file: str):
         """
         This method exports the DAG to a DOT file.
 
