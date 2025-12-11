@@ -17,6 +17,6 @@
     "python.testing.pytestEnabled": true,
     "editor.wordWrap": "off",
     "esbonio.sphinx.confDir": "",
-    "python.languageServer": "None",
+    "python.languageServer": "Pylance",
     "python.REPL.enableREPLSmartSend": false
 }
