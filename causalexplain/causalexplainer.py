@@ -6,7 +6,7 @@ import os
 import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Tuple
+from typing import List, Tuple, Optional, cast
 
 from causalexplain.common import (
     DEFAULT_REGRESSORS,
@@ -20,10 +20,10 @@ from causalexplain.metrics.compare_graphs import evaluate_graph
 class GraphDiscovery:
     def __init__(
         self,
-        experiment_name: str = None,
+        experiment_name: Optional[str] = None,
         model_type: str = 'rex',
-        csv_filename: str = None,
-        true_dag_filename: str = None,
+        csv_filename: Optional[str] = None,
+        true_dag_filename: Optional[str] = None,
         verbose: bool = False,
         seed: int = 42
     ) -> None:
@@ -41,30 +41,17 @@ class GraphDiscovery:
             verbose (bool, optional): Whether to print verbose output.
             seed (int, optional): The random seed for reproducibility.
         """
-        # Normalize empty/whitespace strings to None
-        experiment_name = experiment_name.strip() if isinstance(
-            experiment_name, str) else experiment_name
-        experiment_name = None if experiment_name == "" else experiment_name
-        csv_filename = csv_filename.strip() if isinstance(
-            csv_filename, str) else csv_filename
-        csv_filename = None if csv_filename == "" else csv_filename
+        normalized_experiment = self._normalize_optional_str(experiment_name)
+        normalized_csv = self._normalize_optional_str(csv_filename)
 
-        if (experiment_name is None and csv_filename is not None) or \
-                (experiment_name is not None and csv_filename is None):
-            raise ValueError(
-                f"Both 'experiment_name' and 'csv_filename' must be provided together, "
-                f"or none of them. Got experiment_name='{experiment_name}', "
-                f"csv_filename='{csv_filename}'")
-        elif experiment_name is None and csv_filename is None:
-            self.experiment_name = None
-            self.estimator = 'rex'
-            self.csv_filename = None
-            self.dot_filename = None
-            self.verbose = False
-            self.seed = 42
+        if normalized_experiment is None and normalized_csv is None:
+            self._init_empty_state(seed)
             return
 
-        self.experiment_name = experiment_name
+        self._validate_experiment_inputs(normalized_experiment, normalized_csv)
+        csv_filename = cast(str, normalized_csv)
+
+        self.experiment_name = normalized_experiment
         self.estimator = model_type
         self.csv_filename = csv_filename
         self.dot_filename = true_dag_filename
@@ -75,26 +62,60 @@ class GraphDiscovery:
         self.output_path = os.getcwd()
         self.trainer = {}
 
-        # Read the reference graph
-        if true_dag_filename is not None:
-            self.ref_graph = utils.graph_from_dot_file(true_dag_filename)
-        else:
-            self.ref_graph = None
+        self.ref_graph = self._load_reference_graph(true_dag_filename)
+        self.dataset_name, self.data_columns = self._load_dataset_metadata(csv_filename)
+        self.regressors = self._select_regressors()
 
-        # assert that the data file exists
+    @staticmethod
+    def _normalize_optional_str(value: Optional[str]) -> Optional[str]:
+        """Strip whitespace and normalize empty strings to None for optional values."""
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        return value or None
+
+    def _init_empty_state(self, seed: int) -> None:
+        """Initialize the object when no experiment name or CSV is provided."""
+        self.experiment_name = None
+        self.estimator = 'rex'
+        self.csv_filename = None
+        self.dot_filename = None
+        self.verbose = False
+        self.seed = seed
+
+    def _validate_experiment_inputs(
+        self,
+        experiment_name: Optional[str],
+        csv_filename: Optional[str]
+    ) -> None:
+        """Ensure experiment and CSV inputs are provided together."""
+        if experiment_name is None or csv_filename is None:
+            raise ValueError(
+                "Both 'experiment_name' and 'csv_filename' must be provided together."
+            )
+
+    def _load_reference_graph(self, true_dag_filename: Optional[str]):
+        """Load the reference DAG from disk if a path is provided."""
+        if true_dag_filename is None:
+            return None
+        return utils.graph_from_dot_file(true_dag_filename)
+
+    def _load_dataset_metadata(self, csv_filename: str):
+        """Load dataset name and column metadata from the CSV file."""
         if not os.path.exists(csv_filename):
             raise FileNotFoundError(f"Data file {csv_filename} not found")
-        self.dataset_name = os.path.splitext(os.path.basename(csv_filename))[0]
 
-        # Read the column names of the data.
+        dataset_name = os.path.splitext(os.path.basename(csv_filename))[0]
         data = pd.read_csv(csv_filename)
-        self.data_columns = list(data.columns)
+        data_columns = list(data.columns)
         del data
+        return dataset_name, data_columns
 
+    def _select_regressors(self):
+        """Select regressors based on the estimator type."""
         if self.estimator == 'rex':
-            self.regressors = DEFAULT_REGRESSORS
-        else:
-            self.regressors = [self.estimator]
+            return DEFAULT_REGRESSORS
+        return [self.estimator]
 
     def create_experiments(self) -> dict:
         """
@@ -110,13 +131,18 @@ class GraphDiscovery:
         Returns:
             dict: A dictionary of Experiment objects
         """
+        if self.csv_filename is None:
+            raise ValueError("CSV filename is required to create experiments.")
+
+        csv_filename = cast(str, self.csv_filename)
+        dot_filename = cast(str, self.dot_filename)
         self.trainer = {}
         for model_type in self.regressors:
             trainer_name = f"{self.dataset_name}_{model_type}"
             self.trainer[trainer_name] = Experiment(
                 experiment_name=self.dataset_name,
-                csv_filename=self.csv_filename,
-                dot_filename=self.dot_filename,
+                csv_filename=csv_filename,
+                dot_filename=dot_filename,
                 model_type=model_type,
                 input_path=self.dataset_path,
                 output_path=self.output_path,
@@ -126,9 +152,9 @@ class GraphDiscovery:
 
     def fit_experiments(
         self,
-        hpo_iterations: int = None,
-        bootstrap_iterations: int = None,
-        prior: List[List[str]] = None,
+        hpo_iterations: Optional[int] = None,
+        bootstrap_iterations: Optional[int] = None,
+        prior: Optional[List[List[str]]] = None,
         **kwargs
     ) -> None:
         """
@@ -163,7 +189,7 @@ class GraphDiscovery:
             if not trainer_name.endswith("_rex"):
                 experiment.fit_predict(estimator=self.estimator, **xargs)
 
-    def combine_and_evaluate_dags(self, prior: List[List[str]] = None) -> Experiment:
+    def combine_and_evaluate_dags(self, prior: Optional[List[List[str]]] = None) -> Experiment:
         """
         Retrieve the DAG from the Experiment objects.
 
@@ -224,9 +250,9 @@ class GraphDiscovery:
 
     def run(
             self,
-            hpo_iterations: int = None,
-            bootstrap_iterations: int = None,
-            prior: List[List[str]] = None,
+            hpo_iterations: Optional[int] = None,
+            bootstrap_iterations: Optional[int] = None,
+            prior: Optional[List[List[str]]] = None,
             **kwargs):
         """
         Run the experiment.
@@ -343,20 +369,18 @@ class GraphDiscovery:
         str
             The path to the output DOT file.
         """
-        saved_as = utils.graph_to_dot_file(
+        utils.graph_to_dot_file(
             self.trainer[list(self.trainer.keys())[-1]].dag, output_file)
-
-        return saved_as
 
     def plot(
         self,
         show_metrics: bool = False,
         show_node_fill: bool = True,
-        title: str = None,
-        ax: plt.Axes = None,
+        title: Optional[str] = None,
+        ax: Optional[plt.Axes] = None,
         figsize: Tuple[int, int] = (5, 5),
         dpi: int = 75,
-        save_to_pdf: str = None,
+        save_to_pdf: Optional[str] = None,
         layout: str = 'dot',
         **kwargs
     ):
@@ -390,9 +414,9 @@ class GraphDiscovery:
             ref_graph = None
         plot.dag(
             graph=model.dag, reference=ref_graph, show_metrics=show_metrics,
-            show_node_fill=show_node_fill, title=title, ax=ax,
-            figsize=figsize, dpi=dpi, save_to_pdf=save_to_pdf, layout=layout,
-            **kwargs)
+            show_node_fill=show_node_fill, title=title or "",
+            ax=ax, figsize=figsize, dpi=dpi, save_to_pdf=save_to_pdf,
+            layout=layout, **kwargs)
 
     @property
     def model(self):

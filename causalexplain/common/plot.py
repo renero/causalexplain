@@ -12,7 +12,7 @@ This file includes all the plot methods for the causal graph
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
 from copy import copy
-from typing import Any, Callable, List, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -649,15 +649,15 @@ def hierarchies(hierarchies, threshold=0.5, **kwargs):
 
 def dag(
         graph: nx.DiGraph,
-        reference: nx.DiGraph = None,
-        root_causes: list = None,
+        reference: Optional[nx.DiGraph] = None,
+        root_causes: Optional[list] = None,
         show_metrics: bool = False,
         show_node_fill: bool = True,
-        title: str = None,
-        ax: plt.Axes = None,
+        title: Optional[str] = None,
+        ax: Optional[plt.Axes] = None,
         figsize: Tuple[int, int] = (5, 5),
         dpi: int = 75,
-        save_to_pdf: str = None,
+        save_to_pdf: Optional[str] = None,
         layout: str = "dot",
         **kwargs):
     """
@@ -1050,11 +1050,11 @@ def _plot_discrepancy(x, y, s, target_name, parent_name, r, ax, regression_line,
 
 def deprecated_dags(
         graph: nx.DiGraph,
-        reference: nx.DiGraph = None,
-        names: List[str] = None,
+        reference: Optional[nx.DiGraph] = None,
+        names: Optional[List[str]] = None,
         figsize: Tuple[int, int] = (10, 5),
         dpi: int = 75,
-        save_to_pdf: str = None,
+        save_to_pdf: Optional[str] = None,
         **kwargs):
     """
     Compare two graphs using dot.
