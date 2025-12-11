@@ -17,9 +17,13 @@
 import argparse
 import os
 import time
+from typing import Optional
+
+import networkx as nx
 
 import pandas as pd
-from causalexplainer import GraphDiscovery
+from .causalexplainer import GraphDiscovery
+from causalexplain.common.notebook import Experiment
 
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
@@ -230,14 +234,15 @@ def show_run_values(run_values):
     print("-----")
 
 
-def main():
-    header_()
-    args = parse_args()
-    run_values = check_args_validity(args)
-    start_time = time.time()
-
-    # Create a new instance of GraphDiscovery
-    discoverer = GraphDiscovery(
+def _init_discoverer(run_values: dict) -> GraphDiscovery:
+    """
+    Initialize the GraphDiscovery object.
+    Args:
+        run_values (dict): A dictionary of run values
+    Returns:
+        GraphDiscovery: The initialized GraphDiscovery object
+    """
+    return GraphDiscovery(
         experiment_name=run_values['dataset_name'],
         model_type=run_values['estimator'],
         csv_filename=run_values['dataset_filepath'],
@@ -246,32 +251,104 @@ def main():
         seed=run_values['seed']
     )
 
+
+def _load_or_prepare(discoverer: GraphDiscovery, run_values: dict) -> Optional[Experiment]:
+    """
+    Load a model if specified, otherwise prepare experiments.
+    Args:
+        discoverer (GraphDiscovery): The GraphDiscovery object
+        run_values (dict): A dictionary of run values
+    Returns:
+        Optional[Experiment]: The loaded experiment or None
+    """
     if run_values['load_model'] is not None:
         discoverer.load(run_values['load_model'])
-        # In case of REX, trainer contains multiple entries in the dictionary
-        # and we need to retrieve the last one, but in the case of others, we
-        # just need to retrieve the only entry.
-        result = next(reversed(discoverer.trainer.values()))
-    else:
-        discoverer.create_experiments()
+        # REX stores multiple entries; others store a single one
+        return next(reversed(discoverer.trainer.values()))
 
-    if not run_values['no_train']:
-        discoverer.fit_experiments(
-            run_values['hpo_iterations'],
-            run_values['bootstrap_iterations'],
-            run_values['prior']
+    discoverer.create_experiments()
+    return None
+
+
+def _train_if_needed(
+    discoverer: GraphDiscovery,
+    run_values: dict,
+    result: Optional[Experiment]
+) -> Optional[Experiment]:
+    """
+    Train the model if needed.
+    Args:
+        discoverer (GraphDiscovery): The GraphDiscovery object
+        run_values (dict): A dictionary of run values
+        result (Optional[Experiment]): The loaded experiment or None
+    Returns:
+        Optional[Experiment]: The trained experiment or the loaded one
+    """
+    if run_values['no_train']:
+        return result
+
+    discoverer.fit_experiments(
+        run_values['hpo_iterations'],
+        run_values['bootstrap_iterations'],
+        run_values['prior']
+    )
+    return discoverer.combine_and_evaluate_dags(run_values['prior'])
+
+
+def _ensure_result(result: Optional[Experiment]) -> Experiment:
+    """
+    Ensure that the result is not None.
+    Args:
+        result (Optional[Experiment]): The loaded experiment or None
+    Returns:
+        Experiment: The loaded or trained experiment
+    """
+    if result is None:
+        raise RuntimeError(
+            "No experiment result available. Provide a model with "
+            "--load_model or train one by removing the --no-train flag."
         )
-        result = discoverer.combine_and_evaluate_dags(run_values['prior'])
+    return result
+
+
+def _ensure_dag(result: Experiment) -> nx.DiGraph:
+    """
+    Ensure that the result contains a DAG.
+    Args:
+        result (Experiment): The loaded or trained experiment
+    Returns:
+        nx.DiGraph: The resulting DAG
+    """
+    dag = result.dag
+    if dag is None:
+        raise RuntimeError(
+            "No DAG available from the experiment. Ensure training or model "
+            "loading produced a graph."
+        )
+    return dag
+
+
+def main():
+    header_()
+    args = parse_args()
+    run_values = check_args_validity(args)
+    start_time = time.time()
+
+    discoverer = _init_discoverer(run_values)
+    result = _load_or_prepare(discoverer, run_values)
+    result = _train_if_needed(discoverer, run_values, result)
+    result = _ensure_result(result)
+    dag = _ensure_dag(result)
 
     elapsed_time, units = utils.format_time(time.time() - start_time)
     print(f"Elapsed time: {elapsed_time:.1f} {units}")
-    discoverer.printout_results(result.dag, result.metrics)
+    discoverer.printout_results(dag, result.metrics)
 
     if run_values['output_path'] is not None:
         discoverer.save(run_values['model_filename'])
 
     if run_values['output_dag_file'] is not None:
-        utils.graph_to_dot_file(result.dag, run_values['output_dag_file'])
+        utils.graph_to_dot_file(dag, run_values['output_dag_file'])
         print(f"Saved DAG to {run_values['output_dag_file']}")
 
 

@@ -14,7 +14,9 @@ import os
 import time
 import warnings
 from os import path
+from typing import Any, Optional
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -224,6 +226,9 @@ class Experiment(BaseExperiment):
         self.model_type = self._check_model_type(model_type)
         self.is_fitted = False
         self.verbose = verbose
+        self.dag: Optional[nx.DiGraph] = None
+        self.metrics: Any = None
+        self.ref_graph: Optional[nx.DiGraph] = None
 
         # Prepare the input
         self.prepare_experiment_input(
