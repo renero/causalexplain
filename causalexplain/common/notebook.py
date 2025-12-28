@@ -100,18 +100,62 @@ class BaseExperiment:
         self.train_size = train_size
         self.random_state = random_state
         self.verbose = verbose
+        self._data_ref: pd.DataFrame | None = None
+        self._train_idx: pd.Index | None = None
+        self._test_idx: pd.Index | None = None
+        self._train_data: pd.DataFrame | None = None
+        self._test_data: pd.DataFrame | None = None
 
         # Display Options
         np.set_printoptions(precision=4, linewidth=100)
         pd.set_option('display.precision', 4)
         pd.set_option('display.float_format', '{:.4f}'.format)
 
+    @property
+    def data(self) -> pd.DataFrame | None:
+        return self._data_ref
+
+    @data.setter
+    def data(self, value: pd.DataFrame | None) -> None:
+        self._data_ref = value
+        # Reset cached splits when the data reference changes.
+        self._train_data = None
+        self._test_data = None
+
+    @property
+    def train_data(self) -> pd.DataFrame:
+        if self._train_data is None:
+            if self._data_ref is None or self._train_idx is None:
+                raise ValueError("Training data is not initialized")
+            # Materialize the split lazily to avoid keeping multiple full copies.
+            self._train_data = self._data_ref.loc[self._train_idx]
+        return self._train_data
+
+    @train_data.setter
+    def train_data(self, value: pd.DataFrame) -> None:
+        self._train_data = value
+
+    @property
+    def test_data(self) -> pd.DataFrame:
+        if self._test_data is None:
+            if self._data_ref is None or self._test_idx is None:
+                raise ValueError("Test data is not initialized")
+            self._test_data = self._data_ref.loc[self._test_idx]
+        return self._test_data
+
+    @test_data.setter
+    def test_data(self, value: pd.DataFrame) -> None:
+        self._test_data = value
+
     def prepare_experiment_input(
             self,
             experiment_filename,
             csv_filename=None,
             dot_filename=None,
-            data: pd.DataFrame | None = None):
+            data: pd.DataFrame | None = None,
+            data_is_processed: bool = False,
+            train_idx: pd.Index | None = None,
+            test_idx: pd.Index | None = None):
         """
         - Loads the data and
         - splits it into train and test,
@@ -127,21 +171,27 @@ class BaseExperiment:
             dot_filename = f"{path.join(self.input_path, self.experiment_name)}.dot"
 
         if data is None:
-            self.data = pd.read_csv(csv_filename)
+            data_ref = pd.read_csv(csv_filename)
+            data_ref = data_ref.apply(pd.to_numeric, downcast='float')
         else:
-            self.data = data.copy()
-        self.data = self.data.apply(pd.to_numeric, downcast='float')
+            data_ref = data if data_is_processed else data.apply(
+                pd.to_numeric, downcast='float')
+
         if self.scale:
             scaler = StandardScaler()
-            self.data = pd.DataFrame(
-                scaler.fit_transform(self.data), columns=self.data.columns)
-            self.train_data = self.data.sample(
-                frac=self.train_size, random_state=self.random_state)
-            self.test_data = self.data.drop(self.train_data.index)
-        else:
-            self.train_data = self.data.sample(
-                frac=self.train_size, random_state=self.random_state)
-            self.test_data = self.data.drop(self.train_data.index)
+            scaled = scaler.fit_transform(data_ref)
+            data_ref = pd.DataFrame(
+                scaled, columns=data_ref.columns, index=data_ref.index)
+
+        # Keep a shared reference to the dataset to avoid unnecessary copies.
+        self.data = data_ref
+
+        if train_idx is None or test_idx is None:
+            train_idx = data_ref.sample(
+                frac=self.train_size, random_state=self.random_state).index
+            test_idx = data_ref.index[~data_ref.index.isin(train_idx)]
+        self._train_idx = train_idx
+        self._test_idx = test_idx
 
         self.ref_graph = utils.graph_from_dot_file(dot_filename)
 
@@ -203,6 +253,9 @@ class Experiment(BaseExperiment):
         csv_filename: str|None = None,
         dot_filename: str|None = None,
         data: pd.DataFrame | None = None,
+        data_is_processed: bool = False,
+        train_idx: pd.Index | None = None,
+        test_idx: pd.Index | None = None,
         model_type: str = 'nn',
         input_path="/Users/renero/phd/data/RC4/",
         output_path="/Users/renero/phd/output/RC4/",
@@ -220,6 +273,9 @@ class Experiment(BaseExperiment):
             dot_filename (str, optional): The filename of the DOT file containing
                 the causal graph. Defaults to None.
             data (pd.DataFrame, optional): Dataframe to use instead of reading the CSV.
+            data_is_processed (bool, optional): Whether data is already numeric and ready.
+            train_idx (pd.Index, optional): Precomputed train indices.
+            test_idx (pd.Index, optional): Precomputed test indices.
             model_type (str, optional): The type of model to use. Defaults to 'nn'.
                 Other options are: 'gbt', 'nn', 'cam', 'pc', 'fci', 'notears',
                 'ges' and 'lingam'.
@@ -247,7 +303,9 @@ class Experiment(BaseExperiment):
 
         # Prepare the input
         self.prepare_experiment_input(
-            experiment_name, csv_filename, dot_filename, data=data)
+            experiment_name, csv_filename, dot_filename, data=data,
+            data_is_processed=data_is_processed,
+            train_idx=train_idx, test_idx=test_idx)
 
     def _check_model_type(self, model_type) -> str:
         """

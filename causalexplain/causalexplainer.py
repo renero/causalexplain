@@ -60,6 +60,8 @@ class GraphDiscovery:
         self.dot_filename = true_dag_filename
         self.verbose = verbose
         self.seed = seed
+        self.train_size = 0.9
+        self.random_state = seed
 
         self.dataset_path = os.path.dirname(csv_filename)
         self.output_path = os.getcwd()
@@ -68,6 +70,8 @@ class GraphDiscovery:
         if true_dag_filename is not None and self.ref_graph is None:
             raise ValueError("True DAG could not be loaded from dot file")
         self.data, self.dataset_name, self.data_columns = self._load_dataset_metadata(csv_filename)
+        self.train_idx, self.test_idx = self._build_split_indices(
+            self.data, self.train_size, self.random_state)
         self._validate_dag_nodes(self.ref_graph, self.data_columns)
         self.regressors = self._select_regressors()
 
@@ -87,6 +91,8 @@ class GraphDiscovery:
         self.dot_filename = None
         self.data = None
         self.data_columns = None
+        self.train_idx = None
+        self.test_idx = None
         self.verbose = False
         self.seed = seed
         self.trainer: Dict[str, Experiment] = {}
@@ -115,9 +121,21 @@ class GraphDiscovery:
 
         dataset_name = os.path.splitext(os.path.basename(csv_filename))[0]
         data = pd.read_csv(csv_filename)
+        data = data.apply(pd.to_numeric, downcast='float')
         data_columns = list(data.columns)
         self._validate_column_names(data_columns)
         return data, dataset_name, data_columns
+
+    @staticmethod
+    def _build_split_indices(
+        data: pd.DataFrame,
+        train_size: float,
+        random_state: int
+    ) -> Tuple[pd.Index, pd.Index]:
+        # Share split indices across experiments to avoid repeated sampling.
+        train_idx = data.sample(frac=train_size, random_state=random_state).index
+        test_idx = data.index[~data.index.isin(train_idx)]
+        return train_idx, test_idx
 
     @staticmethod
     def _validate_column_names(data_columns: List) -> None:
@@ -202,6 +220,9 @@ class GraphDiscovery:
                 csv_filename=csv_filename,
                 dot_filename=dot_filename,
                 data=self.data,
+                data_is_processed=True,
+                train_idx=self.train_idx,
+                test_idx=self.test_idx,
                 model_type=model_type,
                 input_path=self.dataset_path,
                 output_path=self.output_path,
@@ -303,6 +324,9 @@ class GraphDiscovery:
             experiment_name=self.dataset_name,
             model_type='rex',
             data=self.data,
+            data_is_processed=True,
+            train_idx=self.train_idx,
+            test_idx=self.test_idx,
             input_path=self.dataset_path,
             output_path=self.output_path,
             verbose=False)
