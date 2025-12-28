@@ -416,7 +416,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         else:
             steps = [
                 ('shaps', ShapEstimator, {
-                    'models': 'models',
+                    'models': self.models,
                     'parallel_jobs': self.parallel_jobs
                 }),
                 ('G_final', 'bootstrap', {

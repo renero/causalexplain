@@ -70,10 +70,10 @@ def parse_args():
         help='List of comma-separated DAGs from regressor to combine. Default is all of them.')
     parser.add_argument(
         '-i', '--iterations', type=int, required=False,
-        help='Hyper-parameter tuning max. iterations')
+        help='Hyper-parameter tuning max. iterations. Default is 20.')
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
-        help='Bootstrap iterations')
+        help='Bootstrap iterations. Default is 20.')
     parser.add_argument(
         '-r', '--regressor', type=str, required=False, action=SplitArgs,
         help='Regressor list')

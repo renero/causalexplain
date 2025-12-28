@@ -1,0 +1,13 @@
+strict digraph toy_dataset {
+        concentrate=True;
+
+        X1;
+        X2;
+        X3;
+        X4;
+
+        X1 -> X2;
+        X2 -> X3;
+        X1 -> X4;
+        X2 -> X4;
+}

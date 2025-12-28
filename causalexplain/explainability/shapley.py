@@ -403,12 +403,16 @@ class ShapEstimator(BaseEstimator):
             shap_values = self.shap_explainer[target_name].\
                 shap_values(X_test)[0]
         elif self.explainer == "gradient":
+            if X_train.ndim == 1:
+                X_train = X_train.reshape(-1, 1)
+            if X_test.ndim == 1:
+                X_test = X_test.reshape(-1, 1)
             X_train_tensor = torch.from_numpy(X_train).float()
             X_test_tensor = torch.from_numpy(X_test).float()
             self.shap_explainer[target_name] = shap.GradientExplainer(
-                model.to(self.device), X_train_tensor.to(self.device))
+                model.to(self.device), [X_train_tensor.to(self.device)])
             shap_values = self.shap_explainer[target_name](
-                X_test_tensor.to(self.device)).values
+                [X_test_tensor.to(self.device)]).values
         elif self.explainer == "explainer":
             self.shap_explainer[target_name] = shap.Explainer(
                 model.predict, X_train)
