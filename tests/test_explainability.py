@@ -490,7 +490,9 @@ def test_shap_explainer_variants(monkeypatch):
     monkeypatch.setattr(
         smod.shap,
         "GradientExplainer",
-        lambda model, data: lambda x: SimpleNamespace(values=np.full((len(x), data.shape[1]), 2.0)),
+        lambda model, data: lambda x: SimpleNamespace(
+            values=np.full((x[0].shape[0], data[0].shape[1]), 2.0)
+        ),
     )
     grad_vals = sh._run_selected_shap_explainer("t", DummyModel(), X_train, X_test)
     assert grad_vals.shape == (1, 2)

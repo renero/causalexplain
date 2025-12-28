@@ -1,4 +1,3 @@
-from causalexplain.common import DEFAULT_REGRESSORS
 import argparse
 import json
 import os
@@ -37,10 +36,9 @@ def args_factory():
             load_model=None,
             no_train=False,
             threshold=None,
-            union=None,
+            combine=None,
             iterations=None,
             bootstrap=None,
-            regressor=None,
             prior=None,
             seed=None,
             quiet=False,
@@ -54,17 +52,15 @@ def args_factory():
     return _factory
 
 
-def test_parse_args_splits_comma_lists(monkeypatch):
+def test_parse_args_combine_option(monkeypatch):
     argv = [
         "prog",
         "-d", "data.csv",
-        "-u", "a,b",
-        "-r", "x,y",
+        "-c", "intersection",
     ]
     monkeypatch.setattr(sys, "argv", argv)
     args = main_mod.parse_args()
-    assert args.union == ['a', 'b']
-    assert args.regressor == ['x', 'y']
+    assert args.combine == "intersection"
     assert args.dataset == "data.csv"
 
 
@@ -83,7 +79,6 @@ def test_check_args_with_dataset_and_save_defaults(
     run_values = main_mod.check_args_validity(args)
     assert run_values['dataset_name'] == "sample"
     assert run_values['dataset_filepath'] == sample_csv
-    assert run_values['regressors'] == DEFAULT_REGRESSORS
     assert run_values['seed'] == 7
     assert run_values['save_model'] == os.path.basename(
         sample_csv).replace('.csv', '') + "_rex.pickle"
@@ -132,7 +127,6 @@ def test_check_args_handles_true_dag_and_prior(
     assert run_values['true_dag'] == str(dot_file)
     assert run_values['prior'] == prior_data
     assert run_values['ref_graph'] == "graph"
-    assert run_values['regressors'] == ['pc']
 
 
 def test_header_prints_banner(capsys):
@@ -164,15 +158,16 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         def fit_experiments(self, *args):
             self.fit_args = args
 
-        def combine_and_evaluate_dags(self, prior):
+        def combine_and_evaluate_dags(self, prior, combine_op='union'):
             self.combined_prior = prior
+            self.combined_op = combine_op
             return SimpleNamespace(dag="final_dag", metrics="final_metrics")
 
         def save_model(self, path):
             self.saved = path
 
-        def printout_results(self, dag, metrics):
-            self.printed = (dag, metrics)
+        def printout_results(self, dag, metrics, combine_op='union'):
+            self.printed = (dag, metrics, combine_op)
 
     run_values = {
         'dataset_name': 'sample',
@@ -186,6 +181,7 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         'hpo_iterations': 3,
         'bootstrap_iterations': 4,
         'prior': [['A', 'B']],
+        'combine_op': 'union',
         'output_path': str(tmp_path),
         'model_filename': str(tmp_path / "saved.pkl"),
         'output_dag_file': str(tmp_path / "dag.dot"),
@@ -225,11 +221,11 @@ def test_main_loads_existing_model(monkeypatch):
         def fit_experiments(self, *args):
             pass
 
-        def combine_and_evaluate_dags(self, prior):
+        def combine_and_evaluate_dags(self, prior, combine_op='union'):
             return SimpleNamespace(dag="combined", metrics="metrics")
 
-        def printout_results(self, dag, metrics):
-            self.printed = (dag, metrics)
+        def printout_results(self, dag, metrics, combine_op='union'):
+            self.printed = (dag, metrics, combine_op)
 
         def save_model(self, path):
             self.saved = path
@@ -246,6 +242,7 @@ def test_main_loads_existing_model(monkeypatch):
         'hpo_iterations': 0,
         'bootstrap_iterations': 0,
         'prior': None,
+        'combine_op': 'union',
         'output_path': None,
         'model_filename': None,
         'output_dag_file': None,
@@ -374,7 +371,7 @@ def test_load_sets_properties(tmp_path):
 def test_printout_results_handles_empty_graph(capsys):
     gd = GraphDiscovery()
     graph = nx.DiGraph()
-    gd.printout_results(graph, None)
+    gd.printout_results(graph, None, 'union')
     assert "Empty graph" in capsys.readouterr().out
 
 
@@ -383,9 +380,9 @@ def test_printout_results_lists_edges(capsys):
     graph = nx.DiGraph()
     graph.add_edge("A", "B")
     graph.add_edge("B", "C")
-    gd.printout_results(graph, "metrics")
+    gd.printout_results(graph, "metrics", 'union')
     output = capsys.readouterr().out
-    assert "A -> B" in output and "Graph Metrics" in output
+    assert "A -> B" in output and "Graph Union Metrics" in output
 
 
 def test_export_delegates_to_utils(sample_csv, tmp_path, monkeypatch):

@@ -28,8 +28,8 @@ def _fit_GAM(x, y, x_test, y_test):
 def fit_and_get_residuals(
     X: np.ndarray,
     Y: np.ndarray,
-    X_test: np.ndarray = None,
-    Y_test: np.ndarray = None,
+    X_test: np.ndarray| None = None,
+    Y_test: np.ndarray| None = None,
     method="gpr"
 ):
     """
