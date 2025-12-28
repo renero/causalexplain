@@ -16,7 +16,6 @@
 
 import argparse
 import os
-import re
 import time
 from typing import Optional
 
@@ -126,37 +125,9 @@ def check_args_validity(args):
             run_values['dataset_name'] = None
             run_values['dataset_filepath'] = None
     else:
-        # If dataset is provided, check that it exists and load it
+        # If dataset is provided, check that it exists
         assert os.path.isfile(args.dataset), \
             f"Dataset file '{args.dataset}' does not exist"
-        run_values['data'] = pd.read_csv(args.dataset)
-        run_values['data_columns'] = list(run_values['data'].columns)
-        if not run_values['data_columns']:
-            raise ValueError("Dataset must include at least one column")
-        seen = set()
-        invalid_columns = []
-        duplicate_columns = set()
-        for col in run_values['data_columns']:
-            if col in seen:
-                duplicate_columns.add(col)
-            else:
-                seen.add(col)
-            if not isinstance(col, str) or not col:
-                invalid_columns.append(col)
-                continue
-            if not re.match(r"^[A-Za-z][A-Za-z0-9]*$", col):
-                invalid_columns.append(col)
-        if duplicate_columns:
-            raise ValueError(
-                "Dataset has duplicate column names: "
-                + ", ".join(sorted(duplicate_columns))
-            )
-        if invalid_columns:
-            raise ValueError(
-                "Invalid column names (must start with a letter and contain only letters/numbers): "
-                + ", ".join(map(str, invalid_columns))
-            )
-        del run_values['data']
         run_values['dataset_filepath'] = args.dataset
 
         # Extract the path from where the dataset is, dataset basename
@@ -169,25 +140,6 @@ def check_args_validity(args):
     if args.true_dag is not None:
         assert '.dot' in args.true_dag, "True DAG must be in .dot format"
         assert os.path.isfile(args.true_dag), "True DAG file does not exist"
-        ref_graph = utils.graph_from_dot_file(args.true_dag)
-        if ref_graph is None:
-            raise ValueError("True DAG could not be loaded from dot file")
-        if 'data_columns' in run_values:
-            dag_nodes = {str(node) for node in ref_graph.nodes}
-            data_columns = {str(col) for col in run_values['data_columns']}
-            if dag_nodes != data_columns:
-                missing = sorted(data_columns - dag_nodes)
-                extra = sorted(dag_nodes - data_columns)
-                details = []
-                if missing:
-                    details.append(f"missing in DAG: {', '.join(missing)}")
-                if extra:
-                    details.append(f"extra in DAG: {', '.join(extra)}")
-                raise ValueError(
-                    "DAG nodes must match dataset columns exactly; "
-                    + "; ".join(details)
-                )
-        run_values['ref_graph'] = ref_graph
         run_values['true_dag'] = args.true_dag
 
     # Check if 'args.load_mode' does not contain path information. In that case

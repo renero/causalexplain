@@ -3,9 +3,11 @@ This module contains the GraphDiscovery class which is responsible for
 creating, fitting, and evaluating causal discovery experiments.
 """
 import os
+import re
 import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
+import networkx as nx
 from typing import Dict, List, Tuple, Optional, cast
 
 from causalexplain.common import (
@@ -63,7 +65,10 @@ class GraphDiscovery:
         self.output_path = os.getcwd()
 
         self.ref_graph = self._load_reference_graph(true_dag_filename)
-        self.dataset_name, self.data_columns = self._load_dataset_metadata(csv_filename)
+        if true_dag_filename is not None and self.ref_graph is None:
+            raise ValueError("True DAG could not be loaded from dot file")
+        self.data, self.dataset_name, self.data_columns = self._load_dataset_metadata(csv_filename)
+        self._validate_dag_nodes(self.ref_graph, self.data_columns)
         self.regressors = self._select_regressors()
 
     @staticmethod
@@ -80,6 +85,8 @@ class GraphDiscovery:
         self.estimator = 'rex'
         self.csv_filename = None
         self.dot_filename = None
+        self.data = None
+        self.data_columns = None
         self.verbose = False
         self.seed = seed
         self.trainer: Dict[str, Experiment] = {}
@@ -109,8 +116,58 @@ class GraphDiscovery:
         dataset_name = os.path.splitext(os.path.basename(csv_filename))[0]
         data = pd.read_csv(csv_filename)
         data_columns = list(data.columns)
-        del data
-        return dataset_name, data_columns
+        self._validate_column_names(data_columns)
+        return data, dataset_name, data_columns
+
+    @staticmethod
+    def _validate_column_names(data_columns: List) -> None:
+        if not data_columns:
+            raise ValueError("Dataset must include at least one column")
+        seen = set()
+        invalid_columns = []
+        duplicate_columns = set()
+        for col in data_columns:
+            if col in seen:
+                duplicate_columns.add(col)
+            else:
+                seen.add(col)
+            if not isinstance(col, str) or not col:
+                invalid_columns.append(col)
+                continue
+            if not re.match(r"^[A-Za-z][A-Za-z0-9]*$", col):
+                invalid_columns.append(col)
+        if duplicate_columns:
+            raise ValueError(
+                "Dataset has duplicate column names: "
+                + ", ".join(sorted(duplicate_columns))
+            )
+        if invalid_columns:
+            raise ValueError(
+                "Invalid column names (must start with a letter and contain only letters/numbers): "
+                + ", ".join(map(str, invalid_columns))
+            )
+
+    @staticmethod
+    def _validate_dag_nodes(
+        ref_graph: Optional[nx.DiGraph],
+        data_columns: Optional[List]
+    ) -> None:
+        if ref_graph is None or data_columns is None:
+            return
+        dag_nodes = {str(node) for node in ref_graph.nodes}
+        dataset_columns = {str(col) for col in data_columns}
+        if dag_nodes != dataset_columns:
+            missing = sorted(dataset_columns - dag_nodes)
+            extra = sorted(dag_nodes - dataset_columns)
+            details = []
+            if missing:
+                details.append(f"missing in DAG: {', '.join(missing)}")
+            if extra:
+                details.append(f"extra in DAG: {', '.join(extra)}")
+            raise ValueError(
+                "DAG nodes must match dataset columns exactly; "
+                + "; ".join(details)
+            )
 
     def _select_regressors(self):
         """Select regressors based on the estimator type."""
@@ -144,6 +201,7 @@ class GraphDiscovery:
                 experiment_name=self.dataset_name,
                 csv_filename=csv_filename,
                 dot_filename=dot_filename,
+                data=self.data,
                 model_type=model_type,
                 input_path=self.dataset_path,
                 output_path=self.output_path,
@@ -244,6 +302,7 @@ class GraphDiscovery:
         self.trainer[new_trainer] = Experiment(
             experiment_name=self.dataset_name,
             model_type='rex',
+            data=self.data,
             input_path=self.dataset_path,
             output_path=self.output_path,
             verbose=False)

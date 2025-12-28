@@ -110,7 +110,8 @@ class BaseExperiment:
             self,
             experiment_filename,
             csv_filename=None,
-            dot_filename=None):
+            dot_filename=None,
+            data: pd.DataFrame | None = None):
         """
         - Loads the data and
         - splits it into train and test,
@@ -125,7 +126,10 @@ class BaseExperiment:
         if dot_filename is None:
             dot_filename = f"{path.join(self.input_path, self.experiment_name)}.dot"
 
-        self.data = pd.read_csv(csv_filename)
+        if data is None:
+            self.data = pd.read_csv(csv_filename)
+        else:
+            self.data = data.copy()
         self.data = self.data.apply(pd.to_numeric, downcast='float')
         if self.scale:
             scaler = StandardScaler()
@@ -198,6 +202,7 @@ class Experiment(BaseExperiment):
         experiment_name,
         csv_filename: str|None = None,
         dot_filename: str|None = None,
+        data: pd.DataFrame | None = None,
         model_type: str = 'nn',
         input_path="/Users/renero/phd/data/RC4/",
         output_path="/Users/renero/phd/output/RC4/",
@@ -214,6 +219,7 @@ class Experiment(BaseExperiment):
                 the data. Defaults to None.
             dot_filename (str, optional): The filename of the DOT file containing
                 the causal graph. Defaults to None.
+            data (pd.DataFrame, optional): Dataframe to use instead of reading the CSV.
             model_type (str, optional): The type of model to use. Defaults to 'nn'.
                 Other options are: 'gbt', 'nn', 'cam', 'pc', 'fci', 'notears',
                 'ges' and 'lingam'.
@@ -241,7 +247,7 @@ class Experiment(BaseExperiment):
 
         # Prepare the input
         self.prepare_experiment_input(
-            experiment_name, csv_filename, dot_filename)
+            experiment_name, csv_filename, dot_filename, data=data)
 
     def _check_model_type(self, model_type) -> str:
         """

@@ -87,14 +87,16 @@ def test_initialization_with_non_rex_model(sample_csv, sample_dot):
     assert gd.regressors == ["random_forest"]
 
 
-def test_invalid_csv_path():
+def test_invalid_csv_path(tmp_path):
     """Test initialization with non-existent CSV file"""
+    dot_path = tmp_path / "graph.dot"
+    dot_path.write_text("digraph G { A -> B; }")
     with pytest.raises(FileNotFoundError):
         GraphDiscovery(
             experiment_name="test_exp",
             model_type="rex",
             csv_filename="non_existent.csv",
-            true_dag_filename="graph.dot"
+            true_dag_filename=str(dot_path)
         )
 
 
@@ -171,6 +173,7 @@ def test_create_experiments_rex(mock_experiment, sample_csv, sample_dot):
             experiment_name="test_data",
             csv_filename=sample_csv,
             dot_filename=sample_dot,
+            data=gd.data,
             model_type=model_type,
             input_path=os.path.dirname(sample_csv),
             output_path=os.getcwd(),
@@ -198,6 +201,7 @@ def test_create_experiments_non_rex(mock_experiment, sample_csv, sample_dot):
         experiment_name="test_data",
         csv_filename=sample_csv,
         dot_filename=sample_dot,
+        data=gd.data,
         model_type="lingam",
         input_path=os.path.dirname(sample_csv),
         output_path=os.getcwd(),
