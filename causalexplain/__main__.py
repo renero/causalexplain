@@ -58,10 +58,10 @@ def parse_args():
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
         '-l', '--load_model', type=str, required=False,
-        help='Model name (pickle) to load. If not specified, the model will be trained')
+        help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
     parser.add_argument(
         '-n', '--no-train', action='store_true', required=False,
-        help='Do not train the model. If not specified, the model will be trained')
+        help='Do not train the model, just evaluate it. If not specified, the model will be trained.')
     parser.add_argument(
         '-T', '--threshold', type=float, required=False,
         help='Threshold to apply to the bootstrapped adjacency matrix.')
@@ -76,7 +76,7 @@ def parse_args():
         help='Bootstrap iterations. Default is 20.')
     parser.add_argument(
         '-r', '--regressor', type=str, required=False, action=SplitArgs,
-        help='Regressor list')
+        help='Select which regressors to use under ReX. Currently, always uses all regressors (DDN and GBT).')
     parser.add_argument(
         '-p', '--prior', type=str, required=False,
         help='Prior file (JSON format) to use in the model')
