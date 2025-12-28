@@ -6,7 +6,7 @@ import os
 import pickle
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Tuple, Optional, cast
+from typing import Dict, List, Tuple, Optional, cast
 
 from causalexplain.common import (
     DEFAULT_REGRESSORS,
@@ -41,6 +41,7 @@ class GraphDiscovery:
             verbose (bool, optional): Whether to print verbose output.
             seed (int, optional): The random seed for reproducibility.
         """
+        self.trainer: Dict[str, Experiment] = {}
         normalized_experiment = self._normalize_optional_str(experiment_name)
         normalized_csv = self._normalize_optional_str(csv_filename)
 
@@ -60,7 +61,6 @@ class GraphDiscovery:
 
         self.dataset_path = os.path.dirname(csv_filename)
         self.output_path = os.getcwd()
-        self.trainer = {}
 
         self.ref_graph = self._load_reference_graph(true_dag_filename)
         self.dataset_name, self.data_columns = self._load_dataset_metadata(csv_filename)
@@ -82,6 +82,7 @@ class GraphDiscovery:
         self.dot_filename = None
         self.verbose = False
         self.seed = seed
+        self.trainer: Dict[str, Experiment] = {}
 
     def _validate_experiment_inputs(
         self,
@@ -132,11 +133,11 @@ class GraphDiscovery:
             dict: A dictionary of Experiment objects
         """
         if self.csv_filename is None:
-            raise ValueError("CSV filename is required to create experiments.")
+            raise AttributeError("CSV filename is required to create experiments.")
 
         csv_filename = cast(str, self.csv_filename)
         dot_filename = cast(str, self.dot_filename)
-        self.trainer = {}
+        self.trainer: Dict[str, Experiment] = {}
         for model_type in self.regressors:
             trainer_name = f"{self.dataset_name}_{model_type}"
             self.trainer[trainer_name] = Experiment(
@@ -269,6 +270,9 @@ class GraphDiscovery:
         self.combine_and_evaluate_dags(prior=prior)
 
     def save(self, full_filename_path: str) -> None:
+        self.save_model(full_filename_path)
+
+    def save_model(self, full_filename_path: str) -> None:
         """
         Save the model as an Experiment object.
 
@@ -292,7 +296,10 @@ class GraphDiscovery:
             self.trainer, overwrite=False)
         print(f"Saved model as: {saved_as}", flush=True)
 
-    def load(self, model_path: str) -> Experiment:
+    def load(self, model_path: str) -> Dict[str, Experiment]:
+        return self.load_model(model_path)
+
+    def load_model(self, model_path: str) -> Dict[str, Experiment]:
         """
         Load the model from a pickle file.
 
@@ -352,8 +359,10 @@ class GraphDiscovery:
             print("\nGraph Metrics:\n-------------")
             print(metrics)
 
+    def export(self, output_file: str) -> None:
+        self.export_dag(output_file)
 
-    def export(self, output_file: str):
+    def export_dag(self, output_file: str) -> str:
         """
         This method exports the DAG to a DOT file.
 
@@ -369,8 +378,10 @@ class GraphDiscovery:
         str
             The path to the output DOT file.
         """
-        utils.graph_to_dot_file(
-            self.trainer[list(self.trainer.keys())[-1]].dag, output_file)
+        model = self.trainer[list(self.trainer.keys())[-1]]
+        if model.dag is None:
+            raise ValueError("No DAG available to export. Run the experiment first.")
+        return utils.graph_to_dot_file(model.dag, output_file)
 
     def plot(
         self,
@@ -408,6 +419,8 @@ class GraphDiscovery:
             is 'circular'.
         """
         model = self.trainer[list(self.trainer.keys())[-1]]
+        if model.dag is None:
+            raise ValueError("No DAG available to plot. Run the experiment first.")
         if model.ref_graph is not None:
             ref_graph = model.ref_graph
         else:

@@ -17,7 +17,7 @@ import pickle
 import types
 from os.path import join
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import networkx as nx
 import numpy as np
@@ -141,7 +141,15 @@ def valid_output_name(filename: str, path: str, extension=None) -> str:
 
 
 def graph_from_dot_file(dot_file: Union[str, Path]) -> Optional[nx.DiGraph]:
-    """ Returns a NetworkX DiGraph from a DOT FILE. """
+    """
+    Reads a dot file and returns a networkx DiGraph object.
+
+    Args:
+        dot_file: (str or Path) The full path to the dot file to be read.
+
+    Returns:
+        networkx.DiGraph or None if the file could not be read or parsed.
+    """
     # Check if "dot_file" exists
     if not os.path.exists(dot_file):
         return None
@@ -159,9 +167,17 @@ def graph_from_dot_file(dot_file: Union[str, Path]) -> Optional[nx.DiGraph]:
         dotplus = pydotplus.graph_from_dot_data(dot_string)
         if dotplus is None:
             return None
+        if isinstance(dotplus, (list, tuple)):
+            if not dotplus:
+                return None
+            dotplus = dotplus[0]
+        if not isinstance(dotplus, (pydot.Dot, pydotplus.graphviz.Dot)):
+            return None
+        dotplus = cast(Union[pydot.Dot, pydotplus.graphviz.Dot], dotplus)
 
         dotplus.set_strict(True)   # type: ignore
-        final_graph = nx.nx_pydot.from_pydot(dotplus)
+        raw_graph = nx.nx_pydot.from_pydot(dotplus)
+        final_graph = nx.DiGraph(raw_graph)
         if '\\n' in final_graph.nodes:
             final_graph.remove_node('\\n')
 
@@ -350,15 +366,21 @@ def graph_to_adjacency_file(graph: AnyGraph, output_file: Union[Path, str], labe
     return
 
 
-def graph_to_dot_file(graph: AnyGraph, output_file: Union[Path, str]):
+def graph_to_dot_file(graph: AnyGraph, output_file: Union[Path, str]) -> str:
     """
     A method to write the graph in dot format to a file.
 
     Args:
         graph: (Union[Graph, DiGraph] the graph to be saved
         output_file: (str) The full path where graph is to be saved
+
+    Returns:
+        (str) The path to the output DOT file.
     """
     nx.drawing.nx_pydot.write_dot(graph, output_file)
+    if isinstance(output_file, Path):
+        output_file = str(output_file)
+    return output_file
 
 
 def select_device(force: Optional[str] = None) -> str:

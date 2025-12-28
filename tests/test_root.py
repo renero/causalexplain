@@ -168,7 +168,7 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
             self.combined_prior = prior
             return SimpleNamespace(dag="final_dag", metrics="final_metrics")
 
-        def save(self, path):
+        def save_model(self, path):
             self.saved = path
 
         def printout_results(self, dag, metrics):
@@ -219,7 +219,7 @@ def test_main_loads_existing_model(monkeypatch):
             self.trainer = {'one': SimpleNamespace(
                 dag='loaded', metrics='metrics')}
 
-        def load(self, path):
+        def load_model(self, path):
             self.loaded = path
 
         def fit_experiments(self, *args):
@@ -231,7 +231,7 @@ def test_main_loads_existing_model(monkeypatch):
         def printout_results(self, dag, metrics):
             self.printed = (dag, metrics)
 
-        def save(self, path):
+        def save_model(self, path):
             self.saved = path
 
     run_values = {
@@ -346,7 +346,7 @@ def test_save_validates_state(sample_csv, tmp_path):
     gd = make_graph_discovery(sample_csv, tmp_path)
     gd.trainer = {}
     with pytest.raises(AssertionError):
-        gd.save(str(tmp_path / "model.pkl"))
+        gd.save_model(str(tmp_path / "model.pkl"))
 
 
 def test_save_writes_model(sample_csv, tmp_path, monkeypatch):
@@ -356,7 +356,7 @@ def test_save_writes_model(sample_csv, tmp_path, monkeypatch):
     monkeypatch.setattr(
         "causalexplain.causalexplainer.utils.save_experiment",
         lambda name, path, trainer, overwrite: saved.setdefault("path", os.path.join(path, name)))
-    gd.save(str(tmp_path / "model.pkl"))
+    gd.save_model(str(tmp_path / "model.pkl"))
     assert saved["path"].endswith("model.pkl")
 
 
@@ -366,7 +366,7 @@ def test_load_sets_properties(tmp_path):
     model_path = tmp_path / "trainer.pkl"
     with open(model_path, 'wb') as handle:
         pickle.dump(trainer_data, handle)
-    loaded = gd.load(str(model_path))
+    loaded = gd.load_model(str(model_path))
     assert gd.dag == "dag"
     assert loaded == trainer_data
 
@@ -395,7 +395,7 @@ def test_export_delegates_to_utils(sample_csv, tmp_path, monkeypatch):
     monkeypatch.setattr(
         "causalexplain.causalexplainer.utils.graph_to_dot_file",
         lambda dag, path: exported.setdefault("path", path))
-    result = gd.export("file.dot")
+    result = gd.export_dag("file.dot")
     assert result == "file.dot"
     assert exported["path"] == "file.dot"
 

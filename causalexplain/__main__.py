@@ -262,7 +262,7 @@ def _load_or_prepare(discoverer: GraphDiscovery, run_values: dict) -> Optional[E
         Optional[Experiment]: The loaded experiment or None
     """
     if run_values['load_model'] is not None:
-        discoverer.load(run_values['load_model'])
+        discoverer.load_model(run_values['load_model'])
         # REX stores multiple entries; others store a single one
         return next(reversed(discoverer.trainer.values()))
 
@@ -345,7 +345,7 @@ def main():
     discoverer.printout_results(dag, result.metrics)
 
     if run_values['output_path'] is not None:
-        discoverer.save(run_values['model_filename'])
+        discoverer.save_model(run_values['model_filename'])
 
     if run_values['output_dag_file'] is not None:
         utils.graph_to_dot_file(dag, run_values['output_dag_file'])

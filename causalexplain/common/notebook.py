@@ -79,6 +79,7 @@ class BaseExperiment:
     verbose (bool, optional): Whether to display verbose output.
         Defaults to False.
     """
+    model_type: str | None = None
 
     def __init__(
             self,
@@ -183,12 +184,20 @@ class Experiment(BaseExperiment):
     """
 
     estimator_name = None
+    rex: Rex | None = None
+    pc: PC | None = None
+    lingam: LiNGAM | None = None
+    ges: GES | None = None
+    fci: FCI | None = None
+    cam: CAM | None = None
+    notears: NOTEARS | None = None
+    estimator: Any | None = None
 
     def __init__(
         self,
         experiment_name,
-        csv_filename: str = None,
-        dot_filename: str = None,
+        csv_filename: str|None = None,
+        dot_filename: str|None = None,
         model_type: str = 'nn',
         input_path="/Users/renero/phd/data/RC4/",
         output_path="/Users/renero/phd/output/RC4/",
@@ -234,7 +243,7 @@ class Experiment(BaseExperiment):
         self.prepare_experiment_input(
             experiment_name, csv_filename, dot_filename)
 
-    def _check_model_type(self, model_type):
+    def _check_model_type(self, model_type) -> str:
         """
         Checks if the model type is valid.
         """
@@ -254,6 +263,27 @@ class Experiment(BaseExperiment):
 
         return model_type
 
+    def _set_estimator_attr(self, estimator_name: str|None, estimator: Any) -> None:
+        """
+        Assigns the estimator to a stable, typed attribute.
+        """
+        assert estimator_name is not None, "estimator_name cannot be None"
+
+        if estimator_name == 'rex':
+            self.rex = estimator
+        elif estimator_name == 'pc':
+            self.pc = estimator
+        elif estimator_name == 'lingam':
+            self.lingam = estimator
+        elif estimator_name == 'ges':
+            self.ges = estimator
+        elif estimator_name == 'fci':
+            self.fci = estimator
+        elif estimator_name == 'cam':
+            self.cam = estimator
+        elif estimator_name == 'notears':
+            self.notears = estimator
+
     def fit(self, estimator_name='rex', **kwargs):
         """
         Fits the experiment data.
@@ -269,6 +299,9 @@ class Experiment(BaseExperiment):
 
         estimator_object = self.create_estimator(
             estimator_name, name=self.experiment_name, **kwargs)
+
+        if estimator_object is None:
+            raise ValueError(f"Estimator '{estimator_name}' not found.")
 
         pipeline = kwargs.pop('pipeline') if 'pipeline' in kwargs else None
 
@@ -290,6 +323,8 @@ class Experiment(BaseExperiment):
         Returns:
             Rex: The fitted experiment data.
         """
+        if self.estimator_name is None:
+            self.estimator_name = 'rex'
         estimator = getattr(self, self.estimator_name)
         estimator.predict(self.train_data, **kwargs)
 
@@ -327,6 +362,27 @@ class Experiment(BaseExperiment):
 
         return self
 
+    def _set_estimator_name(self, exp_object: Any, exp_name: str) -> None:
+        # A priori, I don't know which estimator was used to train the experiment
+        # so I have to check the type of the object
+        if isinstance(exp_object, Rex):
+            self.estimator_name = 'rex'
+        elif isinstance(exp_object, PC):
+            self.estimator_name = 'pc'
+        elif isinstance(exp_object, LiNGAM):
+            self.estimator_name = 'lingam'
+        elif isinstance(exp_object, GES):
+            self.estimator_name = 'ges'
+        elif isinstance(exp_object, FCI):
+            self.estimator_name = 'fci'
+        elif isinstance(exp_object, CAM):
+            self.estimator_name = 'cam'
+        elif isinstance(exp_object, NOTEARS):
+            self.estimator_name = 'notears'
+        else:
+            raise ValueError(
+                f"Estimator '{exp_name}' not recognized.")
+
     def load(self, exp_name=None) -> "Experiment":
         """
         Loads the experiment data.
@@ -348,36 +404,24 @@ class Experiment(BaseExperiment):
         else:
             exp_object = utils.load_experiment(exp_name, self.output_path)
 
-        # A priori, I don't know which estimator was used to train the experiment
-        # so I have to check the type of the object
-        if isinstance(exp_object, Rex):
-            self.estimator_name = 'rex'
-        elif isinstance(exp_object, PC):
-            self.estimator_name = 'pc'
-        elif isinstance(exp_object, LiNGAM):
-            self.estimator_name = 'lingam'
-        elif isinstance(exp_object, GES):
-            self.estimator_name = 'ges'
-        elif isinstance(exp_object, FCI):
-            self.estimator_name = 'fci'
-        elif isinstance(exp_object, CAM):
-            self.estimator_name = 'cam'
-        elif isinstance(exp_object, NOTEARS):
-            self.estimator_name = 'notears'
-        else:
-            raise ValueError(
-                f"Estimator '{exp_name}' not recognized.")
+        self._set_estimator_name(exp_object, exp_name)
 
-        setattr(self, self.estimator_name, exp_object)
-        setattr(self, 'estimator', exp_object)
+        # Assign explicitly to keep types stable for static analyzers.
+        self._set_estimator_attr(self.estimator_name, exp_object)
+        self.estimator = exp_object
 
+        if self.model_type is None:
+            self.model_type = 'rex'  # Default model type
         if self.verbose:
             print(f"Loaded '{exp_name}' ({self.model_type.upper()}) "
                   f"from '{self.output_path}'")
-            fit_time = utils.format_time(self.rex.fit_time)
-            predict_time = utils.format_time(self.rex.predict_time)
-            print(f"This model took {fit_time[0]:.1f}{fit_time[1]}. to fit, and "
-                  f"{predict_time[0]:.1f}{predict_time[1]}. to build predicted DAGs")
+            if isinstance(exp_object, Rex):
+                fit_time = utils.format_time(exp_object.fit_time)
+                predict_time = utils.format_time(exp_object.predict_time)
+                print(
+                    f"This model took {fit_time[0]:.1f}{fit_time[1]}. to fit, and "
+                    f"{predict_time[0]:.1f}{predict_time[1]}. to build predicted DAGs"
+                )
 
         return self
 
@@ -393,6 +437,8 @@ class Experiment(BaseExperiment):
             experiment with the same name. Defaults to False.
         """
         save_as = exp_name if exp_name is not None else self.experiment_name
+        if self.estimator_name is None:
+            self.estimator_name = 'rex'
         where_to = utils.save_experiment(
             f"{save_as}_{self.model_type}",
             self.output_path, getattr(self, self.estimator_name),
