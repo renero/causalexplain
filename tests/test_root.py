@@ -116,8 +116,10 @@ def test_check_args_handles_true_dag_and_prior(
     prior_file = tmp_path / "prior.json"
     prior_data = [["A", "B"]]
     prior_file.write_text(json.dumps({"prior": prior_data}))
+    fake_graph = nx.DiGraph()
+    fake_graph.add_nodes_from(["X", "Y", "Z"])
     monkeypatch.setattr(
-        main_mod.utils, "graph_from_dot_file", lambda path: "graph")
+        main_mod.utils, "graph_from_dot_file", lambda path: fake_graph)
     args = args_factory(
         dataset=sample_csv,
         method='pc',
@@ -126,7 +128,7 @@ def test_check_args_handles_true_dag_and_prior(
     run_values = main_mod.check_args_validity(args)
     assert run_values['true_dag'] == str(dot_file)
     assert run_values['prior'] == prior_data
-    assert run_values['ref_graph'] == "graph"
+    assert run_values['ref_graph'] is fake_graph
 
 
 def test_header_prints_banner(capsys):
