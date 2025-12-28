@@ -46,54 +46,51 @@ def parse_args():
         description="Causal Graph Learning with ReX and other compared methods.",
     )
     parser.add_argument(
+        '-b', '--bootstrap', type=int, required=False,
+        help='Bootstrap iterations. Default is 20.')
+    parser.add_argument(
+        '-c', '--combine', type=str, required=False, choices=['union', 'intersection'],
+        help='Combine ReX DAGs using the specified operation: union or intersection.')
+    parser.add_argument(
         '-d', '--dataset', type=str, required=False,
         help='Dataset name. Must be CSV file with headers and comma separated columns')
+    parser.add_argument(
+        '-i', '--iterations', type=int, required=False,
+        help='Hyper-parameter tuning max. iterations. Default is 20.')
+    parser.add_argument(
+        '-l', '--load_model', type=str, required=False,
+        help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
     parser.add_argument(
         '-m', '--method', type=str, required=False,
         choices=['rex', 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'],
         help="Method to used. If not specified, the method will be ReX.\n" +
         "Other options are: 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'.")
     parser.add_argument(
-        '-t', '--true_dag', type=str, required=False,
-        help='True DAG file name. The file must be in .dot format')
-    parser.add_argument(
-        '-l', '--load_model', type=str, required=False,
-        help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
-    parser.add_argument(
         '-n', '--no-train', action='store_true', required=False,
         help='Do not train the model, just evaluate it. If not specified, the model will be trained.')
     parser.add_argument(
-        '-T', '--threshold', type=float, required=False,
-        help='Threshold to apply to the bootstrapped adjacency matrix.')
-    parser.add_argument(
-        '-u', '--union', type=str, action=SplitArgs, required=False,
-        help='List of comma-separated DAGs from regressor to combine. Default is all of them.')
-    parser.add_argument(
-        '-i', '--iterations', type=int, required=False,
-        help='Hyper-parameter tuning max. iterations. Default is 20.')
-    parser.add_argument(
-        '-b', '--bootstrap', type=int, required=False,
-        help='Bootstrap iterations. Default is 20.')
-    parser.add_argument(
-        '-r', '--regressor', type=str, required=False, action=SplitArgs,
-        help='Select which regressors to use under ReX. Currently, always uses all regressors (DDN and GBT).')
+        '-o', '--output', type=str, required=False,
+        help='Output file where saving the final DAG (dot format). If not specified, ' +
+        'the final DAG will be printed to stdout.')
     parser.add_argument(
         '-p', '--prior', type=str, required=False,
         help='Prior file (JSON format) to use in the model')
     parser.add_argument(
-        '-S', '--seed', type=int, required=False, help='Random seed')
+        '-q', '--quiet', action='store_true', required=False, help='Quiet')
     parser.add_argument(
         '-s', '--save_model', type=str, required=False, nargs='?', const='',
         help='Save model as specified name. If not specified the model will be saved' +
         ' with the same name as the dataset, but with pickle extension.')
     parser.add_argument(
+        '-S', '--seed', type=int, required=False, help='Random seed')
+    parser.add_argument(
+        '-T', '--threshold', type=float, required=False,
+        help='Threshold to apply to the bootstrapped adjacency matrix.')
+    parser.add_argument(
+        '-t', '--true_dag', type=str, required=False,
+        help='True DAG file name. The file must be in .dot format')
+    parser.add_argument(
         '-v', '--verbose', action='store_true', required=False, help='Verbose')
-    parser.add_argument(
-        '-q', '--quiet', action='store_true', required=False, help='Quiet')
-    parser.add_argument(
-        '-o', '--output', type=str, required=False,
-        help='Output file where saving the final DAG (dot format). If not specified, ' +
-        'the final DAG will be printed to stdout.')
 
     args = parser.parse_args()
     return args
@@ -196,12 +193,7 @@ def check_args_validity(args):
     run_values['bootstrap_tolerance'] = args.threshold \
         if args.threshold is not None else DEFAULT_BOOTSTRAP_TOLERANCE
 
-    # Set default regressors in case ReX is called.
-    if args.method == 'rex' and args.regressor is None:
-        run_values['regressors'] = DEFAULT_REGRESSORS
-    else:
-        run_values['regressors'] = [args.method]
-
+    run_values['combine_op'] = args.combine if args.combine is not None else 'union'
     run_values['verbose'] = True if args.verbose else False
     run_values['output_dag_file'] = args.output
 
@@ -292,7 +284,8 @@ def _train_if_needed(
         run_values['bootstrap_iterations'],
         run_values['prior']
     )
-    return discoverer.combine_and_evaluate_dags(run_values['prior'])
+    return discoverer.combine_and_evaluate_dags(
+        run_values['prior'], combine_op=run_values['combine_op'])
 
 
 def _ensure_result(result: Optional[Experiment]) -> Experiment:
@@ -341,8 +334,8 @@ def main():
     dag = _ensure_dag(result)
 
     elapsed_time, units = utils.format_time(time.time() - start_time)
-    print(f"Elapsed time: {elapsed_time:.1f} {units}")
-    discoverer.printout_results(dag, result.metrics)
+    print(f"(Elapsed time: {elapsed_time:.1f}{units})")
+    discoverer.printout_results(dag, result.metrics, run_values['combine_op'])
 
     if run_values['output_path'] is not None:
         discoverer.save_model(run_values['model_filename'])

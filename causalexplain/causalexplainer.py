@@ -190,13 +190,19 @@ class GraphDiscovery:
             if not trainer_name.endswith("_rex"):
                 experiment.fit_predict(estimator=self.estimator, **xargs)
 
-    def combine_and_evaluate_dags(self, prior: Optional[List[List[str]]] = None) -> Experiment:
+    def combine_and_evaluate_dags(
+        self,
+        prior: Optional[List[List[str]]] = None,
+        combine_op: str = 'union'
+    ) -> Experiment:
         """
         Retrieve the DAG from the Experiment objects.
 
         Args:
             prior (List[List[str]], optional): The prior to use for ReX.
                 Defaults to None.
+            combine_op (str, optional): Operation used to combine DAGs in ReX.
+                Supported values are: 'union' and 'intersection'.
 
         Returns:
             Experiment: The experiment object with the final DAG
@@ -219,11 +225,17 @@ class GraphDiscovery:
         # the first and second DAGs
         estimator1 = getattr(self.trainer[list(self.trainer.keys())[0]], 'rex')
         estimator2 = getattr(self.trainer[list(self.trainer.keys())[1]], 'rex')
-        _, _, dag, _ = utils.combine_dags(
+        union_dag, inter_dag, union_cycles_removed, inter_cycles_removed = utils.combine_dags(
             estimator1.dag, estimator2.dag,
             discrepancies=estimator1.shaps.shap_discrepancies,
             prior=prior
         )
+        if combine_op not in {'union', 'intersection'}:
+            raise ValueError("combine_op must be 'union' or 'intersection'")
+        if combine_op == 'union':
+            dag = union_cycles_removed
+        else:
+            dag = inter_cycles_removed
 
         # Create a new Experiment object for the combined DAG
         new_trainer = f"{self.dataset_name}_rex"
@@ -318,7 +330,7 @@ class GraphDiscovery:
         self.metrics = self.trainer[list(self.trainer.keys())[-1]].metrics
         return self.trainer
 
-    def printout_results(self, graph, metrics):
+    def printout_results(self, graph, metrics, combine_op: str) -> None:
         """
         This method prints the DAG to stdout in hierarchical order.
 
@@ -331,7 +343,9 @@ class GraphDiscovery:
             print("Empty graph")
             return
 
-        print("Resulting Graph:\n---------------")
+        combination = "Union" if combine_op == 'union' else "Intersection"
+        msg = f"Graph from '{self.estimator.upper()}' using {combination} of DAGs:"
+        print(f"{msg}\n" + "-" * len(msg))
 
         def dfs(node, visited, indent=""):
             if node in visited:
@@ -356,7 +370,8 @@ class GraphDiscovery:
                 dfs(node, visited)
 
         if metrics is not None:
-            print("\nGraph Metrics:\n-------------")
+            msg = f"Graph {combination} Metrics:"
+            print(f"\n{msg}\n" + "-" * len(msg))
             print(metrics)
 
     def export(self, output_file: str) -> None:
