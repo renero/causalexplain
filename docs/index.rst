@@ -1,5 +1,5 @@
-Welcome to CausalGraph's documentation!
-===================================
+Welcome to CausalExplain's documentation!
+=========================================
 
 CausalExplain is a Python library for causal discovery based on explainability techniques.
 

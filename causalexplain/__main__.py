@@ -76,7 +76,7 @@ def parse_args():
         '-p', '--prior', type=str, required=False,
         help='Prior file (JSON format) to use in the model')
     parser.add_argument(
-        '-q', '--quiet', action='store_true', required=False, help='Quiet')
+        '-q', '--quiet', action='store_true', required=False, help='Quiet mode.')
     parser.add_argument(
         '-s', '--save_model', type=str, required=False, nargs='?', const='',
         help='Save model as specified name. If not specified the model will be saved' +
@@ -85,12 +85,12 @@ def parse_args():
         '-S', '--seed', type=int, required=False, help='Random seed')
     parser.add_argument(
         '-T', '--threshold', type=float, required=False,
-        help='Threshold to apply to the bootstrapped adjacency matrix.')
+        help='Threshold (0 .. 1) to apply to the bootstrapped adjacency matrix. Default is 0.3')
     parser.add_argument(
         '-t', '--true_dag', type=str, required=False,
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
-        '-v', '--verbose', action='store_true', required=False, help='Verbose')
+        '-v', '--verbose', action='store_true', required=False, help='Verbose mode, instead of progress bar.')
 
     args = parser.parse_args()
     return args

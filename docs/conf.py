@@ -8,10 +8,10 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 
 # Configuration file for the Sphinx documentation builder.
-project = 'CausalGraph'
+project = 'CausalExplain'
 copyright = '2024, J. Renero'
 author = 'J. Renero'
-release = '0.5.0'
+release = '0.6.3'
 
 # Add any Sphinx extension module names here
 extensions = [
