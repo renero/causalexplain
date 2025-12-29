@@ -1,7 +1,7 @@
 ![logo](https://raw.githubusercontent.com/renero/causalexplain/main/docs/_static/logo-light.png)
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/release/python-31012/)
+[![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://www.python.org/downloads/release/python-31311/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey.svg)](#)
 [![PyPI version](https://badge.fury.io/py/causalexplain.svg)](https://badge.fury.io/py/causalexplain)
 [![Build Status](https://github.com/renero/causalexplain/actions/workflows/build.yaml/badge.svg)](https://github.com/renero/causalexplain/actions/workflows/build.yaml)
@@ -54,7 +54,7 @@ datasets, highlighting its robustness across different types of data.
 
 - Operating System: Linux or macOS
 - Environment Manager: PyEnv or Conda
-- Programming Language: Python 3.10.12 or higher
+- Programming Language: Python 3.13.11 or higher
 - Hardware: CPU
 
 ## Installation
@@ -87,8 +87,8 @@ $ python -m causalexplain
 \____/\__,_|\__,_|___/\__,_|_|\___/_/\_\ .__/|_|\__,_|_|_| |_|
                                        |_|
 usage: causalexplain [-h] -d DATASET [-m {rex,pc,fci,ges,lingam,cam,notears}]
-                   [-t TRUE_DAG] [-l LOAD_MODEL] [-T THRESHOLD] [-u UNION]
-                   [-i ITERATIONS] [-b BOOTSTRAP] [-r REGRESSOR] [-S SEED]
+                   [-t TRUE_DAG] [-l LOAD_MODEL] [-T THRESHOLD] [-c {union,intersect}]
+                   [-p PRIOR] [-i ITERATIONS] [-b BOOTSTRAP] [-S SEED]
                    [-s [SAVE_MODEL]] [-n] [-v] [-q] [-o OUTPUT]
 ```
 

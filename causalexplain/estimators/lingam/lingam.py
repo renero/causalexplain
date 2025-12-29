@@ -89,8 +89,11 @@ class DirectLiNGAM(_BaseLiNGAM):
         self.verbose = verbose
 
         if self._Aknw is not None:
-            # Allow NaN entries to denote unknown relationships
-            self._Aknw = check_array(self._Aknw, force_all_finite="allow-nan")
+            # Allow NaN entries to denote unknown relationships.
+            try:
+                self._Aknw = check_array(self._Aknw, force_all_finite="allow-nan")
+            except TypeError:
+                self._Aknw = check_array(self._Aknw, ensure_all_finite="allow-nan")
             self._Aknw = np.where(self._Aknw < 0, np.nan, self._Aknw)
 
             # Extract all partial orders in prior knowledge matrix

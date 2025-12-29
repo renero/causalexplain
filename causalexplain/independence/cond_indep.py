@@ -7,6 +7,25 @@
 import itertools
 from typing import List, Optional, Union
 import networkx as nx
+try:
+    from networkx.algorithms.d_separation import d_separated as nx_d_separated
+except Exception:  # pragma: no cover - fallback for older NX layouts
+    nx_d_separated = None
+try:
+    from networkx.algorithms.d_separation import is_d_separator as nx_is_d_separator
+except Exception:  # pragma: no cover - fallback for older NX layouts
+    nx_is_d_separator = None
+
+
+def _d_separated(graph, x, y, z):
+    """Compat wrapper for NetworkX d-separation across versions."""
+    if hasattr(nx, "d_separated"):
+        return nx.d_separated(graph, x, y, z)
+    if nx_d_separated is not None:
+        return nx_d_separated(graph, x, y, z)
+    if nx_is_d_separator is not None:
+        return nx_is_d_separator(graph, x, y, z)
+    raise AttributeError("networkx d-separation helpers are not available")
 
 
 class ConditionalIndependencies:
@@ -398,7 +417,7 @@ def get_conditional_independencies(dag, verbose=False):
         # Check if x and y are connected by an edge
         if dag.has_edge(x, y) or dag.has_edge(y, x):
             continue
-        if not nx.d_separated(dag, {x}, {y}, set()):
+        if not _d_separated(dag, {x}, {y}, set()):
             if verbose:
                 print(f"Pair ({x}, {y})")
             paths = get_paths(dag, x, y)
