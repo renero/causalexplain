@@ -201,7 +201,7 @@ section in the documentation.
 If you use **CausalExplain**, please cite the **software** and/or the **related publication** below.
 
 ### Software
-> Renero, J. (2025). *CausalExplain* (Version 1.0.0).
+> Renero, J. (2025). *CausalExplain* (Version 0.7.0).
 > Available at: [https://github.com/renero/causalexplain](https://github.com/renero/causalexplain)
 
 **BibTeX**
@@ -209,7 +209,7 @@ If you use **CausalExplain**, please cite the **software** and/or the **related 
 @software{causalexplain_software,
   author  = {Jesús Renero},
   title   = {CausalExplain},
-  version = {1.0.0},
+  version = {0.7.0},
   url     = {https://github.com/renero/causalexplain},
   date    = {2025-09-23}
 }
