@@ -14,7 +14,7 @@ This file includes all the plot methods for the causal graph
 from copy import copy
 import shutil
 import warnings
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Protocol, Sequence, Tuple
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -30,11 +30,25 @@ from matplotlib.colors import ListedColormap
 from matplotlib.ticker import MultipleLocator
 from pydot import Dot
 from scipy.cluster.hierarchy import dendrogram
-from sklearn.base import BaseEstimator
 from sklearn.preprocessing import StandardScaler
 
 from causalexplain.metrics.compare_graphs import evaluate_graph
 from .metrics_config import global_nc_metric_types, global_metric_types
+
+class ShapSummary(Protocol):
+    is_fitted_: bool
+    feature_names: Sequence[str]
+
+    def _plot_shap_summary(self, *args: Any, **kwargs: Any) -> Any:
+        ...
+
+
+class ShapDiscrepancy(Protocol):
+    is_fitted_: bool
+    feature_names: Sequence[str]
+    shap_discrepancies: dict
+    X_test: pd.DataFrame
+    shap_scaled_values: dict
 
 metric_labels = {
     'mlp': 'DFN',
@@ -904,14 +918,14 @@ def _get_subplot_mosaic_layout(n: int) -> str:
         raise ValueError("Too many DAGs to plot")
 
 
-def shap_values(shaps: BaseEstimator, **kwargs):
+def shap_values(shaps: ShapSummary, **kwargs):
     assert shaps.is_fitted_, "Model not fitted yet"
     plot_args = list(shaps.feature_names)
     return subplots(shaps._plot_shap_summary, *plot_args, **kwargs)
 
 
 def shap_discrepancies(
-        shaps: BaseEstimator,
+        shaps: ShapDiscrepancy,
         target_name: str,
         threshold: float = +100.0,
         regression_line: bool = False,
@@ -922,7 +936,7 @@ def shap_discrepancies(
 
     Parameters:
     -----------
-        shaps: BaseEstimator
+        shaps: ShapDiscrepancy
             The SHAP values to plot.
         target_name: str
             The name of the target variable.
