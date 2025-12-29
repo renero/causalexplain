@@ -127,7 +127,10 @@ experiment = GraphDiscovery(
    true_dag_filename='../data/toy_dataset.dot')
 
 # Run the experiments
-experiment.run(hpo_iterations=10, bootstrap_samples=10, combine_op='union')
+experiment.run(hpo_iterations=10, bootstrap_iterations=10, combine_op='union', quiet=True)
+
+# Plot the resulting DAG (avoid LaTeX/Graphviz dependencies when running locally)
+experiment.plot(show_metrics=True, layout='circular', usetex=False)
 ````
 
 To load a model from a file, you can use the `load` method of the
@@ -149,7 +152,7 @@ the trained model to a file, or export the predicted causal graph to a DOT file.
 
 ```python
 # Plot the resulting DAG
-experiment.plot()
+experiment.plot(show_metrics=True, layout='circular', usetex=False)
 
 # Save the trained model to a file
 experiment.save("/path/to/model.pkl")
