@@ -1,3 +1,12 @@
+version 0.7.0
+-------------
+- Notebook API: GraphDiscovery.run supports combine_op, bootstrap_tolerance, and quiet,
+  and only passes HPO/bootstrap args when set to avoid None overrides.
+- Plotting: graceful fallback when Graphviz/LaTeX are missing, with clearer metrics
+  text and a wider metrics pane in DAG plots.
+- Typing: improved matplotlib and SHAP plot typing to satisfy Pylance checks.
+- Docs: notebook usage updated to show bootstrap_iterations, quiet, and usetex=False.
+
 version 0.5.5
 -------------
 - This is the version used in the paper: https://arxiv.org/abs/2501.12706

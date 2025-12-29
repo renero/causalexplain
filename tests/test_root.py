@@ -152,8 +152,8 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         def create_experiments(self):
             self.created = True
 
-        def fit_experiments(self, *args):
-            self.fit_args = args
+        def fit_experiments(self, *args, **kwargs):
+            self.fit_args = (args, kwargs)
 
         def combine_and_evaluate_dags(self, prior, combine_op='union'):
             self.combined_prior = prior
@@ -333,7 +333,8 @@ def test_run_invokes_sequence(sample_csv, tmp_path):
     gd.run(5, 6, prior=[['A', 'B']], option=True)
     gd.create_experiments.assert_called_once()
     gd.fit_experiments.assert_called_once()
-    gd.combine_and_evaluate_dags.assert_called_once_with(prior=[['A', 'B']])
+    gd.combine_and_evaluate_dags.assert_called_once_with(
+        prior=[['A', 'B']], combine_op='union')
 
 
 def test_save_validates_state(sample_csv, tmp_path):

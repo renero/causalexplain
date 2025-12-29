@@ -116,6 +116,7 @@ repo root to `sys.path` (e.g.: `sys.path.insert(0, str(pathlib.Path("..").resolv
 `).
 For higher-quality math text in plots, install a LaTeX distribution; otherwise
 pass `usetex=False` when plotting.
+See `examples/simple_experiment.ipynb` for a working notebook example.
 
 ```python
 from causalexplain import GraphDiscovery
