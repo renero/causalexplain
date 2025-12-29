@@ -12,10 +12,13 @@ This file includes all the plot methods for the causal graph
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
 from copy import copy
+import shutil
+import warnings
 from typing import Any, Callable, List, Optional, Tuple
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -115,6 +118,9 @@ formatting_kwargs = {
     "with_labels": True
 }
 
+def _latex_available() -> bool:
+    return shutil.which("latex") is not None
+
 
 def setup_plot(**kwargs):  # tex=True, font="serif", dpi=75, font_size=10):
     """Customize figure settings.
@@ -126,6 +132,12 @@ def setup_plot(**kwargs):  # tex=True, font="serif", dpi=75, font_size=10):
     """
     font_size = kwargs.pop("font_size", 10)
     usetex = kwargs.pop("usetex", True)
+    if usetex and not _latex_available():
+        warnings.warn(
+            "LaTeX not found; disabling text.usetex for plotting.",
+            RuntimeWarning
+        )
+        usetex = False
     font_familiy = kwargs.pop("font_family", "serif")
     dpi = kwargs.pop("dpi", 75)
     file_format = kwargs.pop("file_format", "pdf")
@@ -323,7 +335,7 @@ def draw_graph_subplot(
         root_causes: list = None,
         layout: dict = None,
         title: str = None,
-        ax: plt.Axes = None,
+        ax: Axes = None,
         **kwargs):
     """
     Draw a graph in a subplot.
@@ -336,7 +348,7 @@ def draw_graph_subplot(
         The layout of the graph.
     title : str
         The title of the graph.
-    ax : plt.Axes
+    ax : Axes
         The axis in which to draw the graph.
     **formatting_kwargs : dict
         The formatting arguments for the graph.
@@ -654,7 +666,7 @@ def dag(
         show_metrics: bool = False,
         show_node_fill: bool = True,
         title: Optional[str] = None,
-        ax: Optional[plt.Axes] = None,
+        ax: Optional[Axes] = None,
         figsize: Tuple[int, int] = (5, 5),
         dpi: int = 75,
         save_to_pdf: Optional[str] = None,
@@ -686,12 +698,28 @@ def dag(
     """
     ncols = 1
 
+    usetex = kwargs.pop("usetex", None)
+
     # Overwrite formatting_kwargs with kwargs if they are provided
     formatting_kwargs.update(kwargs)
 
     # Check consistency
     if show_metrics and reference is None:
         show_metrics = False
+
+    def _dot_layout(layout_graph: nx.DiGraph) -> dict:
+        try:
+            return nx.drawing.nx_agraph.graphviz_layout(layout_graph, prog="dot")
+        except Exception:
+            try:
+                return nx.drawing.nx_pydot.graphviz_layout(layout_graph, prog="dot")
+            except Exception:
+                warnings.warn(
+                    "Graphviz layout not available; falling back to spring_layout. "
+                    "Install pygraphviz or pydot+graphviz for 'dot' layout.",
+                    RuntimeWarning
+                )
+                return nx.spring_layout(layout_graph, seed=0)
 
     G = nx.DiGraph()
     if show_node_fill:
@@ -711,13 +739,20 @@ def dag(
         G = format_graph(G)
 
     ref_layout = None
-    setup_plot(dpi=dpi)
+    if usetex is None:
+        setup_plot(dpi=dpi)
+    else:
+        setup_plot(dpi=dpi, usetex=usetex)
     if ax is None and show_metrics is False:
         f, axis = plt.subplots(ncols=ncols, figsize=figsize)
     elif ax is None and show_metrics is True:
         metric = evaluate_graph(reference, graph, list(reference.nodes))
         ax = plt.figure(
-            figsize=(6, 4), layout="constrained").subplot_mosaic('AAB')
+            figsize=(7.5, 4.2),
+            layout="constrained").subplot_mosaic(
+                'AAB',
+                gridspec_kw={"width_ratios": [2.2, 2.2, 3.0], "wspace": 0.3}
+            )
         axis = ax["A"]
         text_axis = ax["B"]
     elif ax is not None and show_metrics is False:
@@ -732,8 +767,7 @@ def dag(
                 # Added for circular layout compatibility
                 Gt = cleanup_graph(reference.copy())
                 if layout == "dot":
-                    ref_layout = nx.drawing.nx_agraph.graphviz_layout(
-                        Gt, prog="dot")
+                    ref_layout = _dot_layout(Gt)
                 elif layout == "circular":
                     ref_layout = nx.circular_layout(Gt)  # NEW: Circular layout
                 else:
@@ -741,8 +775,7 @@ def dag(
                         "Invalid layout option. Choose 'dot' or 'circular'.")
             else:
                 if layout == "dot":
-                    ref_layout = nx.drawing.nx_agraph.graphviz_layout(
-                        G, prog="dot")
+                    ref_layout = _dot_layout(G)
                 elif layout == "circular":
                     ref_layout = nx.circular_layout(G)  # NEW: Circular layout
                 else:
@@ -758,8 +791,7 @@ def dag(
             # added to avoid errors with circular layout
             Gt = cleanup_graph(reference.copy())
             if layout == "dot":
-                ref_layout = nx.drawing.nx_agraph.graphviz_layout(
-                    Gt, prog="dot")
+                ref_layout = _dot_layout(Gt)
             elif layout == "circular":
                 ref_layout = nx.circular_layout(Gt)  # NEW: Circular layout
             else:
@@ -767,8 +799,7 @@ def dag(
                     "Invalid layout option. Choose 'dot' or 'circular'.")
         else:
             if layout == "dot":
-                ref_layout = nx.drawing.nx_agraph.graphviz_layout(
-                    G, prog="dot")
+                ref_layout = _dot_layout(G)
             elif layout == "circular":
                 ref_layout = nx.circular_layout(G)  # NEW: Circular layout
             else:
@@ -781,8 +812,16 @@ def dag(
 
         if show_metrics:
             plt.rcParams["font.family"] = "monospace"
-            text_axis.text(0.1, 0.5, metric.matplotlib_repr(),
-                           ha='left', va='center', size=12)
+            text_axis.text(
+                0.05,
+                0.5,
+                metric.matplotlib_repr(
+                    usetex=bool(mpl.rcParams.get("text.usetex", False))
+                ),
+                ha='left',
+                va='center',
+                size=12
+            )
             text_axis.axis('off')
 
         if ax is None:
@@ -988,8 +1027,11 @@ def _plot_discrepancy(x, y, s, target_name, parent_name, r, ax, regression_line,
     b0_s, b1_s = r.shap_model.params[0], r.shap_model.params[1]
     b0_y, b1_y = r.parent_model.params[0], r.parent_model.params[1]
 
-    mpl.rc('text', usetex=True)
-    mpl.rc('text.latex', preamble=r'\usepackage{amsmath}')
+    if _latex_available():
+        mpl.rc('text', usetex=True)
+        mpl.rc('text.latex', preamble=r'\usepackage{amsmath}')
+    else:
+        mpl.rc('text', usetex=False)
 
     # If the number of axes is 1, it is not indexable, so I change the only one
     ax_0 = ax if reduced else ax[0]

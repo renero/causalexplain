@@ -123,7 +123,7 @@ class Metrics:
             s += f"                          SID......: {self.sid:.3g} [{self.sid_lower}..{self.sid_upper}]\n"
         return s
 
-    def matplotlib_repr(self):
+    def matplotlib_repr(self, usetex: bool = True):
         """
         Generates a formatted string representation of the metrics for display
         in a matplotlib plot.
@@ -135,16 +135,25 @@ class Metrics:
         s_Tn = f"{self.Tn:^5d}"
         s_Fp = f"{self.Fp:^5d}"
         s_Fn = f"{self.Fn:^5d}"
-        s_Tp = s_Tp.replace(" ", r"\ ")
-        s_Tn = s_Tn.replace(" ", r"\ ")
-        s_Fp = s_Fp.replace(" ", r"\ ")
-        s_Fn = s_Fn.replace(" ", r"\ ")
 
-        s = r"> Predicted\ \ \ 1\ \ \ \ \ 0" + "\n"
-        s += r"> Actual\ \ \ \ -----------" + "\n"
-        s += r">\ \ 1\ \ \ \ \ \ \ |" + s_Tp + r"\ " + s_Fn + "|" + "\n"
-        s += r">\ \ 0\ \ \ \ \ \ \ |" + s_Fp + r"\ " + s_Tn + "|" + "\n"
-        s += r">\ \ \ \ \ \ \ \ \ \ \ -----------" + "\n"
+        if usetex:
+            s_Tp = s_Tp.replace(" ", r"\ ")
+            s_Tn = s_Tn.replace(" ", r"\ ")
+            s_Fp = s_Fp.replace(" ", r"\ ")
+            s_Fn = s_Fn.replace(" ", r"\ ")
+
+            s = r"> Predicted\ \ \ 1\ \ \ \ \ 0" + "\n"
+            s += r"> Actual\ \ \ \ -----------" + "\n"
+            s += r">\ \ 1\ \ \ \ \ \ \ |" + s_Tp + r"\ " + s_Fn + "|" + "\n"
+            s += r">\ \ 0\ \ \ \ \ \ \ |" + s_Fp + r"\ " + s_Tn + "|" + "\n"
+            s += r">\ \ \ \ \ \ \ \ \ \ \ -----------" + "\n"
+        else:
+            s = "> Predicted    1     0\n"
+            s += "> Actual     -----------\n"
+            s += f">   1       |{s_Tp} {s_Fn}|\n"
+            s += f">   0       |{s_Fp} {s_Tn}|\n"
+            s += ">            -----------\n"
+
         s += f"> Precision: {self.precision:.3g}" + "\n"
         s += f"> Recall...: {self.recall:.3g}" + "\n"
         s += f"> F1.......: {self.f1:.3g}" + "\n"

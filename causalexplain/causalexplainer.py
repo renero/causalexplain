@@ -6,9 +6,9 @@ import os
 import re
 import pickle
 import pandas as pd
-import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
 import networkx as nx
-from typing import Dict, List, Tuple, Optional, cast
+from typing import Any, Dict, List, Tuple, Optional, cast
 
 from causalexplain.common import (
     DEFAULT_REGRESSORS,
@@ -235,6 +235,8 @@ class GraphDiscovery:
         hpo_iterations: Optional[int] = None,
         bootstrap_iterations: Optional[int] = None,
         prior: Optional[List[List[str]]] = None,
+        bootstrap_tolerance: Optional[float] = None,
+        quiet: bool = False,
         **kwargs
     ) -> None:
         """
@@ -249,21 +251,39 @@ class GraphDiscovery:
                 Defaults to None.
             bootstrap_iterations (int, optional): Number of bootstrap trials
                 for REX. Defaults to None.
+            bootstrap_tolerance (float, optional): Threshold to apply to the
+                bootstrapped adjacency matrix. Defaults to None.
+            quiet (bool, optional): Disable verbose output and progress
+                indicators. Defaults to False.
         """
+        verbose = False if quiet else self.verbose
+        xargs: Dict[str, Any] = {}
         if self.estimator == 'rex':
             xargs = {
-                'verbose': self.verbose,
-                'hpo_n_trials': hpo_iterations,
-                'bootstrap_trials': bootstrap_iterations,
+                'verbose': verbose,
                 # 'prior': prior
             }
+            if hpo_iterations is not None:
+                xargs['hpo_n_trials'] = hpo_iterations
+            if bootstrap_iterations is not None:
+                xargs['bootstrap_trials'] = bootstrap_iterations
+            if bootstrap_tolerance is not None:
+                xargs['bootstrap_tolerance'] = bootstrap_tolerance
+            if quiet:
+                xargs['prog_bar'] = False
+                xargs['silent'] = True
         else:
             xargs = {
-                'verbose': self.verbose
+                'verbose': verbose
             }
 
         # Combine the arguments
         xargs.update(kwargs)
+        if quiet:
+            xargs['verbose'] = False
+            if self.estimator == 'rex':
+                xargs['prog_bar'] = False
+                xargs['silent'] = True
 
         for trainer_name, experiment in self.trainer.items():
             if not trainer_name.endswith("_rex"):
@@ -349,6 +369,9 @@ class GraphDiscovery:
             hpo_iterations: Optional[int] = None,
             bootstrap_iterations: Optional[int] = None,
             prior: Optional[List[List[str]]] = None,
+            bootstrap_tolerance: Optional[float] = None,
+            quiet: bool = False,
+            combine_op: str = 'union',
             **kwargs):
         """
         Run the experiment.
@@ -358,11 +381,22 @@ class GraphDiscovery:
                 Defaults to None.
             bootstrap_iterations (int, optional): Number of bootstrap trials
                 for REX. Defaults to None.
+            bootstrap_tolerance (float, optional): Threshold to apply to the
+                bootstrapped adjacency matrix. Defaults to None.
+            quiet (bool, optional): Disable verbose output and progress
+                indicators. Defaults to False.
+            combine_op (str, optional): Operation used to combine DAGs in ReX.
+                Defaults to 'union'.
         """
         self.create_experiments()
         self.fit_experiments(
-            hpo_iterations, bootstrap_iterations, prior, **kwargs)
-        self.combine_and_evaluate_dags(prior=prior)
+            hpo_iterations=hpo_iterations,
+            bootstrap_iterations=bootstrap_iterations,
+            prior=prior,
+            bootstrap_tolerance=bootstrap_tolerance,
+            quiet=quiet,
+            **kwargs)
+        self.combine_and_evaluate_dags(prior=prior, combine_op=combine_op)
 
     def save(self, full_filename_path: str) -> None:
         self.save_model(full_filename_path)
@@ -486,7 +520,7 @@ class GraphDiscovery:
         show_metrics: bool = False,
         show_node_fill: bool = True,
         title: Optional[str] = None,
-        ax: Optional[plt.Axes] = None,
+        ax: Optional[Axes] = None,
         figsize: Tuple[int, int] = (5, 5),
         dpi: int = 75,
         save_to_pdf: Optional[str] = None,
@@ -504,7 +538,7 @@ class GraphDiscovery:
             Whether to fill the nodes with color. Defaults to True.
         title : str, optional
             The title of the plot. Defaults to None.
-        ax : plt.Axes, optional
+        ax : Axes, optional
             The matplotlib axes to plot on. Defaults to None.
         figsize : Tuple[int, int], optional
             The size of the plot. Defaults to (5, 5).

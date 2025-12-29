@@ -276,9 +276,11 @@ def _train_if_needed(
         return result
 
     discoverer.fit_experiments(
-        run_values['hpo_iterations'],
-        run_values['bootstrap_iterations'],
-        run_values['prior']
+        hpo_iterations=run_values['hpo_iterations'],
+        bootstrap_iterations=run_values['bootstrap_iterations'],
+        prior=run_values['prior'],
+        bootstrap_tolerance=run_values['bootstrap_tolerance'],
+        quiet=run_values['quiet']
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])

@@ -110,17 +110,24 @@ In case you want to run `causalexplain` from your code in a notebook, you can
 use the `GraphDiscovery` class. The following example shows how to use
 the `GraphDiscovery` class to train a model on a dataset using **ReX** method:
 
+Note: If the notebook kernel cannot import `causalexplain`, run the notebook
+from the repo root, or install the package (`pip install -e .`), or add the
+repo root to `sys.path` (e.g.: `sys.path.insert(0, str(pathlib.Path("..").resolve()))
+`).
+For higher-quality math text in plots, install a LaTeX distribution; otherwise
+pass `usetex=False` when plotting.
+
 ```python
 from causalexplain import GraphDiscovery
 
 experiment = GraphDiscovery(
-   experiment_name='my_experiment',
+   experiment_name='toy_experiment',
    model_type='rex',
-   csv_filename='data.csv',
-   true_dag_filename='true_graph.dot')
+   csv_filename='../data/toy_dataset.csv',
+   true_dag_filename='../data/toy_dataset.dot')
 
 # Run the experiments
-experiment.run()
+experiment.run(hpo_iterations=10, bootstrap_samples=10, combine_op='union')
 ````
 
 To load a model from a file, you can use the `load` method of the
