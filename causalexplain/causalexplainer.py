@@ -261,7 +261,7 @@ class GraphDiscovery:
         if self.estimator == 'rex':
             xargs = {
                 'verbose': verbose,
-                # 'prior': prior
+                'prior': prior
             }
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations
