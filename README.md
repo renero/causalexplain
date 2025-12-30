@@ -159,7 +159,6 @@ experiment.plot(show_metrics=True, layout='circular', usetex=False)
 experiment.save("/path/to/model.pkl")
 ```
 
-
 To export the predicted causal graph to a DOT file, you can use the `export`
 method of the `GraphDiscovery` class:
 
@@ -195,6 +194,38 @@ For more information on command line options, run `causalexplain -h` or go to
 the [Quickstart](https://renero.github.io/causalexplain/quickstart.html)
 section in the documentation.
 
+### Prior knowledge (ReX)
+
+ReX can optionally use prior knowledge to constrain edge directions when you
+already know a rough ordering of variables (for example, temporal tiers).
+The prior is a JSON file with a single `prior` key whose value is a list of
+tiers; each tier is a list of column names. Variables in earlier tiers may
+cause variables in later tiers, but not vice versa. All names must match the
+dataset columns.
+
+Example JSON file:
+
+```json
+{
+  "prior": [
+    ["A", "B"],
+    ["C", "D"]
+  ]
+}
+```
+
+Use it from the CLI with `-p`/`--prior` (ReX only):
+
+```bash
+$ python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+```
+
+Or from a notebook:
+
+```python
+prior = [["A", "B"], ["C", "D"]]
+experiment.run(prior=prior, hpo_iterations=10, bootstrap_iterations=10)
+```
 
 ## Citation
 

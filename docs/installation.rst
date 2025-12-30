@@ -10,7 +10,7 @@ You can install CausalExplain using pip:
 Requirements
 -----------
 
-CausalExplain requires Python 3.7 or later. The main dependencies are:
+CausalExplain requires Python 3.10 or later. The main dependencies are:
 
 * numpy
 * pandas

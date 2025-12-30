@@ -187,6 +187,50 @@ class GraphDiscovery:
                 + "; ".join(details)
             )
 
+    def _validate_prior_columns(
+        self,
+        prior: Optional[List[List[str]]]
+    ) -> None:
+        """
+        Validate that the prior column names exist in the dataset.
+
+        Args:
+            prior (List[List[str]], optional): The prior to validate.
+
+        Raises:
+            ValueError: If any prior column names are invalid or not in the dataset.
+        """
+        if prior is None:
+            return
+        if self.data_columns is None:
+            raise ValueError(
+                "Dataset columns are not available; cannot validate prior."
+            )
+        if not isinstance(prior, list) or any(
+            not isinstance(tier, list) for tier in prior
+        ):
+            raise ValueError("Prior must be a list of lists of column names.")
+        invalid_names = []
+        prior_names: List[str] = []
+        for tier in prior:
+            for name in tier:
+                if not isinstance(name, str) or not name:
+                    invalid_names.append(name)
+                    continue
+                prior_names.append(name)
+        if invalid_names:
+            raise ValueError(
+                "Prior contains invalid names (must be non-empty strings): "
+                + ", ".join(map(str, invalid_names))
+            )
+        data_columns = {str(col) for col in self.data_columns}
+        extra = sorted({name for name in prior_names if name not in data_columns})
+        if extra:
+            raise ValueError(
+                "Prior includes variables not present in dataset columns: "
+                + ", ".join(extra)
+            )
+
     def _select_regressors(self):
         """Select regressors based on the estimator type."""
         if self.estimator == 'rex':
@@ -256,12 +300,13 @@ class GraphDiscovery:
             quiet (bool, optional): Disable verbose output and progress
                 indicators. Defaults to False.
         """
+        self._validate_prior_columns(prior)
         verbose = False if quiet else self.verbose
         xargs: Dict[str, Any] = {}
         if self.estimator == 'rex':
             xargs = {
                 'verbose': verbose,
-                # 'prior': prior
+                'prior': prior
             }
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations
