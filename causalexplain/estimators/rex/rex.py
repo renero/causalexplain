@@ -1,6 +1,6 @@
 """
 Main class for the REX estimator.
-(C) J. Renero, 2022, 2023, 2024
+(C) J. Renero, 2022, 2023, 2024, 2025
 """
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
@@ -18,7 +18,7 @@ import time
 import warnings
 from collections import defaultdict
 from copy import copy, deepcopy
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -305,6 +305,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             in the following lists cannot be the cause of the nodes in the previous
             lists. If the prior is not provided, the DAG is built without any prior
             information.
+            Example: [['A', 'B'], ['C', 'D']]
 
         Returns
         -------
@@ -710,15 +711,16 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.iterative_metrics = []
         best_tolerance = 0.0
         for tol in np.arange(0.1, 1.0, 0.05):
+            tol_value = float(tol)
             dag = self._dag_from_bootstrap_adj_matrix(
-                iter_adjacency_matrix, tolerance=tol)
+                iter_adjacency_matrix, tolerance=tol_value)
 
             metric = evaluate_graph(ref_graph, dag)
             self.iterative_metrics.append(metric)
             value_obtained = getattr(metric, key_metric)
             if _is_better_value(value_obtained, reference_key_metric):
                 reference_key_metric = value_obtained
-                best_tolerance = tol
+                best_tolerance = tol_value
                 if self.verbose:
                     print(f"· · Better tolerance found: {best_tolerance:.2f}, "
                           f"{key_metric}: {reference_key_metric:.4f}")

@@ -1,6 +1,6 @@
 """
 Utility functions for causalexplain
-(C) J. Renero, 2022, 2023, 2024
+(C) J. Renero, 2022, 2023, 2024, 2025
 """
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init
@@ -176,7 +176,14 @@ def graph_from_dot_file(dot_file: Union[str, Path]) -> Optional[nx.DiGraph]:
         dotplus = cast(Union[pydot.Dot, pydotplus.graphviz.Dot], dotplus)
 
         dotplus.set_strict(True)   # type: ignore
-        raw_graph = nx.nx_pydot.from_pydot(dotplus)
+        if isinstance(dotplus, pydotplus.graphviz.Dot):
+            dot_list = pydot.graph_from_dot_data(dotplus.to_string())
+            if not dot_list:
+                return None
+            dot_graph = dot_list[0]
+        else:
+            dot_graph = dotplus
+        raw_graph = nx.nx_pydot.from_pydot(dot_graph)
         final_graph = nx.DiGraph(raw_graph)
         if '\\n' in final_graph.nodes:
             final_graph.remove_node('\\n')
@@ -1300,7 +1307,17 @@ def list_files(input_pattern: str, where: str) -> list:
 
 def read_json_file(file_path: str):
     """
-    Read a JSON file and return its content as a dictionary."
+    Read a JSON file and return its content as a dictionary.
+    Each inner list is a tier (earlier tiers can cause later tiers, not vice versa).
+    Each inner list should not contain duplicate names, and names should match your dataset columns.
+
+    Example:
+    {
+        "prior": [
+            ["A", "B"],
+            ["C", "D"]
+        ]
+    }
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as file:

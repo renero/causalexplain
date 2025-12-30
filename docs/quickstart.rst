@@ -53,6 +53,7 @@ The basic arguments are:
 * ``-d`` or ``--dataset``: The path to the dataset file in CSV format.
 * ``-t`` or ``--true_dag``: The path to the true DAG file in DOT format.
 * ``-m`` or ``--method``: The method to use to infer the causal graph.
+* ``-p`` or ``--prior``: JSON file with prior knowledge for ReX (optional).
 
 These options allow you to specify the dataset, true DAG, and method to be used.
 In case you don't have a true DAG, the result is the plausible causal graph,
@@ -70,6 +71,26 @@ DAG.
 In those cases where training or running a method takes a long time, ``causalexplain``
 allows you to save the model (``-s`` or ```--save_model```) trained in a file and
 load it later. To load the model, use the ``-l`` or ``--load_model`` option.
+
+ReX can also use prior knowledge to constrain edge directions. The prior is a
+JSON file with a single ``prior`` key whose value is a list of tiers; each tier
+is a list of column names. Variables in earlier tiers may cause variables in
+later tiers, but not vice versa. All names must match the dataset columns.
+
+.. code-block:: json
+
+   {
+     "prior": [
+       ["A", "B"],
+       ["C", "D"]
+     ]
+   }
+
+Use it from the CLI like this:
+
+.. code-block:: bash
+
+   python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
 
 The option ``-b`` or ``--bootstrap`` allows you to specify the number of iterations
 for bootstrap in the ReX method.
