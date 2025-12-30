@@ -235,3 +235,56 @@ def test_create_experiments_empty_regressors(mock_experiment, sample_csv, sample
 
     assert len(trainers) == 0
     mock_experiment.assert_not_called()
+
+
+def test_validate_prior_columns_accepts_valid_prior(sample_csv):
+    gd = GraphDiscovery(
+        experiment_name="test_exp",
+        model_type="rex",
+        csv_filename=sample_csv,
+        true_dag_filename=None
+    )
+    gd._validate_prior_columns([["A", "B"], ["C"]])
+
+
+def test_validate_prior_columns_rejects_non_list_prior(sample_csv):
+    gd = GraphDiscovery(
+        experiment_name="test_exp",
+        model_type="rex",
+        csv_filename=sample_csv,
+        true_dag_filename=None
+    )
+    with pytest.raises(ValueError) as exc_info:
+        gd._validate_prior_columns("A")
+    assert "Prior must be a list of lists of column names." in str(exc_info.value)
+
+
+def test_validate_prior_columns_rejects_invalid_names(sample_csv):
+    gd = GraphDiscovery(
+        experiment_name="test_exp",
+        model_type="rex",
+        csv_filename=sample_csv,
+        true_dag_filename=None
+    )
+    with pytest.raises(ValueError) as exc_info:
+        gd._validate_prior_columns([["A", ""]])
+    assert "Prior contains invalid names" in str(exc_info.value)
+
+
+def test_validate_prior_columns_rejects_unknown_names(sample_csv):
+    gd = GraphDiscovery(
+        experiment_name="test_exp",
+        model_type="rex",
+        csv_filename=sample_csv,
+        true_dag_filename=None
+    )
+    with pytest.raises(ValueError) as exc_info:
+        gd._validate_prior_columns([["A", "Z"]])
+    assert "Prior includes variables not present in dataset columns" in str(exc_info.value)
+
+
+def test_validate_prior_columns_requires_dataset_columns():
+    gd = GraphDiscovery()
+    with pytest.raises(ValueError) as exc_info:
+        gd._validate_prior_columns([["A"]])
+    assert "Dataset columns are not available" in str(exc_info.value)
