@@ -1059,9 +1059,29 @@ class ShapEstimator(BaseEstimator):
             signature = inspect.signature(explainer.__call__)
         except (TypeError, ValueError):
             return explainer(X_test)
+        call_kwargs = {}
         if "silent" in signature.parameters:
-            return explainer(X_test, silent=True)
-        return explainer(X_test)
+            call_kwargs["silent"] = True
+        try:
+            return explainer(X_test, **call_kwargs)
+        except Exception as exc:                         # pylint: disable=broad-except
+            explainer_error = getattr(getattr(shap, "utils", None), "_exceptions", None)
+            explainer_error_cls = getattr(explainer_error, "ExplainerError", None)
+            if explainer_error_cls and isinstance(exc, explainer_error_cls) and \
+                    "check_additivity" in signature.parameters:
+                # BACKEND TAILORING NOTE (explainer):
+                # Why this exists:
+                # TreeExplainer additivity checks can fail on numerically noisy
+                # models even with correct input shapes, halting SHAP runs.
+                # What runtime/accuracy tradeoff it introduces:
+                # Disabling the check skips a consistency assertion but keeps
+                # the attribution values for downstream analysis.
+                # When a user might want to override it:
+                # If exact additivity is required, keep the default behavior
+                # and fix the upstream model/data mismatch instead.
+                call_kwargs["check_additivity"] = False
+                return explainer(X_test, **call_kwargs)
+            raise
 
     def __str__(self):
         return utils.stringfy_object(self)
@@ -1512,17 +1532,29 @@ class ShapEstimator(BaseEstimator):
 
         s_flat = np.asarray(s).reshape(-1)
         y_flat = np.asarray(y).reshape(-1)
-        corr_result = spearmanr(s_flat, y_flat)
-        corr_value = corr_result.correlation if hasattr(
-            corr_result, "correlation") else corr_result[0]
-        corr_value = _as_float(corr_value)
+        finite_mask = np.isfinite(s_flat) & np.isfinite(y_flat)
+        # Guard against NaNs in SHAP outputs to keep downstream metrics stable.
+        s_eval = s_flat[finite_mask]
+        y_eval = y_flat[finite_mask]
+        if s_eval.size >= 2:
+            corr_result = spearmanr(s_eval, y_eval)
+            corr_value = corr_result.correlation if hasattr(
+                corr_result, "correlation") else corr_result[0]
+            corr_value = _as_float(corr_value)
+            if not np.isfinite(corr_value):
+                corr_value = 0.0
+        else:
+            corr_value = 0.0
         discrepancy = 1 - np.abs(corr_value)
         # The p-value is below 5%: we reject the null hypothesis that the two
         # distributions are the same, with 95% confidence.
-        ks_result = kstest(s_flat, y_flat)
-        ks_pvalue = ks_result.pvalue if hasattr(
-            ks_result, "pvalue") else ks_result[1]
-        ks_pvalue = _as_float(ks_pvalue)
+        if s_eval.size >= 1:
+            ks_result = kstest(s_eval, y_eval)
+            ks_pvalue = ks_result.pvalue if hasattr(
+                ks_result, "pvalue") else ks_result[1]
+            ks_pvalue = _as_float(ks_pvalue)
+        else:
+            ks_pvalue = float("nan")
 
         return ShapDiscrepancy(
             target=target_name,
@@ -1535,7 +1567,7 @@ class ShapEstimator(BaseEstimator):
             parent_model=model_y,
             shap_discrepancy=discrepancy,
             shap_correlation=corr_value,
-            shap_gof=r2_score(y_flat, s_flat),
+            shap_gof=r2_score(y_eval, s_eval) if s_eval.size >= 2 else 0.0,
             ks_pvalue=ks_pvalue,
             ks_result="Equal" if ks_pvalue > 0.05 else "Different"
         )

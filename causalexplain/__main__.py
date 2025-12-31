@@ -3,7 +3,7 @@
 #
 # causalexplain/__main__.py
 #
-# (C) 2024 J. Renero
+# (C) 2024, 2025 J. Renero
 #
 # This file is part of causalexplain
 #
@@ -51,7 +51,8 @@ def parse_args():
         '-a', '--adaptive-shap-sampling',
         action=argparse.BooleanOptionalAction,
         default=True,
-        help='Enable adaptive SHAP background sampling and stability checks.')
+        help='Enable adaptive SHAP background sampling and stability checks. '
+             'Use --no-adaptive-shap-sampling to disable. Default is enabled.')
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
         help='Bootstrap iterations. Default is 20.')
