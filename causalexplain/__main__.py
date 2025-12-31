@@ -14,8 +14,10 @@
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 #
 
+import sentry_sdk
 import argparse
 import os
+import sys
 import time
 from typing import Optional
 
@@ -45,6 +47,11 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Causal Graph Learning with ReX and other compared methods.",
     )
+    parser.add_argument(
+        '-a', '--adaptive-shap-sampling',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Enable adaptive SHAP background sampling and stability checks.')
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
         help='Bootstrap iterations. Default is 20.')
@@ -192,6 +199,9 @@ def check_args_validity(args):
     run_values['combine_op'] = args.combine if args.combine is not None else 'union'
     run_values['verbose'] = True if args.verbose else False
     run_values['output_dag_file'] = args.output
+    run_values['adaptive_shap_sampling'] = (
+        args.adaptive_shap_sampling
+        if hasattr(args, 'adaptive_shap_sampling') else True)
 
     # return a dictionary with all the new variables created
     return run_values
@@ -280,7 +290,8 @@ def _train_if_needed(
         bootstrap_iterations=run_values['bootstrap_iterations'],
         prior=run_values['prior'],
         bootstrap_tolerance=run_values.get('bootstrap_tolerance'),
-        quiet=run_values.get('quiet', False)
+        quiet=run_values.get('quiet', False),
+        adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True)
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])
@@ -326,6 +337,25 @@ def main():
     start_time = time.time()
 
     discoverer = _init_discoverer(run_values)
+    # SAFETY/RUNTIME NOTE:
+    # Why we warn when adaptive sampling is disabled:
+    # Without adaptive sampling, SHAP can scale poorly and appear to hang on
+    # large tables, especially with Kernel-based explainers.
+    # What dataset size threshold is used and why:
+    # We warn when m > 2000 to be conservative about runtime/memory blowups.
+    # How users can mitigate (enable adaptive sampling, cap explain set, etc):
+    # Enable adaptive_shap_sampling or reduce rows via max_shap_samples,
+    # max_explain_samples, or external subsampling.
+    if not run_values.get('adaptive_shap_sampling', True):
+        data = getattr(discoverer, "data", None)
+        if data is not None and len(data) > 2000:
+            warning_text = (
+                "Adaptive SHAP sampling is disabled and the dataset has "
+                f"{len(data)} rows (>2000). SHAP computation may take a very "
+                "long time, use excessive memory, or fail to halt. Consider "
+                "enabling adaptive_shap_sampling=True or reducing rows via "
+                "max_shap_samples, max_explain_samples, or subsampling.")
+            print(warning_text, file=sys.stderr)
     result = _load_or_prepare(discoverer, run_values)
     result = _train_if_needed(discoverer, run_values, result)
     result = _ensure_result(result)
@@ -344,4 +374,19 @@ def main():
 
 
 if __name__ == "__main__":
+
+    # sentry_sdk.init(
+    #     dsn="https://52bf4a5355c861af1eb5c6395c246d5d@o4510618140999680.ingest.de.sentry.io/4510623000166480",
+    #     # Tracing is not required for profiling to work
+    #     # but for the best experience we recommend enabling it
+    #     traces_sample_rate=1.0,
+    #     # Set profile_session_sample_rate to 1.0 to profile 100%
+    #     # of profile sessions.
+    #     profile_session_sample_rate=1.0
+    # )
+
+    # sentry_sdk.profiler.start_profiler()
+
     main()
+
+    # sentry_sdk.profiler.stop_profiler()

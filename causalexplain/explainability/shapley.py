@@ -15,11 +15,12 @@ is then used to build the graph.
 import inspect
 import math
 import multiprocessing
+import warnings
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from multiprocessing import get_context
-from typing import List, Union, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import colorama
 import networkx as nx
@@ -36,8 +37,9 @@ from scipy.stats import kstest, spearmanr
 from sklearn.base import BaseEstimator
 from sklearn.discriminant_analysis import StandardScaler
 from sklearn.metrics import r2_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
 
+from causalexplain.explainability.hierarchies import Hierarchies
 from ..independence.feature_selection import select_features
 from ..common import utils
 
@@ -92,6 +94,783 @@ class ShapDiscrepancy:
     ks_result: str
 
 
+ShapResult = Any
+SamplingMode = Literal["no_sampling", "single_sample", "multi_sample"]
+
+
+@dataclass
+class ShapRunDiagnostics:
+    backend: str
+    mode: SamplingMode
+    m: int
+    n_background: int
+    K: int
+    seeds: List[int]
+    n_explain: int
+    stability: Dict[str, Any]
+    warnings: List[str]
+
+
+def _normalize_tabular(X):
+    if isinstance(X, pd.Series):
+        return X.to_frame()
+    if isinstance(X, np.ndarray):
+        return X.reshape(-1, 1) if X.ndim == 1 else X
+    if isinstance(X, list):
+        arr = np.asarray(X)
+        return arr.reshape(-1, 1) if arr.ndim == 1 else arr
+    return X
+
+
+def _ensure_2d_array(X):
+    arr = np.asarray(X)
+    return arr.reshape(-1, 1) if arr.ndim == 1 else arr
+
+
+def _safe_indexing(X, indices):
+    if isinstance(X, (pd.DataFrame, pd.Series)):
+        return X.iloc[indices]
+    return np.asarray(X)[indices]
+
+
+def sample_rows(X, n, stratify=None, seed=None, return_indices: bool = False):
+    """
+    Sample rows from X with optional stratification.
+    """
+    if n is None:
+        indices = np.arange(len(X))
+    else:
+        if not isinstance(n, int) or n <= 0:
+            raise ValueError("n must be a positive integer.")
+        m = len(X)
+        if n >= m:
+            indices = np.arange(m)
+        else:
+            if stratify is not None:
+                stratify_arr = np.asarray(stratify)
+                if stratify_arr.ndim > 1:
+                    if stratify_arr.shape[1] == 1:
+                        stratify_arr = stratify_arr.reshape(-1)
+                    else:
+                        raise ValueError("stratify must be 1D array-like.")
+                if stratify_arr.shape[0] != m:
+                    raise ValueError(
+                        "stratify must have the same length as X.")
+                splitter = StratifiedShuffleSplit(
+                    n_splits=1, train_size=n, random_state=seed)
+                indices, _ = next(
+                    splitter.split(np.zeros(m), stratify_arr))
+            else:
+                rng = np.random.default_rng(seed)
+                indices = rng.choice(m, size=n, replace=False)
+    sample = _safe_indexing(X, indices)
+    if return_indices:
+        return sample, np.asarray(indices)
+    return sample
+
+
+def _make_seeds(random_state: Optional[int], K: int) -> List[int]:
+    if K <= 0:
+        return []
+    seed_seq = np.random.SeedSequence(random_state)
+    return [int(seq.generate_state(1)[0]) for seq in seed_seq.spawn(K)]
+
+
+def _default_kernel_explain_cap(n_features: int) -> int:
+    return min(200, max(50, 2 * n_features))
+
+
+def _default_kernel_nsamples(n_features: int) -> int:
+    return int(min(2 * n_features + 2048, 5000))
+
+
+def _unwrap_model(model):
+    return model.model if hasattr(model, "model") else model
+
+
+def _is_torch_model(model) -> bool:
+    return isinstance(model, torch.nn.Module)
+
+
+def _is_tensorflow_like(model) -> bool:
+    module = getattr(model, "__class__", type(model)).__module__.lower()
+    return "tensorflow" in module or "keras" in module
+
+
+def _is_xgboost_booster(model) -> bool:
+    module = model.__class__.__module__.lower()
+    name = model.__class__.__name__.lower()
+    return "xgboost" in module and name == "booster"
+
+
+def _get_torch_device(model):
+    if hasattr(model, "parameters"):
+        try:
+            return next(model.parameters()).device
+        except StopIteration:
+            return torch.device("cpu")
+    return torch.device("cpu")
+
+
+def _torch_predict_fn(model):
+    torch_model = _unwrap_model(model)
+    torch_model.eval()
+    device = _get_torch_device(torch_model)
+
+    def _predict(X):
+        X_arr = np.asarray(X, dtype=np.float32)
+        X_tensor = torch.from_numpy(X_arr).to(device)
+        with torch.no_grad():
+            output = torch_model(X_tensor)
+        if isinstance(output, (tuple, list)):
+            output = output[0]
+        return output.detach().cpu().numpy()
+
+    return _predict
+
+
+def _xgboost_predict_fn(model):
+    try:
+        import xgboost as xgb  # type: ignore
+    except ImportError as exc:
+        raise ImportError(
+            "xgboost is required to adapt Booster models for SHAP.") from exc
+
+    def _predict(X):
+        dmatrix = xgb.DMatrix(np.asarray(X))
+        return model.predict(dmatrix)
+
+    return _predict
+
+
+def _resolve_model_callable(model, prefer_proba: bool = True):
+    unwrapped = _unwrap_model(model)
+    if _is_xgboost_booster(unwrapped):
+        return _xgboost_predict_fn(unwrapped), "xgboost.predict"
+    if _is_torch_model(unwrapped):
+        return _torch_predict_fn(unwrapped), "torch.predict"
+    if prefer_proba and hasattr(unwrapped, "predict_proba"):
+        return unwrapped.predict_proba, "predict_proba"
+    if hasattr(unwrapped, "predict"):
+        return unwrapped.predict, "predict"
+    if callable(unwrapped):
+        return unwrapped, "callable"
+    raise TypeError("Model is not callable and has no predict methods.")
+
+
+def _call_explainer_silent(explainer, X):
+    try:
+        signature = inspect.signature(explainer.__call__)
+    except (TypeError, ValueError):
+        return explainer(X)
+    if "silent" in signature.parameters:
+        return explainer(X, silent=True)
+    return explainer(X)
+
+
+def _is_kernel_like_explainer(explainer) -> bool:
+    name = explainer.__class__.__name__.lower()
+    module = explainer.__class__.__module__.lower()
+    return ("kernel" in name or "kernel" in module or
+            "permutation" in name or "permutation" in module)
+
+
+def _coerce_shap_arrays(shap_result, n_features: int) -> List[np.ndarray]:
+    values = shap_result.values if isinstance(
+        shap_result, shap.Explanation) else shap_result
+    if isinstance(values, list):
+        arrays = [np.asarray(v) for v in values]
+    else:
+        arr = np.asarray(values)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, n_features)
+        if arr.ndim == 2:
+            arrays = [arr]
+        elif arr.ndim == 3:
+            if arr.shape[1] == n_features:
+                arrays = [arr[:, :, i] for i in range(arr.shape[2])]
+            elif arr.shape[2] == n_features:
+                arrays = [arr[:, i, :] for i in range(arr.shape[1])]
+            else:
+                arrays = [arr.reshape(arr.shape[0], -1)]
+        else:
+            arrays = [arr.reshape(arr.shape[0], -1)]
+
+    normalized = []
+    for arr in arrays:
+        arr = np.asarray(arr)
+        if arr.ndim != 2:
+            arr = arr.reshape(arr.shape[0], -1)
+        if arr.shape[1] != n_features:
+            raise ValueError(
+                "SHAP values feature dimension does not match X.")
+        normalized.append(arr)
+    return normalized
+
+
+def _global_importance_from_shap(
+        shap_result, n_features: int, class_index: Optional[int] = None):
+    arrays = _coerce_shap_arrays(shap_result, n_features)
+    if class_index is not None:
+        if class_index >= len(arrays):
+            raise ValueError("class_index is out of range for SHAP outputs.")
+        arrays = [arrays[class_index]]
+    per_output = [np.mean(np.abs(arr), axis=0) for arr in arrays]
+    if len(per_output) == 1:
+        return per_output[0]
+    return np.mean(np.vstack(per_output), axis=0)
+
+
+def _mean_pairwise_spearman(imp_vectors: List[np.ndarray]) -> float:
+    if len(imp_vectors) < 2:
+        return 1.0
+    corrs = []
+    for i in range(len(imp_vectors)):
+        for j in range(i + 1, len(imp_vectors)):
+            corr = spearmanr(imp_vectors[i], imp_vectors[j]).correlation
+            if corr is None or np.isnan(corr):
+                continue
+            corrs.append(corr)
+    return float(np.mean(corrs)) if corrs else float("nan")
+
+
+def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
+    denom = np.linalg.norm(a) * np.linalg.norm(b)
+    if denom == 0:
+        return 1.0
+    return float(1 - np.dot(a, b) / denom)
+
+
+def _representative_run_index(
+        imp_vectors: List[np.ndarray], imp_mean: np.ndarray) -> int:
+    distances = [_cosine_distance(v, imp_mean) for v in imp_vectors]
+    return int(np.argmin(distances))
+
+
+def _build_stability(
+        imp_vectors: List[np.ndarray],
+        feature_names: List[Union[str, int]],
+        topN_important: int,
+        warn_threshold_cv: float,
+        warn_threshold_rankcorr: float,
+        early_stopped: bool = False) -> Dict[str, Any]:
+    imp_stack = np.vstack(imp_vectors)
+    imp_mean = imp_stack.mean(axis=0)
+    imp_std = imp_stack.std(axis=0, ddof=0)
+    eps = 1e-12
+    imp_cv = imp_std / (imp_mean + eps)
+    topN = min(int(topN_important), imp_mean.shape[0])
+    top_idx = np.argsort(imp_mean)[::-1][:topN]
+    mean_rankcorr = _mean_pairwise_spearman(imp_vectors)
+    max_cv = float(np.max(imp_cv[top_idx])) if top_idx.size else 0.0
+    warned = bool(
+        max_cv > warn_threshold_cv or mean_rankcorr < warn_threshold_rankcorr)
+    top_features = [feature_names[i] for i in top_idx] if feature_names else \
+        top_idx.tolist()
+    return {
+        "imp_mean": imp_mean,
+        "imp_std": imp_std,
+        "imp_cv": imp_cv,
+        "mean_rankcorr": mean_rankcorr,
+        "warned": warned,
+        "thresholds": {
+            "cv": warn_threshold_cv,
+            "rankcorr": warn_threshold_rankcorr,
+        },
+        "top_features": top_features,
+        "top_indices": top_idx.tolist(),
+        "max_cv": max_cv,
+        "early_stopped": early_stopped,
+    }
+
+
+def _concat_shap_batches(batch_values):
+    if not batch_values:
+        return np.array([])
+    first = batch_values[0]
+    if isinstance(first, list):
+        combined = []
+        for idx in range(len(first)):
+            combined.append(np.concatenate(
+                [np.asarray(b[idx]) for b in batch_values], axis=0))
+        return combined
+    arrays = [np.asarray(
+        b.values if isinstance(b, shap.Explanation) else b)
+        for b in batch_values]
+    return np.concatenate(arrays, axis=0)
+
+
+def build_kernel_explainer(model, X_bg):
+    # BACKEND TAILORING NOTE (kernel):
+    # Why this exists:
+    # Kernel SHAP depends on the model callable output; for classifiers we
+    # prefer probabilities to align feature attributions with class likelihoods.
+    # What runtime/accuracy tradeoff it introduces:
+    # Using predict_proba can increase output dimensionality (multi-class),
+    # which increases compute and memory versus raw predictions.
+    # When a user might want to override it:
+    # Provide a custom wrapper model callable or set class_index to focus a class.
+    model_fn, _ = _resolve_model_callable(model, prefer_proba=True)
+    return shap.KernelExplainer(model_fn, X_bg)
+
+
+def compute_kernel_shap(
+        explainer,
+        X_explain,
+        n_features: int,
+        nsamples: Optional[int] = None,
+        class_index: Optional[int] = None):
+    shap_values = explainer.shap_values(X_explain, nsamples=nsamples)
+    # BACKEND TAILORING NOTE (kernel):
+    # Why this exists:
+    # Kernel SHAP returns per-class arrays for multi-class outputs; selecting a
+    # single class reduces memory when only one class matters.
+    # What runtime/accuracy tradeoff it introduces:
+    # Focusing on one class drops information about other classes but speeds up
+    # downstream aggregation and storage.
+    # When a user might want to override it:
+    # Leave class_index=None to retain per-class outputs for analysis.
+    if class_index is not None:
+        arrays = _coerce_shap_arrays(shap_values, n_features)
+        if class_index >= len(arrays):
+            raise ValueError("class_index is out of range for SHAP outputs.")
+        return arrays[class_index]
+    return shap_values
+
+
+def build_gradient_explainer(model, X_bg):
+    # BACKEND TAILORING NOTE (gradient):
+    # Why this exists:
+    # GradientExplainer needs a differentiable model; we fail fast so users do
+    # not spend time on unsupported models with misleading results.
+    # What runtime/accuracy tradeoff it introduces:
+    # It avoids wasted runtime rather than changing accuracy.
+    # When a user might want to override it:
+    # Use backend="explainer" or backend="kernel" for non-differentiable models.
+    unwrapped = _unwrap_model(model)
+    is_torch = _is_torch_model(unwrapped)
+    is_tf = _is_tensorflow_like(unwrapped)
+    if not (is_torch or is_tf):
+        raise ValueError(
+            "Gradient backend requires a differentiable model. "
+            "Use backend='explainer' or backend='kernel'.")
+    if is_torch:
+        torch_model = unwrapped
+        torch_model.eval()
+        device = _get_torch_device(torch_model)
+        background = _ensure_2d_array(np.asarray(X_bg, dtype=np.float32))
+        background_tensor = torch.from_numpy(background).to(device)
+        explainer = shap.GradientExplainer(torch_model, [background_tensor])
+        explainer._cex_is_torch = True
+        explainer._cex_device = device
+        return explainer
+    background = _ensure_2d_array(np.asarray(X_bg))
+    explainer = shap.GradientExplainer(unwrapped, background)
+    explainer._cex_is_torch = False
+    explainer._cex_device = None
+    return explainer
+
+
+def _call_gradient_explainer(explainer, inputs):
+    try:
+        return explainer.shap_values(inputs)
+    except Exception:
+        result = explainer(inputs)
+        return result.values if isinstance(result, shap.Explanation) else result
+
+
+def compute_gradient_shap(explainer, X_explain, batch_size: int = 128):
+    # BACKEND TAILORING NOTE (gradient):
+    # Why this exists:
+    # GradientExplainer can exhaust GPU/CPU memory when explaining too many
+    # rows at once; batching limits memory spikes.
+    # What runtime/accuracy tradeoff it introduces:
+    # Smaller batches add overhead but preserve accuracy while avoiding OOMs.
+    # When a user might want to override it:
+    # Increase batch_size on larger memory hardware for faster throughput.
+    X_array = _ensure_2d_array(np.asarray(X_explain, dtype=np.float32))
+    is_torch = bool(getattr(explainer, "_cex_is_torch", False))
+    device = getattr(explainer, "_cex_device", None)
+    batch_values = []
+    for start in range(0, X_array.shape[0], batch_size):
+        end = min(start + batch_size, X_array.shape[0])
+        batch = X_array[start:end]
+        if is_torch:
+            batch_tensor = torch.from_numpy(batch).to(device)
+            batch_input = [batch_tensor]
+        else:
+            batch_input = batch
+        batch_values.append(_call_gradient_explainer(explainer, batch_input))
+    return _concat_shap_batches(batch_values)
+
+
+def build_generic_explainer(model, X_bg):
+    # BACKEND TAILORING NOTE (explainer):
+    # Why this exists:
+    # The generic Explainer needs a masker for tabular data; Independent keeps
+    # feature perturbations consistent with background distributions.
+    # What runtime/accuracy tradeoff it introduces:
+    # Independent masking is fast but can ignore feature dependencies.
+    # When a user might want to override it:
+    # Supply a custom masker if feature dependence is important.
+    masker = shap.maskers.Independent(X_bg)
+    model_for_explainer = model
+    if _is_torch_model(model):
+        model_for_explainer = _torch_predict_fn(model)
+    return shap.Explainer(model_for_explainer, masker)
+
+
+def compute_generic_shap(explainer, X_explain):
+    return _call_explainer_silent(explainer, X_explain)
+
+
+def compute_shap_adaptive(
+        X,
+        model,
+        backend: Literal["kernel", "gradient", "explainer"],
+        y=None,
+        max_shap_samples: int = 250,
+        min_shap_samples: int = 200,
+        K_max: int = 5,
+        max_explain_samples: Optional[int] = None,
+        random_state: Optional[int] = None,
+        stratify=None,
+        warn_threshold_cv: float = 0.10,
+        warn_threshold_rankcorr: float = 0.90,
+        topN_important: int = 20,
+        verbose: bool = False,
+        kernel_nsamples: Optional[int] = None,
+        batch_size: int = 128,
+        class_index: Optional[int] = None,
+        adaptive_shap_sampling: bool = True
+        ) -> Tuple[ShapResult, ShapRunDiagnostics]:
+    X = _normalize_tabular(X)
+    if backend not in {"kernel", "gradient", "explainer"}:
+        raise ValueError("backend must be one of: kernel, gradient, explainer.")
+    if max_shap_samples <= 0 or min_shap_samples <= 0:
+        raise ValueError("max_shap_samples and min_shap_samples must be > 0.")
+    if K_max <= 0:
+        raise ValueError("K_max must be > 0.")
+    if topN_important <= 0:
+        raise ValueError("topN_important must be > 0.")
+
+    X_array = _ensure_2d_array(np.asarray(X))
+    m, n_features = X_array.shape
+    feature_names = list(
+        X.columns) if isinstance(X, pd.DataFrame) else list(range(n_features))
+    effective_stratify = stratify if stratify is not None else y
+    warn_messages: List[str] = []
+
+    # SAFETY/RUNTIME NOTE:
+    # Why we warn when adaptive sampling is disabled:
+    # Without adaptive sampling, SHAP can scale poorly and appear to hang on
+    # large tables, especially with Kernel-based explainers.
+    # What dataset size threshold is used and why:
+    # We warn when m > 2000 to be conservative about runtime/memory blowups.
+    # How users can mitigate (enable adaptive sampling, cap explain set, etc):
+    # Turn on adaptive_shap_sampling or reduce rows via max_shap_samples,
+    # max_explain_samples, or external subsampling.
+    if (not adaptive_shap_sampling) and m > 2000:
+        warning_text = (
+            "Adaptive SHAP sampling is disabled and the dataset has "
+            f"{m} rows (>2000). SHAP computation may take a very long time, "
+            "use excessive memory, or fail to halt. Consider enabling "
+            "adaptive_shap_sampling=True or reducing rows via "
+            "max_shap_samples, max_explain_samples, or subsampling.")
+        warn_messages.append(warning_text)
+        warnings.warn(warning_text, UserWarning)
+        if verbose:
+            print(warning_text)
+
+    if not adaptive_shap_sampling:
+        mode: SamplingMode = "no_sampling"
+        n_background = m
+        K_target = 1
+    elif m <= max_shap_samples:
+        mode = "no_sampling"
+        n_background = m
+        K_target = 1
+    elif m <= 2 * max_shap_samples:
+        mode = "single_sample"
+        n_background = max_shap_samples
+        K_target = 1
+    else:
+        mode = "multi_sample"
+        n_background = min(min_shap_samples, m)
+        K_target = min(int(K_max), 5)
+
+    seeds = _make_seeds(random_state, K_target) if mode != "no_sampling" else []
+
+    n_explain = m
+    if backend == "kernel" and adaptive_shap_sampling:
+        # BACKEND TAILORING NOTE (kernel):
+        # Why this exists:
+        # Kernel SHAP runtime scales roughly with n_explain * n_background *
+        # p * nsamples; capping n_explain prevents lockups on large datasets.
+        # What runtime/accuracy tradeoff it introduces:
+        # Fewer explained rows reduce global attribution stability.
+        # When a user might want to override it:
+        # Set max_explain_samples explicitly for more accuracy.
+        if max_explain_samples is None:
+            n_explain = min(m, _default_kernel_explain_cap(n_features))
+        else:
+            n_explain = min(m, max_explain_samples)
+    elif max_explain_samples is not None:
+        n_explain = min(m, max_explain_samples)
+
+    try:
+        if n_explain < m:
+            X_explain, _ = sample_rows(
+                X, n_explain, stratify=effective_stratify,
+                seed=random_state, return_indices=True)
+        else:
+            X_explain = X
+    except ValueError as exc:
+        warn_messages.append(
+            f"Stratified explain sampling failed; using uniform sampling. {exc}")
+        X_explain, _ = sample_rows(
+            X, n_explain, stratify=None, seed=random_state, return_indices=True)
+
+    prebuilt_explainer = None
+    if backend == "explainer":
+        if mode == "no_sampling":
+            first_bg = X
+        else:
+            try:
+                first_bg, _ = sample_rows(
+                    X, n_background, stratify=effective_stratify,
+                    seed=seeds[0], return_indices=True)
+            except ValueError as exc:
+                warn_messages.append(
+                    f"Stratified background sampling failed; using uniform sampling. {exc}")
+                first_bg, _ = sample_rows(
+                    X, n_background, stratify=None,
+                    seed=seeds[0], return_indices=True)
+        prebuilt_explainer = build_generic_explainer(model, first_bg)
+        if adaptive_shap_sampling and \
+                _is_kernel_like_explainer(prebuilt_explainer) and \
+                max_explain_samples is None:
+            # BACKEND TAILORING NOTE (explainer):
+            # Why this exists:
+            # shap.Explainer can select Kernel/Permutation backends that scale
+            # poorly with explained rows; capping avoids runaway runtime.
+            # What runtime/accuracy tradeoff it introduces:
+            # Fewer explained rows may reduce global importance stability.
+            # When a user might want to override it:
+            # Set max_explain_samples or choose a faster backend explicitly.
+            kernel_like_cap = min(m, _default_kernel_explain_cap(n_features))
+            if kernel_like_cap < n_explain:
+                try:
+                    X_explain, _ = sample_rows(
+                        X, kernel_like_cap, stratify=effective_stratify,
+                        seed=random_state, return_indices=True)
+                    n_explain = len(X_explain)
+                except ValueError as exc:
+                    warn_messages.append(
+                        "Stratified explain sampling failed; using uniform "
+                        f"sampling. {exc}")
+                    X_explain, _ = sample_rows(
+                        X, kernel_like_cap, stratify=None,
+                        seed=random_state, return_indices=True)
+                    n_explain = len(X_explain)
+
+    if backend == "kernel" and kernel_nsamples is None:
+        # BACKEND TAILORING NOTE (kernel):
+        # Why this exists:
+        # KernelExplainer runtime scales linearly with nsamples; this heuristic
+        # keeps per-feature cost bounded while limiting Monte Carlo variance.
+        # What runtime/accuracy tradeoff it introduces:
+        # Lower nsamples speeds up explanations but increases noise.
+        # When a user might want to override it:
+        # Provide kernel_nsamples for more precise attributions.
+        kernel_nsamples = _default_kernel_nsamples(n_features)
+
+    shap_outputs = []
+    imp_vectors: List[np.ndarray] = []
+    used_seeds: List[int] = []
+    stability = {}
+
+    for run_idx in range(K_target):
+        if mode == "no_sampling":
+            X_bg = X
+        else:
+            seed = seeds[run_idx]
+            used_seeds.append(seed)
+            try:
+                X_bg, _ = sample_rows(
+                    X, n_background, stratify=effective_stratify,
+                    seed=seed, return_indices=True)
+            except ValueError as exc:
+                warn_messages.append(
+                    f"Stratified background sampling failed; using uniform sampling. {exc}")
+                X_bg, _ = sample_rows(
+                    X, n_background, stratify=None,
+                    seed=seed, return_indices=True)
+
+        if backend == "kernel":
+            explainer = build_kernel_explainer(model, X_bg)
+            shap_result = compute_kernel_shap(
+                explainer,
+                X_explain,
+                n_features=n_features,
+                nsamples=kernel_nsamples,
+                class_index=class_index)
+        elif backend == "gradient":
+            explainer = build_gradient_explainer(model, X_bg)
+            shap_result = compute_gradient_shap(
+                explainer, X_explain, batch_size=batch_size)
+        else:
+            if run_idx == 0 and prebuilt_explainer is not None:
+                explainer = prebuilt_explainer
+            else:
+                explainer = build_generic_explainer(model, X_bg)
+            shap_result = compute_generic_shap(explainer, X_explain)
+
+        shap_outputs.append(shap_result)
+        imp_vectors.append(_global_importance_from_shap(
+            shap_result, n_features=n_features, class_index=class_index))
+
+        if adaptive_shap_sampling and mode == "multi_sample" and len(imp_vectors) >= 2:
+            stability = _build_stability(
+                imp_vectors,
+                feature_names=feature_names,
+                topN_important=topN_important,
+                warn_threshold_cv=warn_threshold_cv,
+                warn_threshold_rankcorr=warn_threshold_rankcorr,
+                early_stopped=False)
+            if not stability["warned"]:
+                stability["early_stopped"] = True
+                break
+
+    if not stability and adaptive_shap_sampling:
+        stability = _build_stability(
+            imp_vectors,
+            feature_names=feature_names,
+            topN_important=topN_important,
+            warn_threshold_cv=warn_threshold_cv,
+            warn_threshold_rankcorr=warn_threshold_rankcorr,
+            early_stopped=False)
+    elif adaptive_shap_sampling and mode == "multi_sample" and len(imp_vectors) < K_target:
+        stability["early_stopped"] = True
+
+    if (adaptive_shap_sampling and stability.get("warned")):
+        warning_text = (
+            "SHAP stability warning: importance variability across background "
+            "samples exceeded thresholds. Consider increasing max_shap_samples, "
+            "increasing K_max, adjusting max_explain_samples, or providing "
+            "stratify for rare groups.")
+        warn_messages.append(warning_text)
+        warnings.warn(warning_text)
+        if verbose:
+            print(warning_text)
+    elif not adaptive_shap_sampling:
+        topN = min(int(topN_important), n_features)
+        imp_mean = imp_vectors[0]
+        top_idx = np.argsort(imp_mean)[::-1][:topN]
+        stability = {
+            "imp_mean": imp_mean,
+            "imp_std": np.zeros_like(imp_mean),
+            "imp_cv": np.zeros_like(imp_mean),
+            "mean_rankcorr": float("nan"),
+            "warned": False,
+            "thresholds": {
+                "cv": warn_threshold_cv,
+                "rankcorr": warn_threshold_rankcorr,
+            },
+            "top_features": [feature_names[i] for i in top_idx],
+            "top_indices": top_idx.tolist(),
+            "max_cv": 0.0,
+            "early_stopped": False,
+            "skipped": True,
+            "note": "stability checks skipped (adaptive_shap_sampling=False)",
+        }
+
+    if len(shap_outputs) == 1:
+        shap_result_out = shap_outputs[0]
+    else:
+        rep_idx = _representative_run_index(
+            imp_vectors, stability["imp_mean"])
+        # We do not average SHAP values by default because multi-output shapes
+        # vary across backends and can be memory-heavy for large datasets.
+        shap_result_out = {
+            "global_importance": stability["imp_mean"],
+            "representative_shap": shap_outputs[rep_idx],
+            "representative_index": rep_idx,
+        }
+
+    diagnostics = ShapRunDiagnostics(
+        backend=backend,
+        mode=mode,
+        m=m,
+        n_background=n_background,
+        K=len(imp_vectors),
+        seeds=used_seeds,
+        n_explain=len(X_explain),
+        stability=stability,
+        warnings=warn_messages,
+    )
+    return shap_result_out, diagnostics
+
+
+def compute_shap(
+        X,
+        model,
+        backend: Literal["kernel", "gradient", "explainer"],
+        y=None,
+        adaptive_shap_sampling: bool = True,
+        **kwargs) -> Tuple[ShapResult, ShapRunDiagnostics]:
+    """
+    High-level wrapper for SHAP computation with optional adaptive sampling.
+    """
+    return compute_shap_adaptive(
+        X,
+        model,
+        backend,
+        y=y,
+        adaptive_shap_sampling=adaptive_shap_sampling,
+        **kwargs)
+
+
+def _example_usage_adaptive_shap():
+    """
+    Example usage snippet with dummy model adapters.
+    """
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(500, 8))
+    y = (X[:, 0] + rng.normal(scale=0.1, size=500) > 0).astype(int)
+
+    class DummySklearnModel:
+        def predict(self, X_in):
+            return np.sum(X_in, axis=1)
+
+        def predict_proba(self, X_in):
+            logits = X_in[:, 0]
+            probs = 1 / (1 + np.exp(-logits))
+            return np.column_stack([1 - probs, probs])
+
+    class DummyTorchModel(torch.nn.Module):
+        def __init__(self, n_features):
+            super().__init__()
+            self.linear = torch.nn.Linear(n_features, 1)
+
+        def forward(self, X_in):
+            return self.linear(X_in)
+
+    _ = compute_shap_adaptive(
+        X,
+        DummySklearnModel(),
+        backend="kernel",
+        stratify=y,
+        random_state=7,
+    )
+    _ = compute_shap_adaptive(
+        X,
+        DummyTorchModel(X.shape[1]),
+        backend="gradient",
+        random_state=7,
+    )
+
+
 class ShapEstimator(BaseEstimator):
     """
     A class for computing SHAP values and building a causal graph from them.
@@ -141,6 +920,9 @@ class ShapEstimator(BaseEstimator):
     reciprocity = False
     min_impact = 1e-06
     exhaustive = False
+    background_size = 200
+    background_method = "sample"
+    background_seed = None
     parallel_jobs = 0
     on_gpu = False
     prog_bar = True
@@ -158,6 +940,9 @@ class ShapEstimator(BaseEstimator):
             reciprocity: bool = False,
             min_impact: float = 1e-06,
             exhaustive: bool = False,
+            background_size: Optional[int] = 200,
+            background_method: str = "sample",
+            background_seed: Optional[int] = None,
             parallel_jobs: int = 0,
             on_gpu: bool = False,
             verbose: bool = False,
@@ -190,6 +975,13 @@ class ShapEstimator(BaseEstimator):
             If this is True, the threshold parameter must be provided, and the
             clustering is performed until remaining values to be clustered are below
             the given threshold.
+        background_size : int, optional
+            Maximum number of background samples used by SHAP explainers. If None
+            or larger than the available samples, all rows are used.
+        background_method : str, default="sample"
+            Background selection strategy: "sample" or "kmeans".
+        background_seed : int, optional
+            Random seed for background sampling when using "sample".
         threshold : float, default=None
             The threshold to use when exhaustive is True. If None, exception is raised.
         on_gpu : bool, default=False
@@ -209,6 +1001,11 @@ class ShapEstimator(BaseEstimator):
         self.reciprocity = reciprocity
         self.min_impact = min_impact
         self.exhaustive = exhaustive
+        self.background_size = background_size
+        self.background_method = background_method
+        self.background_seed = background_seed
+        self.corr_matrix = None
+        self.correlated_features = defaultdict(list)
         self.parallel_jobs = parallel_jobs
         self.on_gpu = on_gpu
         self.verbose = verbose
@@ -217,6 +1014,54 @@ class ShapEstimator(BaseEstimator):
 
         self._fit_desc = f"Running SHAP explainer ({self.explainer})"
         self._pred_desc = "Building graph skeleton"
+
+    def _select_background(self, X_train, allow_kmeans: bool = True):
+        """
+        Select the background samples for SHAP explainers.
+
+        Parameters
+        ----------
+        X_train : np.ndarray
+            The training data.
+        allow_kmeans : bool, default=True
+            Whether to allow kmeans background selection.
+        Returns
+        -------
+        np.ndarray
+            The selected background samples.
+        """
+        if self.background_size is None:
+            return X_train
+        if not isinstance(self.background_size, int) or self.background_size <= 0:
+            raise ValueError("background_size must be a positive integer or None.")
+        n_rows = X_train.shape[0]
+        if n_rows <= self.background_size:
+            return X_train
+        method = self.background_method or "sample"
+        if method == "kmeans":
+            if allow_kmeans:
+                return shap.kmeans(X_train, self.background_size)
+            rng = np.random.default_rng(self.background_seed)
+            indices = rng.choice(n_rows, size=self.background_size, replace=False)
+            return X_train[indices]
+        if method == "sample":
+            rng = np.random.default_rng(self.background_seed)
+            indices = rng.choice(n_rows, size=self.background_size, replace=False)
+            return X_train[indices]
+        raise ValueError(
+            "background_method must be 'sample' or 'kmeans'."
+        )
+
+    def _call_explainer(self, explainer, X_test, silent: bool = True):
+        if not silent:
+            return explainer(X_test)
+        try:
+            signature = inspect.signature(explainer.__call__)
+        except (TypeError, ValueError):
+            return explainer(X_test)
+        if "silent" in signature.parameters:
+            return explainer(X_test, silent=True)
+        return explainer(X_test)
 
     def __str__(self):
         return utils.stringfy_object(self)
@@ -288,6 +1133,11 @@ class ShapEstimator(BaseEstimator):
         self.shap_mean_values = {}
         self.feature_order = {}
         self.all_mean_shap_values = np.empty((0,), dtype=np.float16)
+        if self.correlation_th is not None:
+            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
+            self.correlated_features = Hierarchies.compute_correlated_features(
+                self.corr_matrix, self.correlation_th, self.feature_names,
+                verbose=self.verbose)
 
         # Initialize the progress bar
         if self.prog_bar and not self.verbose:
@@ -398,8 +1248,9 @@ class ShapEstimator(BaseEstimator):
             The SHAP values for the given target.
         """
         if self.explainer == "kernel":
+            background = self._select_background(X_train)
             self.shap_explainer[target_name] = shap.KernelExplainer(
-                model.predict, X_train)
+                model.predict, background)
             shap_values = self.shap_explainer[target_name].\
                 shap_values(X_test)[0]
         elif self.explainer == "gradient":
@@ -407,16 +1258,35 @@ class ShapEstimator(BaseEstimator):
                 X_train = X_train.reshape(-1, 1)
             if X_test.ndim == 1:
                 X_test = X_test.reshape(-1, 1)
-            X_train_tensor = torch.from_numpy(X_train).float()
+            background = self._select_background(X_train, allow_kmeans=False)
+            background = np.asarray(background, dtype=np.float32)
+            X_test = np.asarray(X_test, dtype=np.float32)
+            X_train_tensor = torch.from_numpy(background).float()
             X_test_tensor = torch.from_numpy(X_test).float()
+            model_device = self.device
+            if hasattr(model, "parameters"):
+                try:
+                    model_device = next(model.parameters()).device
+                except StopIteration:
+                    model_device = self.device
             self.shap_explainer[target_name] = shap.GradientExplainer(
-                model.to(self.device), [X_train_tensor.to(self.device)])
+                model, [X_train_tensor.to(model_device)])
             shap_values = self.shap_explainer[target_name](
-                [X_test_tensor.to(self.device)]).values
+                [X_test_tensor.to(model_device)]).values
         elif self.explainer == "explainer":
-            self.shap_explainer[target_name] = shap.Explainer(
-                model.predict, X_train)
-            explanation = self.shap_explainer[target_name](X_test, silent=True)
+            background = self._select_background(X_train)
+            if isinstance(model, torch.nn.Module):
+                self.shap_explainer[target_name] = shap.Explainer(
+                    model.predict, background)
+            else:
+                try:
+                    self.shap_explainer[target_name] = shap.Explainer(
+                        model, background)
+                except Exception:
+                    self.shap_explainer[target_name] = shap.Explainer(
+                        model.predict, background)
+            explanation = self._call_explainer(
+                self.shap_explainer[target_name], X_test, silent=True)
             shap_values = explanation.values
         else:
             raise ValueError(
@@ -574,7 +1444,7 @@ class ShapEstimator(BaseEstimator):
                 f for f in self.feature_names if f != target_name]
 
             self.discrepancies.loc[target_name] = 0
-            self.shap_discrepancies[target_name] = defaultdict(ShapDiscrepancy)
+            self.shap_discrepancies[target_name] = {}
 
             # Loop through all features and compute the discrepancy
             for parent_name in feature_names:
@@ -618,36 +1488,54 @@ class ShapEstimator(BaseEstimator):
         # The alternative hypothesis (H1): Signifies that Heteroscedasticity is present
         # If the p-value is less than the significance level (0.05), we reject the
         # null hypothesis and conclude that heteroscedasticity is present.
+        def _as_float(value) -> float:
+            if isinstance(value, (np.ndarray, list, tuple)):
+                arr = np.asarray(value)
+                if arr.size == 0:
+                    return float("nan")
+                return float(arr.reshape(-1)[0])
+            return float(value)
+
         try:
             test_shap = sms.het_breuschpagan(model_s.resid, X)
         except ValueError:
             test_shap = (0, 0)
-        shap_heteroskedasticity = test_shap[1] < 0.05
+        shap_p_value = _as_float(test_shap[1])
+        shap_heteroskedasticity = bool(shap_p_value < 0.05)
 
         try:
             test_parent = sms.het_breuschpagan(model_y.resid, X)
         except ValueError:
             test_parent = (0, 0)
-        parent_heteroskedasticity = test_parent[1] < 0.05
+        parent_p_value = _as_float(test_parent[1])
+        parent_heteroskedasticity = bool(parent_p_value < 0.05)
 
-        corr = spearmanr(s, y)
-        discrepancy = 1 - np.abs(corr.correlation)
+        s_flat = np.asarray(s).reshape(-1)
+        y_flat = np.asarray(y).reshape(-1)
+        corr_result = spearmanr(s_flat, y_flat)
+        corr_value = corr_result.correlation if hasattr(
+            corr_result, "correlation") else corr_result[0]
+        corr_value = _as_float(corr_value)
+        discrepancy = 1 - np.abs(corr_value)
         # The p-value is below 5%: we reject the null hypothesis that the two
         # distributions are the same, with 95% confidence.
-        _, ks_pvalue = kstest(s[:, 0], y)
+        ks_result = kstest(s_flat, y_flat)
+        ks_pvalue = ks_result.pvalue if hasattr(
+            ks_result, "pvalue") else ks_result[1]
+        ks_pvalue = _as_float(ks_pvalue)
 
         return ShapDiscrepancy(
             target=target_name,
             parent=parent_name,
             shap_heteroskedasticity=shap_heteroskedasticity,
             parent_heteroskedasticity=parent_heteroskedasticity,
-            shap_p_value=test_shap[1],
-            parent_p_value=test_parent[1],
+            shap_p_value=shap_p_value,
+            parent_p_value=parent_p_value,
             shap_model=model_s,
             parent_model=model_y,
             shap_discrepancy=discrepancy,
-            shap_correlation=corr.correlation,
-            shap_gof=r2_score(y, s),
+            shap_correlation=corr_value,
+            shap_gof=r2_score(y_flat, s_flat),
             ks_pvalue=ks_pvalue,
             ks_result="Equal" if ks_pvalue > 0.05 else "Different"
         )
@@ -706,8 +1594,11 @@ class ShapEstimator(BaseEstimator):
                         not new_graph.has_edge(feature, target):
                     continue
 
-                forward_sd = self.discrepancies.loc[target, feature]
-                reverse_sd = self.discrepancies.loc[feature, target]
+                # Normalize pandas/numpy scalars to plain floats for type checkers.
+                forward_sd = float(np.asarray(
+                    self.discrepancies.at[target, feature]).item())
+                reverse_sd = float(np.asarray(
+                    self.discrepancies.at[feature, target]).item())
                 diff = np.abs(forward_sd - reverse_sd)
                 vector = [forward_sd, reverse_sd, diff, 0., 0., 0., 0.]
 
@@ -993,10 +1884,11 @@ class ShapEstimator(BaseEstimator):
 
         xlims = ax.get_xlim()
         if xlims[1] < self.mean_shap_threshold:
-            ax.set_xlim(right=self.mean_shap_threshold +
-                        ((xlims[1] - xlims[0]) / 20))
+            right_limit = float(self.mean_shap_threshold) + float(
+                (xlims[1] - xlims[0]) / 20)
+            ax.set_xlim(right=right_limit)
 
-        ax.axvline(x=self.mean_shap_threshold, color='red', linestyle='--',
+        ax.axvline(x=float(self.mean_shap_threshold), color='red', linestyle='--',
                    linewidth=0.5)
 
         fig = ax.figure if fig is None else fig
