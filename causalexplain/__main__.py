@@ -19,7 +19,7 @@ import argparse
 import os
 import sys
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import networkx as nx
 
@@ -29,21 +29,20 @@ from causalexplain.common.notebook import Experiment
 
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
-                                  DEFAULT_SEED,
+                                  DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
 
 
-def parse_args():
-    class SplitArgs(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            """Split a comma-separated list of values."""
-            if values is None:
-                setattr(namespace, self.dest, [])
-            elif isinstance(values, str):
-                setattr(namespace, self.dest, values.split(','))
-            else:
-                setattr(namespace, self.dest, list(values))
+def parse_args() -> argparse.Namespace:
+    """
+    Parse CLI arguments for the causal discovery runner.
 
+    Args:
+        None.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Causal Graph Learning with ReX and other compared methods.",
     )
@@ -104,12 +103,18 @@ def parse_args():
     return args
 
 
-def check_args_validity(args):
+def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     """
-    Check the validity of the arguments.
+    Validate CLI arguments and derive runtime configuration values.
+
+    This performs file existence checks and computes defaults that drive
+    the end-to-end experiment run.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
 
     Returns:
-        dict: A dictionary of run values
+        Dict[str, Any]: A dictionary of validated run values.
     """
     run_values = {}
 
@@ -208,19 +213,31 @@ def check_args_validity(args):
     return run_values
 
 
-def header_():
+def header_() -> None:
     """
-    Done with "Ogre" font from https://patorjk.com/software/taag/
+    Print the ASCII header banner for CLI output.
+
+    The banner was created with the "Ogre" font from
+    https://patorjk.com/software/taag/.
+
+    Args:
+        None.
+
+    Returns:
+        None: This method does not return a value.
     """
     print(HEADER_ASCII)
 
 
-def show_run_values(run_values):
+def show_run_values(run_values: Dict[str, Any]) -> None:
     """
-    Print the run values.
+    Print resolved run values for debugging or transparency.
 
     Args:
-        run_values (dict): A dictionary of run values
+        run_values (Dict[str, Any]): A dictionary of run values.
+
+    Returns:
+        None: This method does not return a value.
     """
     print("-----")
     print("Run values:")
@@ -233,15 +250,18 @@ def show_run_values(run_values):
     print("-----")
 
 
-def _init_discoverer(run_values: dict) -> GraphDiscovery:
+def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
     """
-    Initialize the GraphDiscovery object.
+    Initialize the GraphDiscovery object with run-time configuration.
+    Check also for CSV size warnings related to SHAP sampling.
+
     Args:
-        run_values (dict): A dictionary of run values
+        run_values (Dict[str, Any]): A dictionary of run values.
+
     Returns:
-        GraphDiscovery: The initialized GraphDiscovery object
+        GraphDiscovery: The initialized GraphDiscovery object.
     """
-    return GraphDiscovery(
+    discoverer = GraphDiscovery(
         experiment_name=run_values['dataset_name'],
         model_type=run_values['estimator'],
         csv_filename=run_values['dataset_filepath'],
@@ -249,16 +269,24 @@ def _init_discoverer(run_values: dict) -> GraphDiscovery:
         verbose=run_values['verbose'],
         seed=run_values['seed']
     )
+    _check_csv_size_warning(discoverer, run_values)
+
+    return discoverer
 
 
-def _load_or_prepare(discoverer: GraphDiscovery, run_values: dict) -> Optional[Experiment]:
+def _load_or_prepare(
+    discoverer: GraphDiscovery,
+    run_values: Dict[str, Any]
+) -> Optional[Experiment]:
     """
     Load a model if specified, otherwise prepare experiments.
+
     Args:
-        discoverer (GraphDiscovery): The GraphDiscovery object
-        run_values (dict): A dictionary of run values
+        discoverer (GraphDiscovery): The GraphDiscovery object.
+        run_values (Dict[str, Any]): A dictionary of run values.
+
     Returns:
-        Optional[Experiment]: The loaded experiment or None
+        Optional[Experiment]: The loaded experiment or None if created.
     """
     if run_values['load_model'] is not None:
         discoverer.load_model(run_values['load_model'])
@@ -271,17 +299,19 @@ def _load_or_prepare(discoverer: GraphDiscovery, run_values: dict) -> Optional[E
 
 def _train_if_needed(
     discoverer: GraphDiscovery,
-    run_values: dict,
+    run_values: Dict[str, Any],
     result: Optional[Experiment]
 ) -> Optional[Experiment]:
     """
-    Train the model if needed.
+    Train the model if requested, otherwise return the existing result.
+
     Args:
-        discoverer (GraphDiscovery): The GraphDiscovery object
-        run_values (dict): A dictionary of run values
-        result (Optional[Experiment]): The loaded experiment or None
+        discoverer (GraphDiscovery): The GraphDiscovery object.
+        run_values (Dict[str, Any]): A dictionary of run values.
+        result (Optional[Experiment]): The loaded experiment or None.
+
     Returns:
-        Optional[Experiment]: The trained experiment or the loaded one
+        Optional[Experiment]: The trained experiment or the loaded one.
     """
     if run_values['no_train']:
         return result
@@ -300,11 +330,13 @@ def _train_if_needed(
 
 def _ensure_result(result: Optional[Experiment]) -> Experiment:
     """
-    Ensure that the result is not None.
+    Ensure that the experiment result is available.
+
     Args:
-        result (Optional[Experiment]): The loaded experiment or None
+        result (Optional[Experiment]): The loaded experiment or None.
+
     Returns:
-        Experiment: The loaded or trained experiment
+        Experiment: The loaded or trained experiment.
     """
     if result is None:
         raise RuntimeError(
@@ -317,10 +349,12 @@ def _ensure_result(result: Optional[Experiment]) -> Experiment:
 def _ensure_dag(result: Experiment) -> nx.DiGraph:
     """
     Ensure that the result contains a DAG.
+
     Args:
-        result (Experiment): The loaded or trained experiment
+        result (Experiment): The loaded or trained experiment.
+
     Returns:
-        nx.DiGraph: The resulting DAG
+        nx.DiGraph: The resulting DAG.
     """
     dag = result.dag
     if dag is None:
@@ -331,25 +365,28 @@ def _ensure_dag(result: Experiment) -> nx.DiGraph:
     return dag
 
 
-def main():
-    header_()
-    args = parse_args()
-    run_values = check_args_validity(args)
-    start_time = time.time()
-
-    discoverer = _init_discoverer(run_values)
+def _check_csv_size_warning(
+    discoverer: GraphDiscovery,
+    run_values: dict
+):
+    """
+    Check if the CSV size exceeds the maximum allowed lines and warn the user.
+    Args:
+        discoverer (GraphDiscovery): The GraphDiscovery object
+        run_values (dict): A dictionary of run values
+    """
     # SAFETY/RUNTIME NOTE:
     # Why we warn when adaptive sampling is disabled:
     # Without adaptive sampling, SHAP can scale poorly and appear to hang on
     # large tables, especially with Kernel-based explainers.
     # What dataset size threshold is used and why:
-    # We warn when m > 2000 to be conservative about runtime/memory blowups.
+    # We warn when m > DEFAULT_MAX_CSV_LINES to be conservative about runtime/memory blowups.
     # How users can mitigate (enable adaptive sampling, cap explain set, etc):
     # Enable adaptive_shap_sampling or reduce rows via max_shap_samples,
     # max_explain_samples, or external subsampling.
     if not run_values.get('adaptive_shap_sampling', True):
         data = getattr(discoverer, "data", None)
-        if data is not None and len(data) > 2000:
+        if data is not None and len(data) > DEFAULT_MAX_CSV_LINES:
             warning_text = (
                 "Adaptive SHAP sampling is disabled and the dataset has "
                 f"{len(data)} rows (>2000). SHAP computation may take a very "
@@ -357,6 +394,27 @@ def main():
                 "enabling adaptive_shap_sampling=True or reducing rows via "
                 "max_shap_samples, max_explain_samples, or subsampling.")
             print(warning_text, file=sys.stderr)
+
+
+def main() -> None:
+    """
+    Run the CLI entry point for causal discovery experiments.
+
+    This orchestrates argument parsing, model loading or training, evaluation,
+    and optional persistence of outputs.
+
+    Args:
+        None.
+
+    Returns:
+        None: This method does not return a value.
+    """
+    header_()
+    args = parse_args()
+    run_values = check_args_validity(args)
+    start_time = time.time()
+
+    discoverer = _init_discoverer(run_values)
     result = _load_or_prepare(discoverer, run_values)
     result = _train_if_needed(discoverer, run_values, result)
     result = _ensure_result(result)
