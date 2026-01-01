@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from multiprocessing import get_context
-from typing import Any, Dict, List, Optional, Tuple, Union, Literal
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
 
 import colorama
 import networkx as nx
@@ -111,7 +111,16 @@ class ShapRunDiagnostics:
     warnings: List[str]
 
 
-def _normalize_tabular(X):
+def _normalize_tabular(X: Any) -> Any:
+    """
+    Normalize list/array/Series inputs to a tabular 2D shape.
+
+    Args:
+        X: Input data in pandas, numpy, or list-like form.
+
+    Returns:
+        A 2D tabular representation preserving the input type when possible.
+    """
     if isinstance(X, pd.Series):
         return X.to_frame()
     if isinstance(X, np.ndarray):
@@ -122,20 +131,55 @@ def _normalize_tabular(X):
     return X
 
 
-def _ensure_2d_array(X):
+def _ensure_2d_array(X: Any) -> np.ndarray:
+    """
+    Ensure numpy array output is 2D for downstream SHAP code.
+
+    Args:
+        X: Input data to normalize.
+
+    Returns:
+        A 2D numpy array view of the input.
+    """
     arr = np.asarray(X)
     return arr.reshape(-1, 1) if arr.ndim == 1 else arr
 
 
-def _safe_indexing(X, indices):
+def _safe_indexing(X: Any, indices: Union[np.ndarray, List[int]]) -> Any:
+    """
+    Index pandas or numpy inputs with a shared code path.
+
+    Args:
+        X: Input data to index.
+        indices: Row indices to select.
+
+    Returns:
+        The indexed subset in the same container type as the input.
+    """
     if isinstance(X, (pd.DataFrame, pd.Series)):
         return X.iloc[indices]
     return np.asarray(X)[indices]
 
 
-def sample_rows(X, n, stratify=None, seed=None, return_indices: bool = False):
+def sample_rows(
+        X: Any,
+        n: Optional[int],
+        stratify: Optional[Any] = None,
+        seed: Optional[int] = None,
+        return_indices: bool = False
+        ) -> Union[Any, Tuple[Any, np.ndarray]]:
     """
     Sample rows from X with optional stratification.
+
+    Args:
+        X: Input data to sample from.
+        n: Number of rows to sample (None uses all rows).
+        stratify: Optional labels for stratified sampling.
+        seed: Random seed for deterministic sampling.
+        return_indices: Whether to return sampled row indices.
+
+    Returns:
+        Sampled data, and optionally the sampled indices.
     """
     if n is None:
         indices = np.arange(len(X))
@@ -170,6 +214,16 @@ def sample_rows(X, n, stratify=None, seed=None, return_indices: bool = False):
 
 
 def _make_seeds(random_state: Optional[int], K: int) -> List[int]:
+    """
+    Generate K deterministic seeds from a base random state.
+
+    Args:
+        random_state: Base random seed.
+        K: Number of seeds to generate.
+
+    Returns:
+        A list of integer seeds.
+    """
     if K <= 0:
         return []
     seed_seq = np.random.SeedSequence(random_state)
@@ -177,33 +231,96 @@ def _make_seeds(random_state: Optional[int], K: int) -> List[int]:
 
 
 def _default_kernel_explain_cap(n_features: int) -> int:
+    """
+    Heuristic cap for Kernel SHAP explain rows based on feature count.
+
+    Args:
+        n_features: Number of features in the dataset.
+
+    Returns:
+        Suggested maximum number of explained rows.
+    """
     return min(200, max(50, 2 * n_features))
 
 
 def _default_kernel_nsamples(n_features: int) -> int:
+    """
+    Heuristic for Kernel SHAP nsamples based on feature count.
+
+    Args:
+        n_features: Number of features in the dataset.
+
+    Returns:
+        Suggested nsamples value for KernelExplainer.
+    """
     return int(min(2 * n_features + 2048, 5000))
 
 
-def _unwrap_model(model):
+def _unwrap_model(model: Any) -> Any:
+    """
+    Return the underlying model if wrapped (e.g., .model attribute).
+
+    Args:
+        model: Input model or wrapper object.
+
+    Returns:
+        The unwrapped model instance when available.
+    """
     return model.model if hasattr(model, "model") else model
 
 
-def _is_torch_model(model) -> bool:
+def _is_torch_model(model: Any) -> bool:
+    """
+    Check if the model is a torch.nn.Module.
+
+    Args:
+        model: Input model instance.
+
+    Returns:
+        True if the model is a torch.nn.Module.
+    """
     return isinstance(model, torch.nn.Module)
 
 
-def _is_tensorflow_like(model) -> bool:
+def _is_tensorflow_like(model: Any) -> bool:
+    """
+    Detect TensorFlow/Keras models using module path heuristics.
+
+    Args:
+        model: Input model instance.
+
+    Returns:
+        True if the model appears to be TensorFlow/Keras based.
+    """
     module = getattr(model, "__class__", type(model)).__module__.lower()
     return "tensorflow" in module or "keras" in module
 
 
-def _is_xgboost_booster(model) -> bool:
+def _is_xgboost_booster(model: Any) -> bool:
+    """
+    Detect XGBoost Booster objects via module/class name.
+
+    Args:
+        model: Input model instance.
+
+    Returns:
+        True if the model looks like an XGBoost Booster.
+    """
     module = model.__class__.__module__.lower()
     name = model.__class__.__name__.lower()
     return "xgboost" in module and name == "booster"
 
 
-def _get_torch_device(model):
+def _get_torch_device(model: Any) -> torch.device:
+    """
+    Get the device for torch models, falling back to CPU.
+
+    Args:
+        model: Torch model instance.
+
+    Returns:
+        The torch device associated with the model parameters.
+    """
     if hasattr(model, "parameters"):
         try:
             return next(model.parameters()).device
@@ -212,7 +329,16 @@ def _get_torch_device(model):
     return torch.device("cpu")
 
 
-def _torch_predict_fn(model):
+def _torch_predict_fn(model: Any) -> Callable[[Any], np.ndarray]:
+    """
+    Build a numpy-in, numpy-out prediction callable for torch models.
+
+    Args:
+        model: Torch model instance.
+
+    Returns:
+        A callable that maps numpy inputs to numpy outputs.
+    """
     torch_model = _unwrap_model(model)
     torch_model.eval()
     device = _get_torch_device(torch_model)
@@ -229,7 +355,16 @@ def _torch_predict_fn(model):
     return _predict
 
 
-def _xgboost_predict_fn(model):
+def _xgboost_predict_fn(model: Any) -> Callable[[Any], Any]:
+    """
+    Build a callable that adapts XGBoost Booster predict API.
+
+    Args:
+        model: XGBoost Booster instance.
+
+    Returns:
+        A callable that accepts tabular data and returns predictions.
+    """
     try:
         import xgboost as xgb  # type: ignore
     except ImportError as exc:
@@ -243,7 +378,19 @@ def _xgboost_predict_fn(model):
     return _predict
 
 
-def _resolve_model_callable(model, prefer_proba: bool = True):
+def _resolve_model_callable(
+        model: Any,
+        prefer_proba: bool = True) -> Tuple[Callable[[Any], Any], str]:
+    """
+    Resolve a model into a callable suitable for SHAP explainers.
+
+    Args:
+        model: Input model instance or wrapper.
+        prefer_proba: Whether to prefer predict_proba when available.
+
+    Returns:
+        A tuple of (callable, description) for SHAP usage.
+    """
     unwrapped = _unwrap_model(model)
     if _is_xgboost_booster(unwrapped):
         return _xgboost_predict_fn(unwrapped), "xgboost.predict"
@@ -258,7 +405,17 @@ def _resolve_model_callable(model, prefer_proba: bool = True):
     raise TypeError("Model is not callable and has no predict methods.")
 
 
-def _call_explainer_silent(explainer, X):
+def _call_explainer_silent(explainer: Any, X: Any) -> Any:
+    """
+    Call a SHAP explainer with silent output when supported.
+
+    Args:
+        explainer: SHAP explainer instance.
+        X: Input data to explain.
+
+    Returns:
+        SHAP output object from the explainer.
+    """
     try:
         signature = inspect.signature(explainer.__call__)
     except (TypeError, ValueError):
@@ -268,14 +425,33 @@ def _call_explainer_silent(explainer, X):
     return explainer(X)
 
 
-def _is_kernel_like_explainer(explainer) -> bool:
+def _is_kernel_like_explainer(explainer: Any) -> bool:
+    """
+    Detect kernel-like explainers by class/module naming.
+
+    Args:
+        explainer: SHAP explainer instance.
+
+    Returns:
+        True if the explainer is kernel/permutation-like.
+    """
     name = explainer.__class__.__name__.lower()
     module = explainer.__class__.__module__.lower()
     return ("kernel" in name or "kernel" in module or
             "permutation" in name or "permutation" in module)
 
 
-def _coerce_shap_arrays(shap_result, n_features: int) -> List[np.ndarray]:
+def _coerce_shap_arrays(shap_result: Any, n_features: int) -> List[np.ndarray]:
+    """
+    Normalize SHAP outputs into a list of 2D arrays.
+
+    Args:
+        shap_result: SHAP output object (arrays or Explanation).
+        n_features: Expected number of features.
+
+    Returns:
+        A list of 2D numpy arrays with shape (n_samples, n_features).
+    """
     values = shap_result.values if isinstance(
         shap_result, shap.Explanation) else shap_result
     if isinstance(values, list):
@@ -309,7 +485,20 @@ def _coerce_shap_arrays(shap_result, n_features: int) -> List[np.ndarray]:
 
 
 def _global_importance_from_shap(
-        shap_result, n_features: int, class_index: Optional[int] = None):
+        shap_result: Any,
+        n_features: int,
+        class_index: Optional[int] = None) -> np.ndarray:
+    """
+    Compute global mean(|SHAP|) importance from SHAP outputs.
+
+    Args:
+        shap_result: SHAP output object.
+        n_features: Expected number of features.
+        class_index: Optional class index for multi-output models.
+
+    Returns:
+        A 1D numpy array of global importances.
+    """
     arrays = _coerce_shap_arrays(shap_result, n_features)
     if class_index is not None:
         if class_index >= len(arrays):
@@ -322,6 +511,15 @@ def _global_importance_from_shap(
 
 
 def _mean_pairwise_spearman(imp_vectors: List[np.ndarray]) -> float:
+    """
+    Compute mean pairwise Spearman correlation for importance vectors.
+
+    Args:
+        imp_vectors: List of importance vectors.
+
+    Returns:
+        Mean Spearman rank correlation across all pairs.
+    """
     if len(imp_vectors) < 2:
         return 1.0
     corrs = []
@@ -335,6 +533,16 @@ def _mean_pairwise_spearman(imp_vectors: List[np.ndarray]) -> float:
 
 
 def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Compute cosine distance between two vectors.
+
+    Args:
+        a: First vector.
+        b: Second vector.
+
+    Returns:
+        Cosine distance in [0, 2].
+    """
     denom = np.linalg.norm(a) * np.linalg.norm(b)
     if denom == 0:
         return 1.0
@@ -342,7 +550,18 @@ def _cosine_distance(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def _representative_run_index(
-        imp_vectors: List[np.ndarray], imp_mean: np.ndarray) -> int:
+        imp_vectors: List[np.ndarray],
+        imp_mean: np.ndarray) -> int:
+    """
+    Pick the run closest to the mean importance vector.
+
+    Args:
+        imp_vectors: List of importance vectors.
+        imp_mean: Mean importance vector.
+
+    Returns:
+        Index of the representative run.
+    """
     distances = [_cosine_distance(v, imp_mean) for v in imp_vectors]
     return int(np.argmin(distances))
 
@@ -354,6 +573,20 @@ def _build_stability(
         warn_threshold_cv: float,
         warn_threshold_rankcorr: float,
         early_stopped: bool = False) -> Dict[str, Any]:
+    """
+    Aggregate stability metrics across SHAP runs.
+
+    Args:
+        imp_vectors: List of importance vectors per run.
+        feature_names: Feature names for reporting top features.
+        topN_important: Number of top features to track.
+        warn_threshold_cv: Coefficient of variation threshold.
+        warn_threshold_rankcorr: Rank correlation threshold.
+        early_stopped: Whether the run stopped early.
+
+    Returns:
+        Dictionary of stability statistics and warning flags.
+    """
     imp_stack = np.vstack(imp_vectors)
     imp_mean = imp_stack.mean(axis=0)
     imp_std = imp_stack.std(axis=0, ddof=0)
@@ -384,7 +617,16 @@ def _build_stability(
     }
 
 
-def _concat_shap_batches(batch_values):
+def _concat_shap_batches(batch_values: List[Any]) -> Any:
+    """
+    Concatenate SHAP outputs produced in batches.
+
+    Args:
+        batch_values: List of SHAP outputs per batch.
+
+    Returns:
+        Concatenated SHAP output in the original structure.
+    """
     if not batch_values:
         return np.array([])
     first = batch_values[0]
@@ -400,7 +642,17 @@ def _concat_shap_batches(batch_values):
     return np.concatenate(arrays, axis=0)
 
 
-def build_kernel_explainer(model, X_bg):
+def build_kernel_explainer(model: Any, X_bg: Any) -> Any:
+    """
+    Create a KernelExplainer with a resolved model callable.
+
+    Args:
+        model: Model to explain.
+        X_bg: Background data for KernelExplainer.
+
+    Returns:
+        An initialized KernelExplainer instance.
+    """
     # BACKEND TAILORING NOTE (kernel):
     # Why this exists:
     # Kernel SHAP depends on the model callable output; for classifiers we
@@ -415,11 +667,24 @@ def build_kernel_explainer(model, X_bg):
 
 
 def compute_kernel_shap(
-        explainer,
-        X_explain,
+        explainer: Any,
+        X_explain: Any,
         n_features: int,
         nsamples: Optional[int] = None,
-        class_index: Optional[int] = None):
+        class_index: Optional[int] = None) -> Any:
+    """
+    Compute Kernel SHAP values with optional class selection.
+
+    Args:
+        explainer: KernelExplainer instance.
+        X_explain: Data to explain.
+        n_features: Number of features in X_explain.
+        nsamples: KernelExplainer nsamples parameter.
+        class_index: Optional class index for multi-class outputs.
+
+    Returns:
+        SHAP values in backend-specific format.
+    """
     shap_values = explainer.shap_values(X_explain, nsamples=nsamples)
     # BACKEND TAILORING NOTE (kernel):
     # Why this exists:
@@ -438,7 +703,17 @@ def compute_kernel_shap(
     return shap_values
 
 
-def build_gradient_explainer(model, X_bg):
+def build_gradient_explainer(model: Any, X_bg: Any) -> Any:
+    """
+    Create a GradientExplainer with backend validation.
+
+    Args:
+        model: Differentiable model to explain.
+        X_bg: Background data for GradientExplainer.
+
+    Returns:
+        An initialized GradientExplainer instance.
+    """
     # BACKEND TAILORING NOTE (gradient):
     # Why this exists:
     # GradientExplainer needs a differentiable model; we fail fast so users do
@@ -471,7 +746,17 @@ def build_gradient_explainer(model, X_bg):
     return explainer
 
 
-def _call_gradient_explainer(explainer, inputs):
+def _call_gradient_explainer(explainer: Any, inputs: Any) -> Any:
+    """
+    Call GradientExplainer consistently across SHAP versions.
+
+    Args:
+        explainer: GradientExplainer instance.
+        inputs: Input data (tensor or array) to explain.
+
+    Returns:
+        SHAP values for the input batch.
+    """
     try:
         return explainer.shap_values(inputs)
     except Exception:
@@ -479,7 +764,21 @@ def _call_gradient_explainer(explainer, inputs):
         return result.values if isinstance(result, shap.Explanation) else result
 
 
-def compute_gradient_shap(explainer, X_explain, batch_size: int = 128):
+def compute_gradient_shap(
+        explainer: Any,
+        X_explain: Any,
+        batch_size: int = 128) -> Any:
+    """
+    Compute Gradient SHAP values in batches.
+
+    Args:
+        explainer: GradientExplainer instance.
+        X_explain: Data to explain.
+        batch_size: Batch size for memory-safe execution.
+
+    Returns:
+        SHAP values in backend-specific format.
+    """
     # BACKEND TAILORING NOTE (gradient):
     # Why this exists:
     # GradientExplainer can exhaust GPU/CPU memory when explaining too many
@@ -504,7 +803,17 @@ def compute_gradient_shap(explainer, X_explain, batch_size: int = 128):
     return _concat_shap_batches(batch_values)
 
 
-def build_generic_explainer(model, X_bg):
+def build_generic_explainer(model: Any, X_bg: Any) -> Any:
+    """
+    Create a generic shap.Explainer with a tabular masker.
+
+    Args:
+        model: Model or callable to explain.
+        X_bg: Background data for the masker.
+
+    Returns:
+        A shap.Explainer instance.
+    """
     # BACKEND TAILORING NOTE (explainer):
     # Why this exists:
     # The generic Explainer needs a masker for tabular data; Independent keeps
@@ -520,21 +829,31 @@ def build_generic_explainer(model, X_bg):
     return shap.Explainer(model_for_explainer, masker)
 
 
-def compute_generic_shap(explainer, X_explain):
+def compute_generic_shap(explainer: Any, X_explain: Any) -> Any:
+    """
+    Compute SHAP values for generic explainers.
+
+    Args:
+        explainer: shap.Explainer instance.
+        X_explain: Data to explain.
+
+    Returns:
+        SHAP values in backend-specific format.
+    """
     return _call_explainer_silent(explainer, X_explain)
 
 
 def compute_shap_adaptive(
-        X,
-        model,
+        X: Any,
+        model: Any,
         backend: Literal["kernel", "gradient", "explainer"],
-        y=None,
+        y: Optional[Any] = None,
         max_shap_samples: int = 250,
         min_shap_samples: int = 200,
         K_max: int = 5,
         max_explain_samples: Optional[int] = None,
         random_state: Optional[int] = None,
-        stratify=None,
+        stratify: Optional[Any] = None,
         warn_threshold_cv: float = 0.10,
         warn_threshold_rankcorr: float = 0.90,
         topN_important: int = 20,
@@ -544,6 +863,32 @@ def compute_shap_adaptive(
         class_index: Optional[int] = None,
         adaptive_shap_sampling: bool = True
         ) -> Tuple[ShapResult, ShapRunDiagnostics]:
+    """
+    Compute SHAP values with adaptive background sampling controls.
+
+    Args:
+        X: Input data to explain.
+        model: Trained model to explain.
+        backend: SHAP backend name ("kernel", "gradient", "explainer").
+        y: Optional target values for stratification or diagnostics.
+        max_shap_samples: Background cap for adaptive sampling.
+        min_shap_samples: Background size for repeated sampling mode.
+        K_max: Maximum number of repeated sampling runs.
+        max_explain_samples: Optional cap for explained rows.
+        random_state: Random seed for deterministic sampling.
+        stratify: Optional stratification labels for sampling.
+        warn_threshold_cv: CV threshold for stability warnings.
+        warn_threshold_rankcorr: Rank correlation threshold for warnings.
+        topN_important: Number of top features to track.
+        verbose: Whether to print diagnostic warnings.
+        kernel_nsamples: Optional KernelExplainer nsamples override.
+        batch_size: Batch size for gradient explainer runs.
+        class_index: Optional class index for multi-class outputs.
+        adaptive_shap_sampling: Enable adaptive sampling and stability checks.
+
+    Returns:
+        A tuple of (shap_result, diagnostics) with backend-specific outputs.
+    """
     X = _normalize_tabular(X)
     if backend not in {"kernel", "gradient", "explainer"}:
         raise ValueError("backend must be one of: kernel, gradient, explainer.")
@@ -813,14 +1158,25 @@ def compute_shap_adaptive(
 
 
 def compute_shap(
-        X,
-        model,
+        X: Any,
+        model: Any,
         backend: Literal["kernel", "gradient", "explainer"],
-        y=None,
+        y: Optional[Any] = None,
         adaptive_shap_sampling: bool = True,
-        **kwargs) -> Tuple[ShapResult, ShapRunDiagnostics]:
+        **kwargs: Any) -> Tuple[ShapResult, ShapRunDiagnostics]:
     """
     High-level wrapper for SHAP computation with optional adaptive sampling.
+
+    Args:
+        X: Input data to explain.
+        model: Trained model to explain.
+        backend: SHAP backend name ("kernel", "gradient", "explainer").
+        y: Optional target values for stratification or diagnostics.
+        adaptive_shap_sampling: Enable adaptive sampling behavior.
+        **kwargs: Forwarded keyword arguments to compute_shap_adaptive.
+
+    Returns:
+        A tuple of (shap_result, diagnostics).
     """
     return compute_shap_adaptive(
         X,
@@ -831,9 +1187,15 @@ def compute_shap(
         **kwargs)
 
 
-def _example_usage_adaptive_shap():
+def _example_usage_adaptive_shap() -> None:
     """
     Example usage snippet with dummy model adapters.
+
+    Args:
+        None.
+
+    Returns:
+        None.
     """
     rng = np.random.default_rng(0)
     X = rng.normal(size=(500, 8))
@@ -947,7 +1309,7 @@ class ShapEstimator(BaseEstimator):
             on_gpu: bool = False,
             verbose: bool = False,
             prog_bar: bool = True,
-            silent: bool = False):
+            silent: bool = False) -> None:
         """
         Initialize the ShapEstimator object.
 
@@ -992,6 +1354,27 @@ class ShapEstimator(BaseEstimator):
             Whether to show a progress bar.
         silent : bool, default=False
             Whether to suppress all output.
+
+        Args:
+            explainer: SHAP explainer name to use.
+            models: Optional estimator collection used for SHAP computation.
+            correlation_th: Optional correlation threshold for pruning.
+            mean_shap_percentile: Percentile used to compute SHAP threshold.
+            iters: Number of iterations for feature selection.
+            reciprocity: Whether to enforce reciprocal edges.
+            min_impact: Minimum SHAP impact threshold for selection.
+            exhaustive: Whether to run exhaustive feature selection.
+            background_size: Background sample size for SHAP explainers.
+            background_method: Background selection method ("sample" or "kmeans").
+            background_seed: Random seed for background sampling.
+            parallel_jobs: Parallel worker count.
+            on_gpu: Whether to use GPU for SHAP computation.
+            verbose: Enable verbose output.
+            prog_bar: Whether to show progress bars.
+            silent: Suppress all output.
+
+        Returns:
+            None.
         """
         self.explainer = explainer
         self.models = models
@@ -1015,7 +1398,10 @@ class ShapEstimator(BaseEstimator):
         self._fit_desc = f"Running SHAP explainer ({self.explainer})"
         self._pred_desc = "Building graph skeleton"
 
-    def _select_background(self, X_train, allow_kmeans: bool = True):
+    def _select_background(
+            self,
+            X_train: np.ndarray,
+            allow_kmeans: bool = True) -> np.ndarray:
         """
         Select the background samples for SHAP explainers.
 
@@ -1029,6 +1415,13 @@ class ShapEstimator(BaseEstimator):
         -------
         np.ndarray
             The selected background samples.
+
+        Args:
+            X_train: Training data used to draw background samples.
+            allow_kmeans: Whether kmeans-based sampling is permitted.
+
+        Returns:
+            Selected background samples as a numpy array.
         """
         if self.background_size is None:
             return X_train
@@ -1052,7 +1445,22 @@ class ShapEstimator(BaseEstimator):
             "background_method must be 'sample' or 'kmeans'."
         )
 
-    def _call_explainer(self, explainer, X_test, silent: bool = True):
+    def _call_explainer(
+            self,
+            explainer: Any,
+            X_test: Any,
+            silent: bool = True) -> Any:
+        """
+        Invoke a SHAP explainer with optional silent mode.
+
+        Args:
+            explainer: SHAP explainer instance.
+            X_test: Data to explain.
+            silent: Whether to suppress explainer output.
+
+        Returns:
+            SHAP output from the explainer.
+        """
         if not silent:
             return explainer(X_test)
         try:
@@ -1083,23 +1491,45 @@ class ShapEstimator(BaseEstimator):
                 return explainer(X_test, **call_kwargs)
             raise
 
-    def __str__(self):
+    def __str__(self) -> str:
+        """
+        Return a compact string representation for logging.
+
+        Args:
+            None.
+
+        Returns:
+            String representation of the estimator.
+        """
         return utils.stringfy_object(self)
 
     # Define the process_target function at the top level
     @staticmethod
     def _shap_fit_target_variable(
-        target_name,
-        models,
-        X_train,
-        X_test,
-        feature_names,
-        on_gpu,
-        verbose,
-        run_selected_shap_explainer_func,
-    ):
+        target_name: str,
+        models: Any,
+        X_train: pd.DataFrame,
+        X_test: pd.DataFrame,
+        feature_names: List[str],
+        on_gpu: bool,
+        verbose: bool,
+        run_selected_shap_explainer_func: Callable[..., Any],
+    ) -> Tuple[str, np.ndarray, np.ndarray, np.ndarray]:
         """
         Process a single target in the SHAP fit process.
+
+        Args:
+            target_name: Target variable name to explain.
+            models: Model container used for SHAP computation.
+            X_train: Training data including all features.
+            X_test: Test data including all features.
+            feature_names: Full list of feature names.
+            on_gpu: Whether to place torch models on GPU.
+            verbose: Whether to print debug output.
+            run_selected_shap_explainer_func: Callable that runs SHAP.
+
+        Returns:
+            A tuple of (target_name, shap_values, feature_order, shap_means).
         """
         # Get the model and the data (tensor form)
         if hasattr(models.regressor[target_name], "model"):
@@ -1135,7 +1565,7 @@ class ShapEstimator(BaseEstimator):
             shap_mean_values_target
 
 
-    def fit(self, X):
+    def fit(self, X: pd.DataFrame) -> "ShapEstimator":
         """
         Fit the ShapleyExplainer model to the given dataset.
 
@@ -1144,6 +1574,12 @@ class ShapEstimator(BaseEstimator):
 
         Returns:
         - self: The fitted ShapleyExplainer model.
+
+        Args:
+            X: Input dataset used to compute SHAP values.
+
+        Returns:
+            The fitted estimator instance.
         """
         assert self.models is not None, "shap.models must be set"
 
@@ -1236,10 +1672,16 @@ class ShapEstimator(BaseEstimator):
 
         return self
 
-    def _compute_scaled_shap_threshold(self):
+    def _compute_scaled_shap_threshold(self) -> None:
         """
         Compute the scaled SHAP threshold based on the given percentile.
         If the percentile is 0.0 or None, then the threshold is set to 0.0.
+
+        Args:
+            None.
+
+        Returns:
+            None.
         """
         if self.mean_shap_percentile:
             self.mean_shap_threshold = np.quantile(
@@ -1247,7 +1689,12 @@ class ShapEstimator(BaseEstimator):
         else:
             self.mean_shap_threshold = 0.0
 
-    def _run_selected_shap_explainer(self, target_name, model, X_train, X_test):
+    def _run_selected_shap_explainer(
+            self,
+            target_name: str,
+            model: Any,
+            X_train: np.ndarray,
+            X_test: np.ndarray) -> np.ndarray:
         """
         Run the selected SHAP explainer, according to the given parameters.
 
@@ -1266,6 +1713,15 @@ class ShapEstimator(BaseEstimator):
         -------
         shap_values : np.ndarray
             The SHAP values for the given target.
+
+        Args:
+            target_name: Name of the target feature.
+            model: Trained model for the target.
+            X_train: Training data used for background.
+            X_test: Data to explain.
+
+        Returns:
+            SHAP values for the target feature.
         """
         if self.explainer == "kernel":
             background = self._select_background(X_train)
@@ -1315,7 +1771,17 @@ class ShapEstimator(BaseEstimator):
 
         return shap_values
 
-    def _add_zeroes(self, target, correlated_features):
+    def _add_zeroes(self, target: str, correlated_features: List[str]) -> None:
+        """
+        Insert zeros for dropped correlated features in mean SHAP values.
+
+        Args:
+            target: Target feature name.
+            correlated_features: Features removed due to correlation.
+
+        Returns:
+            None.
+        """
         features = [f for f in self.feature_names if f != target]
         for correlated_feature in correlated_features:
             correlated_feature_position = features.index(correlated_feature)
@@ -1324,8 +1790,8 @@ class ShapEstimator(BaseEstimator):
 
     def predict(
             self,
-            X,
-            root_causes=None,
+            X: pd.DataFrame,
+            root_causes: Optional[List[str]] = None,
             prior: Optional[List[List[str]]] = None) -> nx.DiGraph:
         """
         Builds a causal graph from the shap values using a selection mechanism based
@@ -1347,6 +1813,14 @@ class ShapEstimator(BaseEstimator):
         -------
         nx.DiGraph
             The causal graph.
+
+        Args:
+            X: Input dataset used for prediction.
+            root_causes: Optional list of root-cause feature names.
+            prior: Optional prior knowledge constraints.
+
+        Returns:
+            The inferred causal graph.
         """
         if self.verbose:
             print("-----\nshap.predict()")
@@ -1428,14 +1902,25 @@ class ShapEstimator(BaseEstimator):
             self,
             graph: nx.DiGraph,
             increase_tolerance: float = 0.0,
-            sd_upper: float = 0.1):
+            sd_upper: float = 0.1) -> nx.DiGraph:
+        """
+        Adjust graph edges based on SHAP discrepancy thresholds.
+
+        Args:
+            graph: Graph to adjust.
+            increase_tolerance: Tolerance scaling applied to discrepancy bounds.
+            sd_upper: Upper bound for discrepancy difference.
+
+        Returns:
+            Adjusted directed graph.
+        """
 
         # self._compute_shap_discrepancies(X)
         new_graph = self._adjust_edges_from_shap_discrepancies(
             graph, increase_tolerance, sd_upper)
         return new_graph
 
-    def _compute_discrepancies(self, X: pd.DataFrame):
+    def _compute_discrepancies(self, X: pd.DataFrame) -> pd.DataFrame:
         """
         Compute the discrepancies between the SHAP values and the target values
         for all features and all targets.
@@ -1449,6 +1934,12 @@ class ShapEstimator(BaseEstimator):
         -------
         pd.DataFrame
             A dataframe containing the discrepancies for all features and all targets.
+
+        Args:
+            X: Input dataset with all features.
+
+        Returns:
+            DataFrame of discrepancies indexed by target and parent features.
         """
         if not self.is_fitted_:
             raise ValueError("This Rex instance is not fitted yet. \
@@ -1489,7 +1980,26 @@ class ShapEstimator(BaseEstimator):
 
         return self.discrepancies
 
-    def _compute_discrepancy(self, x, y, s, target_name, parent_name) -> ShapDiscrepancy:
+    def _compute_discrepancy(
+            self,
+            x: Union[np.ndarray, pd.Series, pd.DataFrame],
+            y: Union[np.ndarray, pd.Series, pd.DataFrame],
+            s: Union[np.ndarray, pd.Series, pd.DataFrame],
+            target_name: str,
+            parent_name: str) -> ShapDiscrepancy:
+        """
+        Compute discrepancy statistics between SHAP values and targets.
+
+        Args:
+            x: Parent feature values.
+            y: Target feature values.
+            s: SHAP values associated with the parent.
+            target_name: Name of the target feature.
+            parent_name: Name of the parent feature.
+
+        Returns:
+            ShapDiscrepancy dataclass with per-feature diagnostics.
+        """
         if isinstance(x, (pd.Series, pd.DataFrame)):
             x = x.values
         elif not isinstance(x, np.ndarray):
@@ -1576,7 +2086,7 @@ class ShapEstimator(BaseEstimator):
             self,
             graph: nx.DiGraph,
             increase_tolerance: float = 0.0,
-            sd_upper: float = 0.1):
+            sd_upper: float = 0.1) -> nx.DiGraph:
         """
         Adjust the edges of the graph based on the discrepancy index. This method
         removes edges that have a discrepancy index larger than the given standard
@@ -1597,6 +2107,14 @@ class ShapEstimator(BaseEstimator):
         -------
         networkx.DiGraph
             The graph with the edges adjusted.
+
+        Args:
+            graph: Graph to adjust.
+            increase_tolerance: Tolerance scaling for discrepancy bounds.
+            sd_upper: Upper bound for discrepancy difference.
+
+        Returns:
+            The adjusted directed graph.
         """
 
         new_graph = nx.DiGraph()
@@ -1680,19 +2198,37 @@ class ShapEstimator(BaseEstimator):
 
         return new_graph
 
-    def _nodes_in_cycles(self, cycles, feature, target) -> bool:
+    def _nodes_in_cycles(
+            self,
+            cycles: List[List[str]],
+            feature: str,
+            target: str) -> bool:
         """
         Check if the given nodes are in any of the cycles.
+
+        Args:
+            cycles: List of cycles from the graph.
+            feature: Feature node name.
+            target: Target node name.
+
+        Returns:
+            True if both nodes appear in the same cycle.
         """
         for cycle in cycles:
             if feature in cycle and target in cycle:
                 return True
         return False
 
-    def _increase_upper_tolerance(self, discrepancies: pd.DataFrame):
+    def _increase_upper_tolerance(self, discrepancies: pd.DataFrame) -> bool:
         """
         Increase the upper tolerance if the discrepancy matrix properties are
         suspicious. We found these suspicious values empirically in the polymoial case.
+
+        Args:
+            discrepancies: Discrepancy matrix data.
+
+        Returns:
+            True if the tolerance should be increased.
         """
         D = discrepancies.values
         D = np.nan_to_num(D)
@@ -1708,10 +2244,24 @@ class ShapEstimator(BaseEstimator):
             return True
         return False
 
-    def _input_vector(self, discrepancies, target, feature, target_mean):
+    def _input_vector(
+            self,
+            discrepancies: pd.DataFrame,
+            target: str,
+            feature: str,
+            target_mean: float) -> np.ndarray:
         """
         Builds a vector with the values computed from the discrepancy index.
         Used to feed the model in _adjust_from_model method.
+
+        Args:
+            discrepancies: Discrepancy matrix data.
+            target: Target feature name.
+            feature: Feature name.
+            target_mean: Mean discrepancy for the target.
+
+        Returns:
+            Feature vector used by downstream models.
         """
         source_mean = np.mean(discrepancies.loc[feature].values)
         forward_sd = discrepancies.loc[target, feature]
@@ -1728,7 +2278,20 @@ class ShapEstimator(BaseEstimator):
 
         return input_vector
 
-    def _adjust_predictions_shape(self, predictions, target_shape):
+    def _adjust_predictions_shape(
+            self,
+            predictions: Union[np.ndarray, List[np.ndarray]],
+            target_shape: Tuple[int, int]) -> np.ndarray:
+        """
+        Normalize predictions into a 2D array with the target shape.
+
+        Args:
+            predictions: Raw predictions to normalize.
+            target_shape: Desired output shape.
+
+        Returns:
+            Normalized numpy array matching target_shape.
+        """
         # Concatenate if predictions is a list
         if isinstance(predictions, list):
             predictions = np.concatenate(predictions)
@@ -1742,7 +2305,7 @@ class ShapEstimator(BaseEstimator):
 
         return predictions
 
-    def compute_error_contribution(self):
+    def compute_error_contribution(self) -> pd.DataFrame:
         """
         Computes the error contribution of each feature for each target.
         If this value is positive, then it means that, on average, the presence of
@@ -1756,6 +2319,12 @@ class ShapEstimator(BaseEstimator):
         --------
         err_contrib: pd.DataFrame
             Error contribution of each feature for each target.
+
+        Args:
+            None.
+
+        Returns:
+            DataFrame of per-feature error contributions.
         """
         error_contribution = dict()
         predictions = self.models.predict(self.X_test)   # type: ignore
@@ -1782,7 +2351,11 @@ class ShapEstimator(BaseEstimator):
         self.error_contribution = pd.DataFrame(error_contribution)
         return self.error_contribution
 
-    def _individual_error_contribution(self, shap_values, y_true, y_pred):
+    def _individual_error_contribution(
+            self,
+            shap_values: pd.DataFrame,
+            y_true: pd.Series,
+            y_pred: pd.Series) -> pd.Series:
         """
         Compute the error contribution of each feature.
         If this value is positive, then it means that, on average, the presence of
@@ -1805,6 +2378,14 @@ class ShapEstimator(BaseEstimator):
         --------
         error_contribution: pd.Series
             Error contribution of each feature.
+
+        Args:
+            shap_values: SHAP values for a given target.
+            y_true: Ground truth values for a given target.
+            y_pred: Predicted values for a given target.
+
+        Returns:
+            Series of per-feature error contributions.
         """
         abs_error = (y_true - y_pred).abs()
         y_pred_wo_feature = shap_values.apply(lambda feature: y_pred - feature)
@@ -1818,14 +2399,30 @@ class ShapEstimator(BaseEstimator):
 
     def _debugmsg(
             self,
-            msg,
-            target,
-            target_threshold,
-            feature,
-            tolerance,
-            vector,
-            sd_upper,
-            cycles):
+            msg: str,
+            target: str,
+            target_threshold: float,
+            feature: str,
+            tolerance: float,
+            vector: Union[List[float], np.ndarray],
+            sd_upper: float,
+            cycles: List[List[str]]) -> None:
+        """
+        Print verbose diagnostics for edge adjustment decisions.
+
+        Args:
+            msg: Debug message prefix.
+            target: Target node name.
+            target_threshold: Threshold for the target discrepancy.
+            feature: Feature node name.
+            tolerance: Current tolerance value.
+            vector: Diagnostic vector of discrepancy stats.
+            sd_upper: Upper bound for discrepancy differences.
+            cycles: List of detected cycles.
+
+        Returns:
+            None.
+        """
         if not self.verbose:
             return
         forward_sd, reverse_sd, diff, _, _, _, _ = vector
@@ -1843,13 +2440,19 @@ class ShapEstimator(BaseEstimator):
         if len(cycles) > 0 and self._nodes_in_cycles(cycles, feature, target):
             print(f"    ~~ Cycles: {cycles}")
 
-    def _get_method_caller_name(self):
+    def _get_method_caller_name(self) -> str:
         """
         Determine the name of the method that called it. It does this by using
         the inspect module to get the outermost frame of the call stack and then
         extracting the name of the third frame. If the name is either __call__ or
         _run_step, it returns "ReX". If any exception occurs during this
         process, it returns "unknown".
+
+        Args:
+            None.
+
+        Returns:
+            Caller method name or "unknown".
         """
         try:
             curframe = inspect.currentframe()
@@ -1864,9 +2467,9 @@ class ShapEstimator(BaseEstimator):
     def _plot_shap_summary(
             self,
             target_name: str,
-            ax,
+            ax: Optional[Any],
             max_features_to_display: int = 20,
-            **kwargs):
+            **kwargs: Any) -> Any:
         """
         Plots the summary of the SHAP values for a given target.
 
@@ -1884,6 +2487,15 @@ class ShapEstimator(BaseEstimator):
                 The axis in which to plot the summary. If None, a new figure is created.
             **kwargs: Dict
                 Additional arguments to be passed to the plot.
+
+        Args:
+            target_name: Target feature name.
+            ax: Matplotlib axis to plot into (optional).
+            max_features_to_display: Max number of features to show.
+            **kwargs: Additional plotting arguments.
+
+        Returns:
+            Matplotlib figure with the SHAP summary plot.
         """
 
         figsize_ = kwargs.get('figsize', (6, 3))
@@ -1926,7 +2538,11 @@ class ShapEstimator(BaseEstimator):
         fig = ax.figure if fig is None else fig
         return fig
 
-    def _plot_discrepancies(self, target_name: str, threshold: float = 10.0, **kwargs):
+    def _plot_discrepancies(
+            self,
+            target_name: str,
+            threshold: float = 10.0,
+            **kwargs: Any) -> None:
         """
         Plot the discrepancies between the target variable and each feature.
 
@@ -1940,24 +2556,34 @@ class ShapEstimator(BaseEstimator):
 
         Returns:
             None
+
+        Args:
+            target_name: Name of the target variable.
+            threshold: Threshold for selecting features to plot.
+            **kwargs: Additional plotting arguments.
+
+        Returns:
+            None.
         """
         pass
 
 
-def custom_main(exp_name,
-                path="/Users/renero/phd/data/RC4/",
-                output_path="/Users/renero/phd/output/RC4/",
-                scale=False):
+def custom_main(
+        exp_name: str,
+        path: str = "/Users/renero/phd/data/RC4/",
+        output_path: str = "/Users/renero/phd/output/RC4/",
+        scale: bool = False) -> None:
     """
     Runs a custom main function for the given experiment name.
 
     Args:
-        experiment_name (str): The name of the experiment to run.
-        path (str): The path to the data files.
-        output_path (str): The path to the output files.
+        exp_name: The name of the experiment to run.
+        path: The path to the data files.
+        output_path: The path to the output files.
+        scale: Whether to scale data before running.
 
     Returns:
-        None
+        None.
     """
 
     ref_graph = utils.graph_from_dot_file(f"{path}{exp_name}.dot")
@@ -1989,7 +2615,16 @@ def custom_main(exp_name,
     rex.shaps.predict(test, rex.root_causes)
 
 
-def sachs_main():
+def sachs_main() -> None:
+    """
+    Run a demo experiment on the Sachs dataset.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+    """
     experiment_name = "sachs_long"
     path = "/Users/renero/phd/data/RC3/"
     output_path = "/Users/renero/phd/output/RC3/"
