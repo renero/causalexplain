@@ -421,7 +421,7 @@ def main() -> None:
     dag = _ensure_dag(result)
 
     elapsed_time, units = utils.format_time(time.time() - start_time)
-    print(f"(Elapsed time: {elapsed_time:.1f}{units})")
+    print(f"Elapsed time: {elapsed_time:.1f}{units}")
     discoverer.printout_results(dag, result.metrics, run_values['combine_op'])
 
     if run_values['output_path'] is not None:

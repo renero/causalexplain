@@ -77,7 +77,8 @@ class GraphDiscovery:
         self.ref_graph = self._load_reference_graph(true_dag_filename)
         if true_dag_filename is not None and self.ref_graph is None:
             raise ValueError("True DAG could not be loaded from dot file")
-        self.data, self.dataset_name, self.data_columns = self._load_dataset_metadata(csv_filename)
+        self.data, self.dataset_name, self.data_columns = self._load_dataset_metadata(
+            csv_filename)
         self.train_idx, self.test_idx = self._build_split_indices(
             self.data, self.train_size, self.random_state)
         self._validate_dag_nodes(self.ref_graph, self.data_columns)
@@ -218,7 +219,8 @@ class GraphDiscovery:
             Tuple[pd.Index, pd.Index]: Train and test row indices.
         """
         # Share split indices across experiments to avoid repeated sampling.
-        train_idx = data.sample(frac=train_size, random_state=random_state).index
+        train_idx = data.sample(
+            frac=train_size, random_state=random_state).index
         test_idx = data.index[~data.index.isin(train_idx)]
         return train_idx, test_idx
 
@@ -340,7 +342,8 @@ class GraphDiscovery:
                 + ", ".join(map(str, invalid_names))
             )
         data_columns = {str(col) for col in self.data_columns}
-        extra = sorted({name for name in prior_names if name not in data_columns})
+        extra = sorted(
+            {name for name in prior_names if name not in data_columns})
         if extra:
             raise ValueError(
                 "Prior includes variables not present in dataset columns: "
@@ -379,7 +382,8 @@ class GraphDiscovery:
                 trainer name.
         """
         if self.csv_filename is None:
-            raise AttributeError("CSV filename is required to create experiments.")
+            raise AttributeError(
+                "CSV filename is required to create experiments.")
 
         csv_filename = cast(str, self.csv_filename)
         dot_filename = cast(str, self.dot_filename)
@@ -666,6 +670,69 @@ class GraphDiscovery:
         self.metrics = self.trainer[list(self.trainer.keys())[-1]].metrics
         return self.trainer
 
+    def _sampling_summary(self) -> str:
+        """
+        Generate a summary string of the SHAP adaptive sampling strategy.
+
+        Returns:
+            str: A summary of the SHAP adaptive sampling strategy.
+        """
+        if self.estimator != 'rex':
+            return "SHAP adaptive sampling: not used"
+        rex_estimator = None
+        for trainer in self.trainer.values():
+            candidate = getattr(trainer, 'rex', None)
+            if candidate is not None:
+                rex_estimator = candidate
+                break
+        if rex_estimator is None:
+            return "SHAP adaptive sampling: unavailable"
+
+        adaptive = getattr(rex_estimator, 'adaptive_shap_sampling', True)
+        max_shap_samples = getattr(rex_estimator, 'max_shap_samples', 250)
+        min_shap_samples = getattr(rex_estimator, 'min_shap_samples', 200)
+        k_max = getattr(rex_estimator, 'K_max', 5)
+        if not isinstance(max_shap_samples, int) or max_shap_samples <= 0:
+            max_shap_samples = 250
+        if not isinstance(min_shap_samples, int) or min_shap_samples <= 0:
+            min_shap_samples = 200
+        if not isinstance(k_max, int) or k_max <= 0:
+            k_max = 5
+
+        data_ref = self.data
+        if data_ref is None:
+            for trainer in self.trainer.values():
+                candidate_data = getattr(trainer, 'data', None)
+                if candidate_data is not None:
+                    data_ref = candidate_data
+                    break
+        if data_ref is None:
+            return "SHAP adaptive sampling: unavailable"
+
+        n_rows = len(data_ref)
+        if not adaptive:
+            mode = "no_sampling"
+            n_background = n_rows
+            k_target = 1
+            return (
+                "SHAP adaptive sampling: disabled "
+                f"({mode}, K={k_target}, samples={n_background})"
+            )
+        if n_rows <= max_shap_samples:
+            mode = "no_sampling"
+            n_background = n_rows
+            k_target = 1
+        elif n_rows <= 2 * max_shap_samples:
+            mode = "single_sample"
+            n_background = max_shap_samples
+            k_target = 1
+        else:
+            mode = "multi_sample"
+            n_background = min(min_shap_samples, n_rows)
+            k_target = min(int(k_max), 5)
+
+        return f"SHAP adaptive sampling: {mode} (K={k_target}, samples={n_background})"
+
     def printout_results(
         self,
         graph: nx.DiGraph,
@@ -687,42 +754,12 @@ class GraphDiscovery:
         Returns:
             None: This method does not return a value.
         """
-        def sampling_summary() -> str:
-            if self.estimator != 'rex':
-                return "Sampling strategy: none"
-            rex_estimator = None
-            for trainer in self.trainer.values():
-                candidate = getattr(trainer, 'rex', None)
-                if candidate is not None:
-                    rex_estimator = candidate
-                    break
-            if rex_estimator is None:
-                return "Sampling strategy: bootstrap (details unavailable)"
-            trials = getattr(rex_estimator, 'bootstrap_trials', None)
-            split = getattr(rex_estimator, 'bootstrap_sampling_split', None)
-            if split == 'auto' and hasattr(rex_estimator, '_set_sampling_split'):
-                split = rex_estimator._set_sampling_split()
-            data_ref = self.data
-            if data_ref is None:
-                for trainer in self.trainer.values():
-                    candidate_data = getattr(trainer, 'data', None)
-                    if candidate_data is not None:
-                        data_ref = candidate_data
-                        break
-            sample_count = None
-            if data_ref is not None and isinstance(split, (int, float)):
-                sample_count = max(1, int(round(split * len(data_ref))))
-            if isinstance(trials, int) and trials > 0 and sample_count is not None:
-                return f"Sampling strategy: bootstrap (K={trials}, samples={sample_count})"
-            if isinstance(trials, int) and trials > 0:
-                return f"Sampling strategy: bootstrap (K={trials})"
-            return "Sampling strategy: none"
-
         if len(graph.edges()) == 0:
             print("Empty graph")
-            print(sampling_summary())
+            print(self._sampling_summary())
             return
 
+        print(self._sampling_summary())
         combination = "Union" if combine_op == 'union' else "Intersection"
         msg = f"Graph from '{self.estimator.upper()}' using {combination} of DAGs:"
         print(f"{msg}\n" + "-" * len(msg))
@@ -754,7 +791,7 @@ class GraphDiscovery:
             print(f"\n{msg}\n" + "-" * len(msg))
             print(metrics)
 
-        print(sampling_summary())
+
 
     def export(self, output_file: str) -> None:
         """
@@ -785,7 +822,8 @@ class GraphDiscovery:
         """
         model = self.trainer[list(self.trainer.keys())[-1]]
         if model.dag is None:
-            raise ValueError("No DAG available to export. Run the experiment first.")
+            raise ValueError(
+                "No DAG available to export. Run the experiment first.")
         return utils.graph_to_dot_file(model.dag, output_file)
 
     def plot(
@@ -822,7 +860,8 @@ class GraphDiscovery:
         """
         model = self.trainer[list(self.trainer.keys())[-1]]
         if model.dag is None:
-            raise ValueError("No DAG available to plot. Run the experiment first.")
+            raise ValueError(
+                "No DAG available to plot. Run the experiment first.")
         if model.ref_graph is not None:
             ref_graph = model.ref_graph
         else:
