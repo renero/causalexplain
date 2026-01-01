@@ -466,8 +466,16 @@ class Rex(BaseEstimator, ClassifierMixin):
         return self
 
     @staticmethod
-    def _bootstrap_iteration(iter, X, models, sampling_split, feature_names, prior,
-                             random_state, verbose=False):
+    def _bootstrap_iteration(
+            iter,
+            X,
+            models,
+            sampling_split,
+            feature_names,
+            prior,
+            random_state,
+            explainer: Optional[str] = None,
+            verbose: bool = False):
         """
         Process an iteration of the iterative prediction.
 
@@ -487,13 +495,16 @@ class Rex(BaseEstimator, ClassifierMixin):
             The prior knowledge on the graph to use for bootstrapping.
         random_state : int
             The random state to use for bootstrapping.
+        explainer : str, optional
+            SHAP explainer backend to use ('gradient', 'explainer', or 'kernel').
         verbose : bool
             Whether to print verbose messages.
         """
         data_sample = X.sample(frac=sampling_split,
                                random_state=iter * random_state)
         shaps_instance = ShapEstimator(
-            models=models, parallel_jobs=0, prog_bar=False)
+            models=models, explainer=explainer or "explainer",
+            parallel_jobs=0, prog_bar=False)
         shaps_instance.fit(data_sample)
         dag = shaps_instance.predict(data_sample, prior=prior)
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
@@ -509,6 +520,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         prior: Optional[list] = None,
         parallel_jobs: int = 0,
         random_state: int = 1234,
+        explainer: Optional[str] = None,
     ) -> np.ndarray:
         """
         Performs iterative prediction on the given directed acyclic graph (DAG)
@@ -528,6 +540,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             The number of parallel jobs to use for bootstrapping.
         random_state : int
             The random state to use for bootstrapping.
+        explainer : str, optional
+            SHAP explainer backend to use ('gradient', 'explainer', or 'kernel').
 
         Returns
         -------
@@ -557,7 +571,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             partial_process_iteration = partial(
                 Rex._bootstrap_iteration, X=X, models=self.models,
                 sampling_split=sampling_split, feature_names=self.feature_names,
-                prior=prior, random_state=random_state, verbose=self.verbose)
+                prior=prior, random_state=random_state, explainer=explainer,
+                verbose=self.verbose)
 
             # Determine the nr of processes to pass to Pool()
             if parallel_jobs == -1:
@@ -580,7 +595,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             for iter in range(num_iterations):
                 result = Rex._bootstrap_iteration(
                     iter, X, self.models, sampling_split,
-                    self.feature_names, prior, random_state, self.verbose)
+                    self.feature_names, prior, random_state,
+                    explainer, self.verbose)
                 results.append(result)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
@@ -649,7 +665,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                   f"{sampling_split:.2f} sampling split.")
 
         iter_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
-            X, num_iterations, sampling_split, prior, parallel_jobs, random_state)
+            X, num_iterations, sampling_split, prior, parallel_jobs,
+            random_state, explainer=self.explainer)
 
         if self.shaps is not None:
             self.shaps.fit(X)

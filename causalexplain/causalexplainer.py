@@ -676,7 +676,8 @@ class GraphDiscovery:
         Print the DAG and metrics to stdout in a readable, hierarchical format.
 
         This is intended for CLI runs where the user needs a quick textual
-        summary of the discovered graph and optional evaluation metrics.
+        summary of the discovered graph, optional evaluation metrics, and
+        the sampling strategy used during estimation.
 
         Args:
             graph (nx.DiGraph): The DAG to print.
@@ -686,8 +687,40 @@ class GraphDiscovery:
         Returns:
             None: This method does not return a value.
         """
+        def sampling_summary() -> str:
+            if self.estimator != 'rex':
+                return "Sampling strategy: none"
+            rex_estimator = None
+            for trainer in self.trainer.values():
+                candidate = getattr(trainer, 'rex', None)
+                if candidate is not None:
+                    rex_estimator = candidate
+                    break
+            if rex_estimator is None:
+                return "Sampling strategy: bootstrap (details unavailable)"
+            trials = getattr(rex_estimator, 'bootstrap_trials', None)
+            split = getattr(rex_estimator, 'bootstrap_sampling_split', None)
+            if split == 'auto' and hasattr(rex_estimator, '_set_sampling_split'):
+                split = rex_estimator._set_sampling_split()
+            data_ref = self.data
+            if data_ref is None:
+                for trainer in self.trainer.values():
+                    candidate_data = getattr(trainer, 'data', None)
+                    if candidate_data is not None:
+                        data_ref = candidate_data
+                        break
+            sample_count = None
+            if data_ref is not None and isinstance(split, (int, float)):
+                sample_count = max(1, int(round(split * len(data_ref))))
+            if isinstance(trials, int) and trials > 0 and sample_count is not None:
+                return f"Sampling strategy: bootstrap (K={trials}, samples={sample_count})"
+            if isinstance(trials, int) and trials > 0:
+                return f"Sampling strategy: bootstrap (K={trials})"
+            return "Sampling strategy: none"
+
         if len(graph.edges()) == 0:
             print("Empty graph")
+            print(sampling_summary())
             return
 
         combination = "Union" if combine_op == 'union' else "Intersection"
@@ -720,6 +753,8 @@ class GraphDiscovery:
             msg = f"Graph {combination} Metrics:"
             print(f"\n{msg}\n" + "-" * len(msg))
             print(metrics)
+
+        print(sampling_summary())
 
     def export(self, output_file: str) -> None:
         """
