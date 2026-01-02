@@ -454,7 +454,7 @@ def main() -> None:
 # - Get rid of the mlforge pipeline dependency in causalexplain
 # - Fix the length of the messages printed by the tqdm progress bars
 # - Make a single progress bar for the entire training process, instead of one per model and stage
-# - Analyze whether to move to GPU the DNN training for ReX
+# ✔ Analyze whether to move to GPU the DNN training for ReX
 # - Add options to run the 'generators' from the CLI
 # - Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
 # - Cast everything to 'float32' where possible to reduce memory consumption

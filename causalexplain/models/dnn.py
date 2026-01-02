@@ -204,6 +204,8 @@ class NNRegressor(BaseEstimator):
             else:
                 loss_fn_by_target[target_name] = self.loss_fn
 
+        pbar = None
+        pbar_name = ""
         if self.prog_bar and not self.verbose:
             pbar_name = f"({caller_name}) DNN_fit"
             pbar = ProgBar().start_subtask(pbar_name, len(self.feature_names))
@@ -412,7 +414,7 @@ class NNRegressor(BaseEstimator):
             self,
             training_data: pd.DataFrame,
             test_data: pd.DataFrame,
-            study_name: str = None,
+            study_name: str|None = None,
             min_loss: float = 0.05,
             storage: str = 'sqlite:///rex_tuning.db',
             load_if_exists: bool = True,
@@ -523,7 +525,7 @@ class NNRegressor(BaseEstimator):
                     self,
                     model: torch.nn.Module,
                     dataloader: torch.utils.data.DataLoader,
-                    n_repeats: int = 10) -> Tuple[float, float, np.ndarray]:
+                    n_repeats: int = 10) -> tuple[float, float, np.ndarray[Any] | np.ndarray[Any]]:
                 """
                 Computes the average MSE loss for a given model and dataloader.
 
