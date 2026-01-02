@@ -8,10 +8,11 @@ from causalexplain.models import dnn
 class DummyTorchModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
+        self.linear = torch.nn.Linear(1, 1)
         self.loss_fn = torch.nn.MSELoss()
 
     def forward(self, x):
-        return torch.zeros((x.shape[0], 1))
+        return self.linear(x)
 
 
 class DummyMLPModel:
@@ -61,6 +62,25 @@ def test_nnregressor_fit_predict_and_score(monkeypatch):
     scores = rex.score(df)
     assert scores.shape[0] == len(df.columns)
     assert rex.is_fitted_ is True
+
+
+@pytest.mark.skipif(
+    not (torch.backends.mps.is_available() and torch.backends.mps.is_built()),
+    reason="MPS not available",
+)
+def test_nnregressor_predict_on_mps(monkeypatch):
+    monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
+    df = _small_frame()
+    rex = dnn.NNRegressor(
+        device="mps",
+        prog_bar=False,
+        early_stop=False,
+        min_delta=0.0,
+        num_epochs=1,
+    )
+    rex.fit(df)
+    preds = rex.predict(df)
+    assert preds.shape[0] == len(df.columns)
 
 
 def test_nnregressor_predict_requires_fit(monkeypatch):

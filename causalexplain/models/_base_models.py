@@ -126,7 +126,7 @@ class MLP(pl.LightningModule):
                         param, mode='fan_in', nonlinearity='linear')
 
     def forward(self, x):
-        noise = torch.randn(x.shape[0], 1, device="cpu")
+        noise = torch.randn(x.shape[0], 1, device=x.device)
         # noise = torch.randn(x.shape[0], 1, device=x.device)
         X = torch.cat([x, noise], dim=1)
         y = self.net(X)
@@ -161,7 +161,8 @@ class MLP(pl.LightningModule):
     # https://jamesmccaffrey.wordpress.com/2022/10/11/an-example-of-using-the-shap-library-for-a-pytorch-model/
     def predict(self, x):
         # x is numpy not tensor, return is numpy
-        xx = torch.tensor(x, dtype=torch.float32, device=self.device)
+        device = next(self.parameters()).device
+        xx = torch.tensor(x, dtype=torch.float32, device=device)
         with torch.no_grad():
             probs = torch.exp(self.forward(xx))
         return probs.numpy()
@@ -198,7 +199,7 @@ class DFF(pl.LightningModule):
 
     def forward(self, x):
         # this_device = 'mps' if self.on_gpu else 'cpu'
-        noise = torch.randn(x.shape[0], 1, device=self.device)
+        noise = torch.randn(x.shape[0], 1, device=x.device)
         X = torch.cat([x, noise], dim=1)
         y = self.approximate(X)
         return y

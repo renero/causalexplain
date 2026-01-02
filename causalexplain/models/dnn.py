@@ -81,7 +81,7 @@ class NNRegressor(BaseEstimator):
             early_stop: bool = False,
             patience: int = 10,
             min_delta: float = 0.001,
-            correlation_th: float = None,
+            correlation_th: float|None = None,
             random_state: int = 1234,
             verbose: bool = False,
             prog_bar: bool = True,
@@ -277,8 +277,10 @@ class NNRegressor(BaseEstimator):
             preds = np.empty((0,), dtype=np.float16)
             for (tensor_X, _) in loader:
                 tensor_X = tensor_X.to(self.device)
+                model = model.to(tensor_X.device)
                 y_hat = model.forward(tensor_X)
-                preds = np.append(preds, y_hat.detach().numpy().flatten())
+                preds = np.append(
+                    preds, y_hat.detach().cpu().numpy().flatten())
             prediction[target] = preds
 
         # Concatenate the numpy array for all the batchs
@@ -479,6 +481,7 @@ class NNRegressor(BaseEstimator):
                 """
                 mse = np.array([])
                 num_batches = 0
+                model = model.to(self.device)
                 for _ in range(n_repeats):
                     loss = []
                     for _, (X, y) in enumerate(dataloader):
@@ -508,7 +511,8 @@ class NNRegressor(BaseEstimator):
             load_if_exists=load_if_exists)
         study.optimize(
             Objective(
-                training_data, test_data, prog_bar=self.prog_bar, verbose=self.verbose),
+                training_data, test_data, device=self.device,
+                prog_bar=self.prog_bar, verbose=self.verbose),
             n_trials=n_trials,
             show_progress_bar=(self.optuna_prog_bar & (
                 not self.silent) & (not self.verbose)),

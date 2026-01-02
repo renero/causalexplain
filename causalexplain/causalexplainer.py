@@ -27,7 +27,8 @@ class GraphDiscovery:
         csv_filename: Optional[str] = None,
         true_dag_filename: Optional[str] = None,
         verbose: bool = False,
-        seed: int = 42
+        seed: int = 42,
+        device: Optional[str] = None
     ) -> None:
         """
         Initialize a graph discovery workflow and optionally load dataset metadata.
@@ -47,6 +48,7 @@ class GraphDiscovery:
                 containing the true causal graph.
             verbose (bool, optional): Whether to print verbose output.
             seed (int, optional): The random seed for reproducibility.
+            device (Optional[str], optional): Device selection for regressors.
 
         Returns:
             None: This method does not return a value.
@@ -54,9 +56,10 @@ class GraphDiscovery:
         self.trainer: Dict[str, Experiment] = {}
         normalized_experiment = self._normalize_optional_str(experiment_name)
         normalized_csv = self._normalize_optional_str(csv_filename)
+        resolved_device = utils.resolve_device(device)
 
         if normalized_experiment is None and normalized_csv is None:
-            self._init_empty_state(seed)
+            self._init_empty_state(seed, resolved_device)
             return
 
         self._validate_experiment_inputs(normalized_experiment, normalized_csv)
@@ -68,6 +71,7 @@ class GraphDiscovery:
         self.dot_filename = true_dag_filename
         self.verbose = verbose
         self.seed = seed
+        self.device = resolved_device
         self.train_size = 0.9
         self.random_state = seed
 
@@ -103,7 +107,7 @@ class GraphDiscovery:
         value = value.strip()
         return value or None
 
-    def _init_empty_state(self, seed: int) -> None:
+    def _init_empty_state(self, seed: int, device: str) -> None:
         """
         Initialize the instance with placeholder state for deferred configuration.
 
@@ -126,6 +130,7 @@ class GraphDiscovery:
         self.test_idx = None
         self.verbose = False
         self.seed = seed
+        self.device = device
         self.trainer: Dict[str, Experiment] = {}
 
     def _validate_experiment_inputs(
@@ -439,7 +444,8 @@ class GraphDiscovery:
         if self.estimator == 'rex':
             xargs = {
                 'verbose': verbose,
-                'prior': prior
+                'prior': prior,
+                'device': self.device
             }
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations

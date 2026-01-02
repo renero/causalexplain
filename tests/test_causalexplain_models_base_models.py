@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import torch
 
+import causalexplain.models._base_models as base_models
 from causalexplain.models._base_models import DFF, MDN, MLP
 from causalexplain.models._loss import MMDLoss
 
@@ -100,6 +101,109 @@ def test_mlp_forward_and_predict_shape():
 
     np_out = mlp.predict(np.ones((2, 2), dtype=np.float32))
     assert np_out.shape == (2, 1)
+
+
+def test_mlp_noise_is_used(monkeypatch):
+    mlp = MLP(
+        input_size=2,
+        layers_dimensions=[],
+        activation="relu",
+        batch_size=2,
+        lr=0.01,
+        loss="mse",
+        dropout=0.0,
+    )
+    with torch.no_grad():
+        mlp.head.weight.copy_(torch.tensor([[0.0, 1.0]]))
+        mlp.head.bias.zero_()
+
+    x = torch.zeros((2, 1))
+
+    monkeypatch.setattr(
+        base_models.torch, "randn",
+        lambda *args, **kwargs: torch.zeros(*args, **kwargs))
+    out_zero = mlp.forward(x)
+
+    monkeypatch.setattr(
+        base_models.torch, "randn",
+        lambda *args, **kwargs: torch.ones(*args, **kwargs))
+    out_one = mlp.forward(x)
+
+    assert not torch.allclose(out_zero, out_one)
+
+
+def _assert_noise_device(monkeypatch, device):
+    old_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float32)
+    captured = {}
+
+    def fake_randn(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        if "dtype" not in kwargs:
+            kwargs["dtype"] = torch.float32
+        return torch.zeros(*args, **kwargs)
+
+    try:
+        monkeypatch.setattr(base_models.torch, "randn", fake_randn)
+        mlp = MLP(
+            input_size=2,
+            layers_dimensions=[],
+            activation="relu",
+            batch_size=2,
+            lr=0.01,
+            loss="mse",
+            dropout=0.0,
+        ).to(device)
+        x = torch.zeros((2, 1), device=device, dtype=torch.float32)
+        mlp.forward(x)
+
+        assert captured["args"] == (x.shape[0], 1)
+        assert captured["kwargs"]["device"] == x.device
+    finally:
+        torch.set_default_dtype(old_dtype)
+
+
+def test_mlp_noise_device_cpu(monkeypatch):
+    _assert_noise_device(monkeypatch, torch.device("cpu"))
+
+
+@pytest.mark.skipif(
+    not (torch.cuda.is_available() and torch.backends.cuda.is_built()),
+    reason="CUDA not available",
+)
+def test_mlp_noise_device_cuda(monkeypatch):
+    _assert_noise_device(monkeypatch, torch.device("cuda"))
+
+
+@pytest.mark.skipif(
+    not (torch.backends.mps.is_available() and torch.backends.mps.is_built()),
+    reason="MPS not available",
+)
+def test_mlp_noise_device_mps(monkeypatch):
+    _assert_noise_device(monkeypatch, torch.device("mps"))
+
+
+def test_mlp_forward_cpu_golden():
+    old_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float32)
+    torch.manual_seed(123)
+    try:
+        mlp = MLP(
+            input_size=3,
+            layers_dimensions=[2],
+            activation="relu",
+            batch_size=2,
+            lr=0.01,
+            loss="mse",
+            dropout=0.0,
+        )
+        x = torch.ones((2, 2), dtype=torch.float32)
+        out = mlp.forward(x)
+        expected = torch.tensor([[-0.2612704], [-0.2612704]])
+        assert torch.allclose(out, expected, atol=1e-6)
+    finally:
+        torch.set_default_dtype(old_dtype)
 
 
 def test_dff_invalid_loss():

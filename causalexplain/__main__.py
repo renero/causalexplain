@@ -98,6 +98,13 @@ def parse_args() -> argparse.Namespace:
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
         '-v', '--verbose', action='store_true', required=False, help='Verbose mode, instead of progress bar.')
+    device_group = parser.add_mutually_exclusive_group()
+    device_group.add_argument(
+        '--cuda', action='store_true', required=False,
+        help='Run on CUDA (requires a CUDA-enabled build).')
+    device_group.add_argument(
+        '--mps', action='store_true', required=False,
+        help='Run on Apple Silicon MPS (requires MPS support).')
 
     args = parser.parse_args()
     return args
@@ -208,6 +215,13 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
+    if args.cuda:
+        requested_device = "cuda"
+    elif args.mps:
+        requested_device = "mps"
+    else:
+        requested_device = "cpu"
+    run_values['device'] = utils.resolve_device(requested_device)
 
     # return a dictionary with all the new variables created
     return run_values
@@ -267,7 +281,8 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
         csv_filename=run_values['dataset_filepath'],
         true_dag_filename=run_values['true_dag'],
         verbose=run_values['verbose'],
-        seed=run_values['seed']
+        seed=run_values['seed'],
+        device=run_values['device']
     )
     _check_csv_size_warning(discoverer, run_values)
 
@@ -430,6 +445,19 @@ def main() -> None:
     if run_values['output_dag_file'] is not None:
         utils.graph_to_dot_file(dag, run_values['output_dag_file'])
         print(f"Saved DAG to {run_values['output_dag_file']}")
+
+
+# TODO
+# - Add option to save the bootstrapped adjacency matrix to a CSV file
+# - Add option to save the SHAP values to a CSV file
+# - Ensure that the prior is used in all methods that support it and it works correctly
+# - Get rid of the mlforge pipeline dependency in causalexplain
+# - Fix the length of the messages printed by the tqdm progress bars
+# - Analyze whether to move to GPU the DNN training for ReX
+# - Add options to run the 'generators' from the CLI
+# - Remove the logic for 'dependency' cases all over the codebase (it doesn't work)
+# - Cast everything to 'float32' where possible to reduce memory consumption
+# - Study how to use GPU acceleration for SHAP computations)
 
 
 if __name__ == "__main__":
