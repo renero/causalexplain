@@ -86,7 +86,8 @@ class NNRegressor(BaseEstimator):
             verbose: bool = False,
             prog_bar: bool = True,
             silent: bool = False,
-            optuna_prog_bar: bool = False):
+            optuna_prog_bar: bool = False,
+            parallel_jobs: int = 0):
         """
         Train DFF networks for all variables in data. Each network will be trained to
         predict one of the variables in the data, using the rest as predictors plus one
@@ -115,6 +116,8 @@ class NNRegressor(BaseEstimator):
             min_delta (float): The minimum delta for early stopping. Default is 0.001.
             prog_bar (bool): Whether to enable the progress bar. Default
                 is False.
+            parallel_jobs (int): Number of parallel jobs to use for CPU training.
+                Default is 0 (sequential).
 
         Returns:
             dict: A dictionary with the trained DFF networks, using the name of the
@@ -138,6 +141,7 @@ class NNRegressor(BaseEstimator):
         self.prog_bar = prog_bar
         self.silent = silent
         self.optuna_prog_bar = optuna_prog_bar
+        self.parallel_jobs = parallel_jobs
 
         self.regressor = None
         self._fit_desc = "Training NNs"
@@ -182,7 +186,23 @@ class NNRegressor(BaseEstimator):
             self.correlated_features = Hierarchies.compute_correlated_features(
                 self.corr_matrix, self.correlation_th, self.feature_names,
                 verbose=self.verbose)
-            X_original = X.copy()
+            X_original = X
+            drop_cols_by_target = {
+                target: self.correlated_features.get(target, [])
+                for target in self.feature_names
+            }
+        else:
+            X_original = X
+            drop_cols_by_target = {}
+
+        loss_fn_by_target = {}
+        for target_name in self.feature_names:
+            if self.feature_types[target_name] == 'categorical':
+                loss_fn_by_target[target_name] = 'crossentropy'
+            elif self.feature_types[target_name] == 'binary':
+                loss_fn_by_target[target_name] = 'binary_crossentropy'
+            else:
+                loss_fn_by_target[target_name] = self.loss_fn
 
         if self.prog_bar and not self.verbose:
             pbar_name = f"({caller_name}) DNN_fit"
@@ -190,36 +210,26 @@ class NNRegressor(BaseEstimator):
         else:
             pbar = None
 
-        for target_idx, target_name in enumerate(self.feature_names):
-            # if correlation_th is not None then, remove features that are highly
-            # correlated with the target, at each step of the loop
-            if self.correlation_th is not None:
-                X = X_original.copy()
-                if len(self.correlated_features[target_name]) > 0:
-                    X = X.drop(self.correlated_features[target_name], axis=1)
-                    if self.verbose:
-                        print("REMOVED CORRELATED FEATURES: ",
-                              self.correlated_features[target_name])
-
-            # Determine Loss function based on the type of target variable
-            if self.feature_types[target_name] == 'categorical':
-                loss_fn = 'crossentropy'
-            elif self.feature_types[target_name] == 'binary':
-                loss_fn = 'binary_crossentropy'
+        def _fit_target(target_name: str) -> Tuple[str, MLPModel]:
+            drop_cols = drop_cols_by_target.get(target_name, [])
+            if drop_cols:
+                X_target = X_original.drop(drop_cols, axis=1)
+                if self.verbose:
+                    print("REMOVED CORRELATED FEATURES: ", drop_cols)
             else:
-                loss_fn = self.loss_fn
+                X_target = X_original
 
-            self.regressor[target_name] = MLPModel(
+            model = MLPModel(
                 target=target_name,
-                input_size=X.shape[1],
+                input_size=X_target.shape[1],
                 activation=self.activation,
                 hidden_dim=self.hidden_dim,
                 learning_rate=self.learning_rate,
                 batch_size=self.batch_size,
-                loss_fn=loss_fn,
+                loss_fn=loss_fn_by_target[target_name],
                 dropout=self.dropout,
                 num_epochs=self.num_epochs,
-                dataframe=X,
+                dataframe=X_target,
                 test_size=self.test_size,
                 device=self.device,
                 seed=self.random_state,
@@ -227,9 +237,31 @@ class NNRegressor(BaseEstimator):
                 patience=self.patience,
                 min_delta=self.min_delta,
                 prog_bar=self.prog_bar)
-            self.regressor[target_name].train()
+            model.train()
+            return target_name, model
 
-            pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
+        use_parallel = self.parallel_jobs and self.parallel_jobs > 1
+        use_parallel = use_parallel and str(self.device).lower() == "cpu"
+
+        if use_parallel:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            results: Dict[str, MLPModel] = {}
+            with ThreadPoolExecutor(max_workers=self.parallel_jobs) as executor:
+                futures = [
+                    executor.submit(_fit_target, name)
+                    for name in self.feature_names
+                ]
+                for idx, future in enumerate(as_completed(futures)):
+                    target_name, model = future.result()
+                    results[target_name] = model
+                    pbar.update_subtask(pbar_name, idx + 1) if pbar else None
+            for target_name in self.feature_names:
+                self.regressor[target_name] = results[target_name]
+        else:
+            for target_idx, target_name in enumerate(self.feature_names):
+                target_name, model = _fit_target(target_name)
+                self.regressor[target_name] = model
+                pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
 
         pbar.remove(pbar_name) if pbar else None
         self.is_fitted_ = True
@@ -258,6 +290,15 @@ class NNRegressor(BaseEstimator):
 
         if self.correlation_th is not None:
             X_original = X.copy()
+            loaders = None
+        else:
+            loaders = {
+                target: DataLoader(
+                    ColumnsDataset(target, X),
+                    batch_size=self.batch_size,
+                    shuffle=False)
+                for target in self.feature_names
+            }
 
         prediction = pd.DataFrame(columns=self.feature_names)
         for target in self.feature_names:
@@ -268,9 +309,12 @@ class NNRegressor(BaseEstimator):
             # Creat a data loader for the target variable. The ColumnsDataset will
             # return the target variable as the second element of the tuple, and
             # will drop the target from the features.
-            loader = DataLoader(
-                ColumnsDataset(target, X), batch_size=self.batch_size,
-                shuffle=False)
+            if loaders is not None:
+                loader = loaders[target]
+            else:
+                loader = DataLoader(
+                    ColumnsDataset(target, X), batch_size=self.batch_size,
+                    shuffle=False)
             model = self.regressor[target].model
 
             # Obtain the predictions for the target variable
@@ -335,6 +379,15 @@ class NNRegressor(BaseEstimator):
         return self.scoring
 
     def __repr__(self):
+        """
+        Return a readable snapshot of user-facing attributes.
+
+        Args:
+            None.
+
+        Returns:
+            str: A formatted summary of non-callable attributes.
+        """
         forbidden_attrs = [
             'fit', 'predict', 'score', 'get_params', 'set_params']
         ret = f"REX object attributes\n"
@@ -393,6 +446,19 @@ class NNRegressor(BaseEstimator):
                     device='cpu',
                     prog_bar=True,
                     verbose=False):
+                """
+                Initialize the Optuna objective with training data and settings.
+
+                Args:
+                    train_data (pd.DataFrame): Training dataset.
+                    test_data (pd.DataFrame): Validation dataset.
+                    device (str): Device to run the model on.
+                    prog_bar (bool): Whether to show a progress bar.
+                    verbose (bool): Whether to enable verbose logging.
+
+                Returns:
+                    None: This method does not return a value.
+                """
                 self.train_data = train_data
                 self.test_data = test_data
                 self.device = device
@@ -499,6 +565,16 @@ class NNRegressor(BaseEstimator):
 
         # Callback to stop the study if the MSE is below a threshold.
         def callback(study: optuna.study.Study, trial: optuna.trial.FrozenTrial):
+            """
+            Stop the Optuna study when the loss threshold is reached.
+
+            Args:
+                study (optuna.study.Study): The active Optuna study.
+                trial (optuna.trial.FrozenTrial): The completed trial.
+
+            Returns:
+                None: This method does not return a value.
+            """
             if trial.value < min_loss or study.best_value < min_loss:
                 study.stop()
 
@@ -580,6 +656,16 @@ class NNRegressor(BaseEstimator):
 #
 
 def custom_main(score: bool = False, tune: bool = False):
+    """
+    Run a small local workflow for scoring or tuning.
+
+    Args:
+        score (bool): Whether to load and score an existing model.
+        tune (bool): Whether to run hyperparameter tuning.
+
+    Returns:
+        None: This function does not return a value.
+    """
     import os
     from causalexplain.common import utils
     path = "/Users/renero/phd/data/RC4/risks"

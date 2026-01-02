@@ -93,7 +93,7 @@ class GBTRegressor(GradientBoostingRegressor):
             n_iter_no_change=None,
             tol=0.0001,
             ccp_alpha=0.0,
-            correlation_th: float = None,
+            correlation_th: float|None = None,
             verbose=False,
             silent=False,
             prog_bar=True,
