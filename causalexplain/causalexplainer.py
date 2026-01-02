@@ -28,7 +28,8 @@ class GraphDiscovery:
         true_dag_filename: Optional[str] = None,
         verbose: bool = False,
         seed: int = 42,
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        parallel_jobs: int = 0
     ) -> None:
         """
         Initialize a graph discovery workflow and optionally load dataset metadata.
@@ -49,6 +50,7 @@ class GraphDiscovery:
             verbose (bool, optional): Whether to print verbose output.
             seed (int, optional): The random seed for reproducibility.
             device (Optional[str], optional): Device selection for regressors.
+            parallel_jobs (int, optional): Number of parallel jobs for CPU training.
 
         Returns:
             None: This method does not return a value.
@@ -59,7 +61,7 @@ class GraphDiscovery:
         resolved_device = utils.resolve_device(device)
 
         if normalized_experiment is None and normalized_csv is None:
-            self._init_empty_state(seed, resolved_device)
+            self._init_empty_state(seed, resolved_device, parallel_jobs)
             return
 
         self._validate_experiment_inputs(normalized_experiment, normalized_csv)
@@ -72,6 +74,7 @@ class GraphDiscovery:
         self.verbose = verbose
         self.seed = seed
         self.device = resolved_device
+        self.parallel_jobs = parallel_jobs
         self.train_size = 0.9
         self.random_state = seed
 
@@ -107,7 +110,7 @@ class GraphDiscovery:
         value = value.strip()
         return value or None
 
-    def _init_empty_state(self, seed: int, device: str) -> None:
+    def _init_empty_state(self, seed: int, device: str, parallel_jobs: int) -> None:
         """
         Initialize the instance with placeholder state for deferred configuration.
 
@@ -131,6 +134,7 @@ class GraphDiscovery:
         self.verbose = False
         self.seed = seed
         self.device = device
+        self.parallel_jobs = parallel_jobs
         self.trainer: Dict[str, Experiment] = {}
 
     def _validate_experiment_inputs(
@@ -445,7 +449,8 @@ class GraphDiscovery:
             xargs = {
                 'verbose': verbose,
                 'prior': prior,
-                'device': self.device
+                'device': self.device,
+                'parallel_jobs': self.parallel_jobs
             }
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations

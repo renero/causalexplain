@@ -47,7 +47,8 @@ def args_factory():
             output=None,
             adaptive_shap_sampling=True,
             cuda=False,
-            mps=False
+            mps=False,
+            parallel_jobs=0
         )
         for key, value in overrides.items():
             setattr(base, key, value)
@@ -102,6 +103,17 @@ def test_parse_args_mps_flag(monkeypatch):
     assert args.cuda is False
 
 
+def test_parse_args_parallel_jobs(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--parallel-jobs", "3",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.parallel_jobs == 3
+
+
 def test_check_args_requires_dataset_or_model(args_factory):
     args = args_factory()
     with pytest.raises(ValueError):
@@ -123,6 +135,7 @@ def test_check_args_with_dataset_and_save_defaults(
     assert run_values['output_path'] == os.getcwd()
     assert run_values['bootstrap_iterations'] == main_mod.DEFAULT_BOOTSTRAP_TRIALS
     assert run_values['device'] == "cpu"
+    assert run_values['parallel_jobs'] == 0
 
 
 def test_check_args_load_model_without_dataset(tmp_path, args_factory, monkeypatch):
@@ -267,6 +280,7 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         'output_dag_file': str(tmp_path / "dag.dot"),
         'adaptive_shap_sampling': False,
         'device': 'cpu',
+        'parallel_jobs': 0,
     }
     times = iter([100.0, 101.0])
     monkeypatch.setattr(main_mod.time, "time", lambda: next(times))
@@ -330,6 +344,7 @@ def test_main_loads_existing_model(monkeypatch):
         'model_filename': None,
         'output_dag_file': None,
         'device': 'cpu',
+        'parallel_jobs': 0,
     }
     instances = []
 
@@ -379,6 +394,7 @@ def test_main_warns_when_adaptive_disabled_large_dataset(monkeypatch, capsys):
         'output_dag_file': None,
         'adaptive_shap_sampling': False,
         'device': 'cpu',
+        'parallel_jobs': 0,
     }
     monkeypatch.setattr(main_mod, "GraphDiscovery", DummyDiscovery)
     monkeypatch.setattr(main_mod, "parse_args", lambda: SimpleNamespace())

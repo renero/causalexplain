@@ -54,6 +54,7 @@ def test_default_initialization():
     assert gd.verbose is False
     assert gd.seed == 42
     assert gd.device == "cpu"
+    assert gd.parallel_jobs == 0
 
 
 def test_valid_initialization(sample_csv, sample_dot):
@@ -73,6 +74,7 @@ def test_valid_initialization(sample_csv, sample_dot):
     assert gd.verbose is True
     assert gd.seed == 123
     assert gd.device == "cpu"
+    assert gd.parallel_jobs == 0
     assert gd.dataset_name == "test_data"
     assert gd.data_columns == ['A', 'B', 'C']
     assert gd.regressors == DEFAULT_REGRESSORS
