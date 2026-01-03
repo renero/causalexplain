@@ -53,6 +53,8 @@ Example:
 
 
 import inspect
+import os
+import tempfile
 
 import numpy as np
 import optuna  # type: ignore
@@ -65,6 +67,55 @@ from sklearn.preprocessing import StandardScaler
 
 from ..common import DEFAULT_HPO_TRIALS, utils
 from ..explainability.hierarchies import Hierarchies
+
+
+def _is_readonly_storage_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "readonly" in message and "database" in message:
+        return True
+    cause = getattr(exc, "__cause__", None)
+    while cause is not None:
+        message = str(cause).lower()
+        if "readonly" in message and "database" in message:
+            return True
+        cause = getattr(cause, "__cause__", None)
+    return False
+
+
+def _fallback_optuna_storage(storage: str | None, study_name: str | None) -> str | None:
+    if not storage or not isinstance(storage, str):
+        return storage
+    if not storage.startswith("sqlite:///"):
+        return storage
+    db_path = storage.replace("sqlite:///", "", 1)
+    if not db_path or db_path == ":memory:":
+        return storage
+    base = study_name or os.path.splitext(os.path.basename(db_path))[0] or "optuna"
+    filename = f"{base}_tuning.db"
+    return f"sqlite:///{os.path.join(tempfile.gettempdir(), filename)}"
+
+
+def _ensure_writable_optuna_storage(
+        storage: str | None, study_name: str | None) -> str | None:
+    if not storage or not isinstance(storage, str):
+        return storage
+    if not storage.startswith("sqlite:///"):
+        return storage
+    db_path = storage.replace("sqlite:///", "", 1)
+    if not db_path or db_path == ":memory:":
+        return storage
+    if not os.path.isabs(db_path):
+        db_path = os.path.abspath(db_path)
+    db_dir = os.path.dirname(db_path) or os.getcwd()
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+    except OSError:
+        return _fallback_optuna_storage(storage, study_name)
+    if os.path.exists(db_path) and not os.access(db_path, os.W_OK):
+        return _fallback_optuna_storage(storage, study_name)
+    if not os.access(db_dir, os.W_OK):
+        return _fallback_optuna_storage(storage, study_name)
+    return f"sqlite:///{db_path}"
 
 
 class GBTRegressor(GradientBoostingRegressor):
@@ -499,18 +550,43 @@ class GBTRegressor(GradientBoostingRegressor):
         if self.verbose is False:
             optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-        # Create and run the HPO study
-        study = optuna.create_study(
-            direction='minimize', study_name=study_name, storage=storage,
-            load_if_exists=load_if_exists)
-        study.optimize(
-            Objective(
-                training_data, test_data, prog_bar=self.prog_bar, verbose=self.verbose),
-            n_trials=n_trials,
-            gc_after_trial=True,
-            show_progress_bar=(self.optuna_prog_bar & (
-                not self.silent) & (not self.verbose)),
-            callbacks=[callback])
+        # Create and run the HPO study.
+        resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
+        fallback_storage = _fallback_optuna_storage(storage, study_name)
+        try:
+            study = optuna.create_study(
+                direction='minimize', study_name=study_name,
+                storage=resolved_storage, load_if_exists=load_if_exists)
+            study.optimize(
+                Objective(
+                    training_data, test_data, prog_bar=self.prog_bar,
+                    verbose=self.verbose),
+                n_trials=n_trials,
+                gc_after_trial=True,
+                show_progress_bar=(self.optuna_prog_bar & (
+                    not self.silent) & (not self.verbose)),
+                callbacks=[callback])
+        except Exception as exc:  # pylint: disable=broad-except
+            if not _is_readonly_storage_error(exc):
+                raise
+            if fallback_storage == resolved_storage:
+                raise
+            if self.verbose and not self.silent:
+                print(
+                    "Optuna storage is read-only; retrying with "
+                    f"storage={fallback_storage}")
+            study = optuna.create_study(
+                direction='minimize', study_name=study_name,
+                storage=fallback_storage, load_if_exists=load_if_exists)
+            study.optimize(
+                Objective(
+                    training_data, test_data, prog_bar=self.prog_bar,
+                    verbose=self.verbose),
+                n_trials=n_trials,
+                gc_after_trial=True,
+                show_progress_bar=(self.optuna_prog_bar & (
+                    not self.silent) & (not self.verbose)),
+                callbacks=[callback])
 
         # Capture the best hyperparameters and the minimum loss
         best_trials = sorted(study.best_trials, key=lambda x: x.values[0])

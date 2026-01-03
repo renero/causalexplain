@@ -1240,8 +1240,8 @@ class ShapEstimator(BaseEstimator):
     Parameters
     ----------
     explainer : str, default="explainer"
-        The SHAP explainer to use. Possible values are "kernel", "gradient", and
-        "explainer".
+        The SHAP explainer to use. Possible values are "kernel", "gradient",
+        "explainer", and "tree".
     models : BaseEstimator, default=None
         The models to use for computing SHAP values. If None, a linear regression
         model is used for each feature.
@@ -1316,8 +1316,8 @@ class ShapEstimator(BaseEstimator):
         Parameters
         ----------
         explainer : str, default="explainer"
-            The SHAP explainer to use. Possible values are "kernel", "gradient", and
-            "explainer".
+            The SHAP explainer to use. Possible values are "kernel", "gradient",
+            "explainer", and "tree".
         models : BaseEstimator, default=None
             The models to use for computing SHAP values. If None, a linear regression
             model is used for each feature.
@@ -1764,10 +1764,23 @@ class ShapEstimator(BaseEstimator):
             explanation = self._call_explainer(
                 self.shap_explainer[target_name], X_test, silent=True)
             shap_values = explanation.values
+        elif self.explainer == "tree":
+            background = self._select_background(X_train)
+            self.shap_explainer[target_name] = shap.TreeExplainer(
+                model, background)
+            explanation = self._call_explainer(
+                self.shap_explainer[target_name], X_test, silent=True)
+            shap_values = (
+                explanation.values
+                if hasattr(explanation, "values")
+                else explanation
+            )
+            if isinstance(shap_values, list):
+                shap_values = shap_values[0]
         else:
             raise ValueError(
                 f"Unknown explainer: {self.explainer}. "
-                f"Please select one of: kernel, gradient, explainer.")
+                f"Please select one of: kernel, gradient, explainer, tree.")
 
         return shap_values
 

@@ -460,6 +460,7 @@ def main() -> None:
 # TODO
 # [ ] Ensure that the prior is used in all methods that support it and it works correctly
 # [ ] Get rid of the mlforge pipeline dependency in causalexplain
+# [ ] Get rid of the ProgBar dependency in causalexplain
 # [ ] Fix the length of the messages printed by the tqdm progress bars
 # [ ] Make a single progress bar for the entire training process, instead of one per model and stage
 # [X] Analyze whether to move to GPU the DNN training for ReX

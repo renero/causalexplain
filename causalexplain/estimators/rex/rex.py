@@ -127,7 +127,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             explainer (str): The explainer to use for the shap values. The default
                 values is "explainer", which uses the shap.Explainer class. Other
                 options are "gradient", which uses the shap.GradientExplainer class,
-                and "kernel", which uses the shap.KernelExplainer class.
+                "kernel", which uses the shap.KernelExplainer class, and "tree",
+                which uses the shap.TreeExplainer class.
             tune_model (bool): Whether to tune the model for HPO. Default is False.
             correlation_th (float): The threshold for the correlation. Default is None.
             corr_method (str): The method to use for the correlation.
@@ -496,7 +497,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         random_state : int
             The random state to use for bootstrapping.
         explainer : str, optional
-            SHAP explainer backend to use ('gradient', 'explainer', or 'kernel').
+            SHAP explainer backend to use ('gradient', 'explainer', 'kernel', or 'tree').
         verbose : bool
             Whether to print verbose messages.
         """
@@ -541,7 +542,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         random_state : int
             The random state to use for bootstrapping.
         explainer : str, optional
-            SHAP explainer backend to use ('gradient', 'explainer', or 'kernel').
+            SHAP explainer backend to use ('gradient', 'explainer', 'kernel', or 'tree').
 
         Returns
         -------
@@ -1026,12 +1027,12 @@ class Rex(BaseEstimator, ClassifierMixin):
                     f"WARNING: SHAP '{explainer}' not supported for model "
                     f"'{model_type}'. Using 'gradient' instead.")
             self.explainer = "gradient"
-        if (model_type == "gbt" and explainer != "explainer"):
+        if (model_type == "gbt" and explainer != "tree"):
             if self.verbose:
                 print(
                     f"WARNING: SHAP '{explainer}' not supported for model "
-                    f"'{model_type}'. Using 'explainer' instead.")
-            self.explainer = "explainer"
+                    f"'{model_type}'. Using 'tree' instead.")
+            self.explainer = "tree"
 
     def _more_tags(self):
         return {
