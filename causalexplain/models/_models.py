@@ -315,6 +315,7 @@ class MLPModel(BaseModel):
             self.learning_rate,
             self.loss_fn,
             self.dropout)
+        self.model = self.model.float()
 
         self.trainer = Trainer(
             max_epochs=self.num_epochs,

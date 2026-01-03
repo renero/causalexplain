@@ -320,13 +320,16 @@ class NNRegressor(BaseEstimator):
             model = self.regressor[target].model
 
             # Obtain the predictions for the target variable
-            preds = np.empty((0,), dtype=np.float16)
+            preds = np.empty((0,), dtype=np.float32)
             for (tensor_X, _) in loader:
-                tensor_X = tensor_X.to(self.device)
-                model = model.to(tensor_X.device)
+                tensor_X = tensor_X.to(self.device).float()
+                model = model.to(tensor_X.device).float()
                 y_hat = model.forward(tensor_X)
                 preds = np.append(
-                    preds, y_hat.detach().cpu().numpy().flatten())
+                    preds,
+                    y_hat.detach().cpu().numpy().astype(
+                        np.float32, copy=False).flatten(),
+                )
             prediction[target] = preds
 
         # Concatenate the numpy array for all the batchs
@@ -350,7 +353,7 @@ class NNRegressor(BaseEstimator):
         if len(final_preds) == 0:
             final_preds = np_preds
 
-        return np.array(final_preds)
+        return np.asarray(final_preds, dtype=np.float32)
 
     def score(self, X):
         """
@@ -369,12 +372,12 @@ class NNRegressor(BaseEstimator):
         # Handle the case where the prediction returned by the model is not a
         # numpy array but a numpy object type
         if isinstance(y_hat, np.ndarray) and y_hat.dtype == np.object_:
-            y_hat = np.vstack(y_hat[:, :].flatten()).astype('float')
-            y_hat = torch.Tensor(y_hat)
+            y_hat = np.vstack(y_hat[:, :].flatten()).astype(np.float32)
+            y_hat = torch.as_tensor(y_hat, dtype=torch.float32)
         scores = []
         for i, target in enumerate(self.feature_names):
-            y_preds = torch.Tensor(y_hat[i])
-            y = torch.Tensor(X[target].values)
+            y_preds = torch.as_tensor(y_hat[i], dtype=torch.float32)
+            y = torch.as_tensor(X[target].values, dtype=torch.float32)
             scores.append(self.regressor[target].model.loss_fn(y_preds, y))
 
         self.scoring = np.array(scores)

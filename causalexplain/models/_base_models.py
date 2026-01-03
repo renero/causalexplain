@@ -124,9 +124,11 @@ class MLP(pl.LightningModule):
                 else:
                     nn.init.kaiming_normal_(
                         param, mode='fan_in', nonlinearity='linear')
+        self.float()
 
     def forward(self, x):
-        noise = torch.randn(x.shape[0], 1, device=x.device)
+        x = x.float()
+        noise = torch.randn(x.shape[0], 1, device=x.device, dtype=x.dtype)
         # noise = torch.randn(x.shape[0], 1, device=x.device)
         X = torch.cat([x, noise], dim=1)
         y = self.net(X)
@@ -140,6 +142,8 @@ class MLP(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
+        x = x.float()
+        y = y.float()
         yhat = self(x)
         loss = self.loss_fn(yhat, y)
         self.log("train_loss", loss, on_step=False, on_epoch=True)
@@ -147,6 +151,8 @@ class MLP(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
+        x = x.float()
+        y = y.float()
         yhat = self(x)
         loss = self.loss_fn(yhat, y)
         self.log("val_loss", loss, on_step=False, on_epoch=True)
@@ -165,7 +171,7 @@ class MLP(pl.LightningModule):
         xx = torch.tensor(x, dtype=torch.float32, device=device)
         with torch.no_grad():
             probs = torch.exp(self.forward(xx))
-        return probs.numpy()
+        return probs.detach().cpu().numpy().astype(np.float32, copy=False)
 
 
 class DFF(pl.LightningModule):
@@ -196,10 +202,12 @@ class DFF(pl.LightningModule):
             self.loss_fn = MMDLoss(mmd_type="quadratic")
         else:
             raise ValueError("Unknown loss function.")
+        self.float()
 
     def forward(self, x):
         # this_device = 'mps' if self.on_gpu else 'cpu'
-        noise = torch.randn(x.shape[0], 1, device=x.device)
+        x = x.float()
+        noise = torch.randn(x.shape[0], 1, device=x.device, dtype=x.dtype)
         X = torch.cat([x, noise], dim=1)
         y = self.approximate(X)
         return y
@@ -211,6 +219,8 @@ class DFF(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
+        x = x.float()
+        y = y.float()
         yhat = self(x)
         loss = self.loss_fn(yhat, y)
         self.log("train_loss", loss, on_step=False, on_epoch=True)
@@ -218,6 +228,8 @@ class DFF(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
+        x = x.float()
+        y = y.float()
         yhat = self(x)
         loss = self.loss_fn(yhat, y)
         self.log("val_loss", loss, on_step=False, on_epoch=True)
@@ -276,6 +288,7 @@ class MDN(pl.LightningModule):
         self.sigma = nn.Sequential(
             nn.Linear(hidden_size, num_gaussians), nn.ELU())
         self.mu = nn.Linear(hidden_size, num_gaussians)
+        self.float()
 
     def configure_optimizers(self):
         optimizer = Adam(self.parameters(), lr=(self.lr or self.learning_rate))
@@ -302,6 +315,7 @@ class MDN(pl.LightningModule):
 
     def common_step(self, batch):
         x, y = batch
+        y = y.float()
         # x = self.add_noise(x)
         pi, sigma, mu = self(x)
         if self.loss_fn == "loglikelihood":
@@ -313,8 +327,10 @@ class MDN(pl.LightningModule):
 
     def forward(self, x):
         # this_device = 'mps' if self.on_gpu else 'cpu'
-        noise = torch.randn(x.shape[0], 1, device=self.device)
-        X = torch.cat([x.to_device(self.device), noise], dim=1)
+        x_device = x.to_device(self.device).float()
+        noise = torch.randn(
+            x_device.shape[0], 1, device=x_device.device, dtype=x_device.dtype)
+        X = torch.cat([x_device, noise], dim=1)
         z_h = self.mdn(X)
         pi = softmax(self.pi(z_h), -1)
         sigma = torch.exp(self.sigma(z_h))
@@ -327,6 +343,7 @@ class MDN(pl.LightningModule):
         The loss is the negative log likelihood of the data given the MoG
         parameters.
         """
+        y = y.to(mu.dtype)
         result = self.gaussian_probability(y, mu, sigma) * pi
         result = torch.sum(result, dim=1)
         result = -torch.log(result)
@@ -352,6 +369,8 @@ class MDN(pl.LightningModule):
             y: second sample, distribution Q
             kernel: kernel type such as "multiscale" or "rbf"
         """
+        x = x.float()
+        y = y.float()
         xx, yy, zz = torch.mm(x, x.t()), torch.mm(y, y.t()), torch.mm(x, y.t())
         rx = (xx.diag().unsqueeze(0).expand_as(xx))
         ry = (yy.diag().unsqueeze(0).expand_as(yy))
@@ -360,9 +379,11 @@ class MDN(pl.LightningModule):
         dyy = ry.t() + ry - 2. * yy  # Used for B in (1)
         dxy = rx.t() + ry - 2. * zz  # Used for C in (1)
 
-        XX, YY, XY = (torch.zeros(xx.shape),
-                      torch.zeros(xx.shape),
-                      torch.zeros(xx.shape))
+        XX, YY, XY = (
+            torch.zeros(xx.shape, device=xx.device, dtype=xx.dtype),
+            torch.zeros(xx.shape, device=xx.device, dtype=xx.dtype),
+            torch.zeros(xx.shape, device=xx.device, dtype=xx.dtype),
+        )
 
         if kernel == "multiscale":
             bandwidth_range = [0.2, 0.5, 0.9, 1.3]
@@ -382,7 +403,8 @@ class MDN(pl.LightningModule):
 
     @staticmethod
     def add_noise(x):
-        noise = torch.randn(x.shape[0], 1)
+        x = x.float()
+        noise = torch.randn(x.shape[0], 1, device=x.device, dtype=x.dtype)
         X = torch.cat([x, noise], dim=1)
         return X
 
@@ -414,6 +436,7 @@ class MDN(pl.LightningModule):
         )
         sampled = sampled.reshape(-1, 1)
 
+        sampled = sampled.astype(np.float32, copy=False)
         return torch.from_numpy(sampled)
 
     @staticmethod
@@ -427,7 +450,10 @@ class MDN(pl.LightningModule):
         # Do a (output dims)X(batch size) tensor here, so the broadcast works in
         # the next step, but we have to transpose back.
         gaussian_noise = torch.randn(
-            (sigma.size(2), sigma.size(0)), requires_grad=False
+            (sigma.size(2), sigma.size(0)),
+            requires_grad=False,
+            device=sigma.device,
+            dtype=sigma.dtype,
         )
         variance_samples = sigma.gather(1, pis).detach().squeeze()
         mean_samples = mu.detach().gather(1, pis).squeeze()

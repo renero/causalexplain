@@ -160,7 +160,7 @@ class PermutationImportance(BaseEstimator):
             print(f"Feature: {feature} ", end="") if self.verbose else None
 
             regressor = self.regressors[feature]
-            model = regressor.model.to(self.device)
+            model = regressor.model.to(self.device).float()
 
             avg_loss, std_loss, _ = self._compute_loss_shuffling_column(
                 model, regressor.train_loader)
@@ -270,7 +270,7 @@ class PermutationImportance(BaseEstimator):
         num_vars = len(self.feature_names)
         for target_idx, target in enumerate(self.feature_names):
             regressor = self.regressors[target]
-            model = regressor.model
+            model = regressor.model.to(self.device).float()
             feature_names_wo_target = [
                 f for f in self.feature_names if f != target]
             candidate_causes = utils.valid_candidates_from_prior(
@@ -465,8 +465,8 @@ class PermutationImportance(BaseEstimator):
             loss = []
             # Loop over all batches in train loader
             for _, (X, y) in enumerate(dataloader):
-                X = X.to(self.device)
-                y = y.to(self.device)
+                X = X.to(self.device).float()
+                y = y.to(self.device).float()
 
                 # Shuffle data if specified
                 if shuffle_col >= 0:
