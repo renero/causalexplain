@@ -478,7 +478,7 @@ def main() -> None:
 # [ ] Add options to run the 'generators' from the CLI
 # [ ] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
 # [X] Cast everything to 'float32' where possible to reduce memory consumption
-# [ ] Study how to use GPU acceleration for SHAP computations
+# [X] Study how to use GPU acceleration for SHAP computations
 # [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
 # [ ] Add option to save the SHAP values to a CSV file
 
