@@ -30,6 +30,7 @@ from causalexplain.common.notebook import Experiment
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
                                   DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
+                                  DEFAULT_MAX_SAMPLES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
 
 
@@ -52,6 +53,10 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help='Enable adaptive SHAP background sampling and stability checks. '
              'Use --no-adaptive-shap-sampling to disable. Default is enabled.')
+    parser.add_argument(
+        '--max-shap-samples', '--max_shap_samples', type=int, required=False,
+        help='Max background samples for adaptive SHAP. '
+             f'Default is {DEFAULT_MAX_SAMPLES}.')
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
         help='Bootstrap iterations. Default is 20.')
@@ -221,6 +226,10 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
+    if args.max_shap_samples is None or args.max_shap_samples <= 0:
+        run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
+    else:
+        run_values['max_shap_samples'] = args.max_shap_samples
     run_values['parallel_jobs'] = args.parallel_jobs
     run_values['bootstrap_parallel_jobs'] = args.bootstrap_parallel_jobs
     if args.cuda:
@@ -292,7 +301,8 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
         seed=run_values['seed'],
         parallel_jobs=run_values['parallel_jobs'],
         bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
-        device=run_values['device']
+        device=run_values['device'],
+        max_shap_samples=run_values.get('max_shap_samples')
     )
     _check_csv_size_warning(discoverer, run_values)
 
@@ -347,7 +357,8 @@ def _train_if_needed(
         prior=run_values['prior'],
         bootstrap_tolerance=run_values.get('bootstrap_tolerance'),
         quiet=run_values.get('quiet', False),
-        adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True)
+        adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True),
+        max_shap_samples=run_values.get('max_shap_samples')
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])

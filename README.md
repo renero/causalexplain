@@ -170,7 +170,7 @@ Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
 ReX defaults to `tree` when running the GBT regressor.
 
 When adaptive sampling is enabled, the key knobs are `max_shap_samples`,
-`min_shap_samples`, `K_max`, `max_explain_samples`, and `stratify`. These
+`K_max`, `max_explain_samples`, and `stratify`. These
 control background size, repeated sampling for stability, and how many rows
 are explained.
 
