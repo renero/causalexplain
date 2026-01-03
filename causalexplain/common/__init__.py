@@ -5,7 +5,7 @@ DEFAULT_BOOTSTRAP_TOLERANCE: float = 0.3
 DEFAULT_BOOTSTRAP_SAMPLING_SPLIT: float = 0.2
 DEFAULT_SEED: int = 42
 DEFAULT_MAX_CSV_LINES: int = 2000
-DEFAULT_MAX_SAMPLES: int = 250
+DEFAULT_MAX_SAMPLES: int = 512
 
 HEADER_ASCII = """   ___                      _                 _       _
   / __\\__ _ _   _ ___  __ _| | _____  ___ __ | | __ _(_)_ __

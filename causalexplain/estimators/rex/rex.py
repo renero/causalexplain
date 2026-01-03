@@ -263,7 +263,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         """
         self.fit_pipeline = Pipeline(
             self,  # type: ignore
-            description="Fitting models", prog_bar=self.prog_bar,
+            description=f"{'Fitting models':<26s}", prog_bar=self.prog_bar,
             verbose=self.verbose, silent=self.silent, subtask=True)
         if pipeline is not None:
             if isinstance(pipeline, list):
@@ -348,7 +348,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         # Create a new pipeline for the prediction stages.
         self.predict_pipeline = Pipeline(
             self,  # type: ignore
-            description="Predicting causal graph",
+            description=f"{'Predicting causal graph':<26s}",
             prog_bar=self.prog_bar,
             verbose=self.verbose,
             silent=self.silent,
