@@ -53,6 +53,8 @@ Example:
 
 
 import inspect
+import os
+import tempfile
 
 import numpy as np
 import optuna  # type: ignore
@@ -65,6 +67,55 @@ from sklearn.preprocessing import StandardScaler
 
 from ..common import DEFAULT_HPO_TRIALS, utils
 from ..explainability.hierarchies import Hierarchies
+
+
+def _is_readonly_storage_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "readonly" in message and "database" in message:
+        return True
+    cause = getattr(exc, "__cause__", None)
+    while cause is not None:
+        message = str(cause).lower()
+        if "readonly" in message and "database" in message:
+            return True
+        cause = getattr(cause, "__cause__", None)
+    return False
+
+
+def _fallback_optuna_storage(storage: str | None, study_name: str | None) -> str | None:
+    if not storage or not isinstance(storage, str):
+        return storage
+    if not storage.startswith("sqlite:///"):
+        return storage
+    db_path = storage.replace("sqlite:///", "", 1)
+    if not db_path or db_path == ":memory:":
+        return storage
+    base = study_name or os.path.splitext(os.path.basename(db_path))[0] or "optuna"
+    filename = f"{base}_tuning.db"
+    return f"sqlite:///{os.path.join(tempfile.gettempdir(), filename)}"
+
+
+def _ensure_writable_optuna_storage(
+        storage: str | None, study_name: str | None) -> str | None:
+    if not storage or not isinstance(storage, str):
+        return storage
+    if not storage.startswith("sqlite:///"):
+        return storage
+    db_path = storage.replace("sqlite:///", "", 1)
+    if not db_path or db_path == ":memory:":
+        return storage
+    if not os.path.isabs(db_path):
+        db_path = os.path.abspath(db_path)
+    db_dir = os.path.dirname(db_path) or os.getcwd()
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+    except OSError:
+        return _fallback_optuna_storage(storage, study_name)
+    if os.path.exists(db_path) and not os.access(db_path, os.W_OK):
+        return _fallback_optuna_storage(storage, study_name)
+    if not os.access(db_dir, os.W_OK):
+        return _fallback_optuna_storage(storage, study_name)
+    return f"sqlite:///{db_path}"
 
 
 class GBTRegressor(GradientBoostingRegressor):
@@ -93,11 +144,45 @@ class GBTRegressor(GradientBoostingRegressor):
             n_iter_no_change=None,
             tol=0.0001,
             ccp_alpha=0.0,
-            correlation_th: float = None,
+            correlation_th: float|None = None,
             verbose=False,
             silent=False,
             prog_bar=True,
-            optuna_prog_bar=False):
+            optuna_prog_bar=False,
+            parallel_jobs: int = 0):
+        """
+        Initialize the gradient boosting regressor wrapper.
+
+        Args:
+            loss (str): Loss function for the estimator.
+            learning_rate (float): Learning rate for boosting.
+            n_estimators (int): Number of boosting stages.
+            subsample (float): Subsample ratio for training.
+            criterion (str): Split quality criterion.
+            min_samples_split (int): Minimum samples to split a node.
+            min_samples_leaf (int): Minimum samples required at a leaf.
+            min_weight_fraction_leaf (float): Minimum weighted fraction at a leaf.
+            max_depth (int): Maximum depth of individual estimators.
+            min_impurity_decrease (float): Impurity decrease threshold.
+            init (object): Optional initialization estimator.
+            random_state (int): Random seed for reproducibility.
+            max_features (str|int|float|None): Features considered at each split.
+            max_leaf_nodes (int|None): Maximum number of leaf nodes.
+            warm_start (bool): Reuse previous solution if set.
+            validation_fraction (float): Fraction for early stopping validation.
+            n_iter_no_change (int|None): Early stopping patience.
+            tol (float): Tolerance for early stopping.
+            ccp_alpha (float): Complexity parameter for pruning.
+            correlation_th (float|None): Correlation threshold for feature filtering.
+            verbose (bool): Enable verbose logging.
+            silent (bool): Suppress output and progress bars.
+            prog_bar (bool): Enable progress bar.
+            optuna_prog_bar (bool): Enable Optuna progress bar.
+            parallel_jobs (int): Number of parallel jobs for CPU training.
+
+        Returns:
+            None: This method does not return a value.
+        """
 
         self.loss = loss
         self.learning_rate = learning_rate
@@ -125,6 +210,7 @@ class GBTRegressor(GradientBoostingRegressor):
         self.silent = silent
         self.prog_bar = prog_bar
         self.optuna_prog_bar = optuna_prog_bar
+        self.parallel_jobs = parallel_jobs
         self.regressor = None
         self._estimator_name = 'gbt'
         self._estimator_class = GradientBoostingRegressor
@@ -147,7 +233,33 @@ class GBTRegressor(GradientBoostingRegressor):
             self.correlated_features = Hierarchies.compute_correlated_features(
                 self.corr_matrix, self.correlation_th, self.feature_names,
                 verbose=self.verbose)
-            X_original = X.copy()
+            X_original = X
+            drop_cols_by_target = {
+                target: self.correlated_features.get(target, [])
+                for target in self.feature_names
+            }
+        else:
+            X_original = X
+            drop_cols_by_target = {}
+
+        columns = list(X_original.columns)
+        features_by_target = {}
+        for target_name in self.feature_names:
+            base_features = [col for col in columns if col != target_name]
+            drop_cols = set(drop_cols_by_target.get(target_name, []))
+            features_by_target[target_name] = [
+                col for col in base_features if col not in drop_cols
+            ]
+
+        model_class_by_target = {}
+        loss_by_target = {}
+        for target_name in self.feature_names:
+            if self.feature_types[target_name] in {'categorical', 'binary'}:
+                model_class_by_target[target_name] = GradientBoostingClassifier
+                loss_by_target[target_name] = 'log_loss'
+            else:
+                model_class_by_target[target_name] = GradientBoostingRegressor
+                loss_by_target[target_name] = 'squared_error'
 
         # Who is calling me?
         try:
@@ -165,27 +277,13 @@ class GBTRegressor(GradientBoostingRegressor):
         else:
             pbar = None
 
-        for target_idx, target_name in enumerate(self.feature_names):
-            # if correlation_th is not None then, remove features that are highly
-            # correlated with the target, at each step of the loop
-            if self.correlation_th is not None:
-                X = X_original.copy()
-                if len(self.correlated_features[target_name]) > 0:
-                    X = X.drop(self.correlated_features[target_name], axis=1)
-                    if self.verbose:
-                        print("REMOVED CORRELATED FEATURES: ",
-                              self.correlated_features[target_name])
+        def _fit_target(target_name: str, loss_value: str, gbt_model):
+            drop_cols = drop_cols_by_target.get(target_name, [])
+            if drop_cols and self.verbose:
+                print("REMOVED CORRELATED FEATURES: ", drop_cols)
 
-            if self.feature_types[target_name] == 'categorical' or \
-                    self.feature_types[target_name] == 'binary':
-                self.loss = 'log_loss'
-                gbt_model = GradientBoostingClassifier
-            else:
-                self.loss = 'squared_error'
-                gbt_model = GradientBoostingRegressor
-
-            self.regressor[target_name] = gbt_model(
-                loss=self.loss,
+            model = gbt_model(
+                loss=loss_value,
                 learning_rate=self.learning_rate,
                 n_estimators=self.n_estimators,
                 subsample=self.subsample,
@@ -207,11 +305,42 @@ class GBTRegressor(GradientBoostingRegressor):
                 tol=self.tol,
                 ccp_alpha=self.ccp_alpha
             )
+            X_target = X_original.loc[:, features_by_target[target_name]]
+            model.fit(X_target, X_original[target_name])
+            return target_name, model
 
-            self.regressor[target_name].fit(
-                X.drop(target_name, axis=1), X[target_name])
-
-            pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
+        use_parallel = self.parallel_jobs and self.parallel_jobs > 1
+        if use_parallel:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            results = {}
+            with ThreadPoolExecutor(max_workers=self.parallel_jobs) as executor:
+                futures = [
+                    executor.submit(
+                        _fit_target,
+                        name,
+                        loss_by_target[name],
+                        model_class_by_target[name],
+                    )
+                    for name in self.feature_names
+                ]
+                for idx, future in enumerate(as_completed(futures)):
+                    target_name, model = future.result()
+                    results[target_name] = model
+                    pbar.update_subtask(pbar_name, idx+1) if pbar else None
+            for target_name in self.feature_names:
+                self.regressor[target_name] = results[target_name]
+            if self.feature_names:
+                self.loss = loss_by_target[self.feature_names[-1]]
+        else:
+            for target_idx, target_name in enumerate(self.feature_names):
+                self.loss = loss_by_target[target_name]
+                target_name, model = _fit_target(
+                    target_name,
+                    loss_by_target[target_name],
+                    model_class_by_target[target_name],
+                )
+                self.regressor[target_name] = model
+                pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
 
         pbar.remove(pbar_name) if pbar else None
         self.is_fitted_ = True
@@ -312,6 +441,19 @@ class GBTRegressor(GradientBoostingRegressor):
                     device='cpu',
                     prog_bar=True,
                     verbose=False):
+                """
+                Initialize the Optuna objective.
+
+                Args:
+                    train_data (pd.DataFrame): Training dataset.
+                    test_data (pd.DataFrame): Validation dataset.
+                    device (str): Unused placeholder for interface parity.
+                    prog_bar (bool): Whether to show a progress bar.
+                    verbose (bool): Whether to enable verbose logging.
+
+                Returns:
+                    None: This method does not return a value.
+                """
                 self.train_data = train_data
                 self.test_data = test_data
                 self.device = device
@@ -392,24 +534,59 @@ class GBTRegressor(GradientBoostingRegressor):
 
         # Callback function to stop the study if the loss is below a given threshold
         def callback(study: optuna.study.Study, trial: optuna.trial.FrozenTrial):
+            """
+            Stop the Optuna study when the loss threshold is reached.
+
+            Args:
+                study (optuna.study.Study): The active Optuna study.
+                trial (optuna.trial.FrozenTrial): The completed trial.
+
+            Returns:
+                None: This method does not return a value.
+            """
             if trial.value < min_loss or study.best_value < min_loss:
                 study.stop()
 
         if self.verbose is False:
             optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-        # Create and run the HPO study
-        study = optuna.create_study(
-            direction='minimize', study_name=study_name, storage=storage,
-            load_if_exists=load_if_exists)
-        study.optimize(
-            Objective(
-                training_data, test_data, prog_bar=self.prog_bar, verbose=self.verbose),
-            n_trials=n_trials,
-            gc_after_trial=True,
-            show_progress_bar=(self.optuna_prog_bar & (
-                not self.silent) & (not self.verbose)),
-            callbacks=[callback])
+        # Create and run the HPO study.
+        resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
+        fallback_storage = _fallback_optuna_storage(storage, study_name)
+        try:
+            study = optuna.create_study(
+                direction='minimize', study_name=study_name,
+                storage=resolved_storage, load_if_exists=load_if_exists)
+            study.optimize(
+                Objective(
+                    training_data, test_data, prog_bar=self.prog_bar,
+                    verbose=self.verbose),
+                n_trials=n_trials,
+                gc_after_trial=True,
+                show_progress_bar=(self.optuna_prog_bar & (
+                    not self.silent) & (not self.verbose)),
+                callbacks=[callback])
+        except Exception as exc:  # pylint: disable=broad-except
+            if not _is_readonly_storage_error(exc):
+                raise
+            if fallback_storage == resolved_storage:
+                raise
+            if self.verbose and not self.silent:
+                print(
+                    "Optuna storage is read-only; retrying with "
+                    f"storage={fallback_storage}")
+            study = optuna.create_study(
+                direction='minimize', study_name=study_name,
+                storage=fallback_storage, load_if_exists=load_if_exists)
+            study.optimize(
+                Objective(
+                    training_data, test_data, prog_bar=self.prog_bar,
+                    verbose=self.verbose),
+                n_trials=n_trials,
+                gc_after_trial=True,
+                show_progress_bar=(self.optuna_prog_bar & (
+                    not self.silent) & (not self.verbose)),
+                callbacks=[callback])
 
         # Capture the best hyperparameters and the minimum loss
         best_trials = sorted(study.best_trials, key=lambda x: x.values[0])
@@ -475,6 +652,17 @@ class GBTRegressor(GradientBoostingRegressor):
 #
 
 def custom_main(experiment_name='custom_rex', score: bool = False, tune: bool = False):
+    """
+    Run a local GBT workflow for scoring or tuning.
+
+    Args:
+        experiment_name (str): Name of the experiment dataset.
+        score (bool): Whether to load and score an existing model.
+        tune (bool): Whether to run hyperparameter tuning.
+
+    Returns:
+        None: This function does not return a value.
+    """
     from causalexplain.common import utils
     path = "/Users/renero/phd/data/RC3/"
     output_path = "/Users/renero/phd/output/RC3/"

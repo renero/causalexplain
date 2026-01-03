@@ -433,6 +433,36 @@ def select_device(force: Optional[str] = None) -> str:
     return device
 
 
+def resolve_device(requested: Optional[str] = None) -> str:
+    """
+    Resolve an explicit device request, defaulting to CPU.
+
+    Args:
+        requested (Optional[str]): Requested device ("cpu", "cuda", "mps").
+
+    Returns:
+        str: The resolved device string.
+
+    Raises:
+        ValueError: If the requested device is invalid or unavailable.
+    """
+    if requested is None:
+        return "cpu"
+
+    requested = requested.lower()
+    if requested == "cpu":
+        return "cpu"
+    if requested == "cuda":
+        if torch.cuda.is_available() and torch.backends.cuda.is_built():
+            return "cuda"
+        raise ValueError("CUDA requested but is not available.")
+    if requested == "mps":
+        if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            return "mps"
+        raise ValueError("MPS requested but is not available.")
+    raise ValueError("Invalid device. Expected 'cpu', 'cuda', or 'mps'.")
+
+
 def graph_intersection(g1: nx.DiGraph, g2: nx.DiGraph) -> nx.DiGraph:
     """
     Returns the intersection of two graphs. The intersection is defined as the

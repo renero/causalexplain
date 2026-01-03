@@ -45,7 +45,11 @@ def args_factory():
             verbose=False,
             save_model=None,
             output=None,
-            adaptive_shap_sampling=True
+            adaptive_shap_sampling=True,
+            cuda=False,
+            mps=False,
+            parallel_jobs=0,
+            bootstrap_parallel_jobs=0
         )
         for key, value in overrides.items():
             setattr(base, key, value)
@@ -76,6 +80,52 @@ def test_parse_args_adaptive_shap_sampling(monkeypatch):
     assert args.adaptive_shap_sampling is False
 
 
+def test_parse_args_cuda_flag(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--cuda",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.cuda is True
+    assert args.mps is False
+
+
+def test_parse_args_mps_flag(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--mps",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.mps is True
+    assert args.cuda is False
+
+
+def test_parse_args_parallel_jobs(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--parallel-jobs", "3",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.parallel_jobs == 3
+
+
+def test_parse_args_bootstrap_parallel_jobs(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--bootstrap-parallel-jobs", "2",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.bootstrap_parallel_jobs == 2
+
+
 def test_check_args_requires_dataset_or_model(args_factory):
     args = args_factory()
     with pytest.raises(ValueError):
@@ -96,6 +146,9 @@ def test_check_args_with_dataset_and_save_defaults(
         sample_csv).replace('.csv', '') + "_rex.pickle"
     assert run_values['output_path'] == os.getcwd()
     assert run_values['bootstrap_iterations'] == main_mod.DEFAULT_BOOTSTRAP_TRIALS
+    assert run_values['device'] == "cpu"
+    assert run_values['parallel_jobs'] == 0
+    assert run_values['bootstrap_parallel_jobs'] == 0
 
 
 def test_check_args_load_model_without_dataset(tmp_path, args_factory, monkeypatch):
@@ -112,6 +165,50 @@ def test_check_args_fails_when_load_model_missing(tmp_path, args_factory):
     args = args_factory(load_model=str(
         tmp_path / "missing.pkl"), no_train=True)
     with pytest.raises(FileNotFoundError):
+        main_mod.check_args_validity(args)
+
+
+def test_check_args_cuda_available(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.cuda, "is_built", lambda: True)
+    args = args_factory(dataset=sample_csv, cuda=True)
+    run_values = main_mod.check_args_validity(args)
+    assert run_values['device'] == "cuda"
+
+
+def test_check_args_cuda_unavailable(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.cuda, "is_built", lambda: False)
+    args = args_factory(dataset=sample_csv, cuda=True)
+    with pytest.raises(ValueError, match="CUDA requested"):
+        main_mod.check_args_validity(args)
+
+
+def test_check_args_mps_available(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_available",
+        lambda: True, raising=False)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_built",
+        lambda: True, raising=False)
+    args = args_factory(dataset=sample_csv, mps=True)
+    run_values = main_mod.check_args_validity(args)
+    assert run_values['device'] == "mps"
+
+
+def test_check_args_mps_unavailable(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_available",
+        lambda: False, raising=False)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_built",
+        lambda: False, raising=False)
+    args = args_factory(dataset=sample_csv, mps=True)
+    with pytest.raises(ValueError, match="MPS requested"):
         main_mod.check_args_validity(args)
 
 
@@ -195,6 +292,9 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         'model_filename': str(tmp_path / "saved.pkl"),
         'output_dag_file': str(tmp_path / "dag.dot"),
         'adaptive_shap_sampling': False,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
     }
     times = iter([100.0, 101.0])
     monkeypatch.setattr(main_mod.time, "time", lambda: next(times))
@@ -257,6 +357,9 @@ def test_main_loads_existing_model(monkeypatch):
         'output_path': None,
         'model_filename': None,
         'output_dag_file': None,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
     }
     instances = []
 
@@ -305,6 +408,9 @@ def test_main_warns_when_adaptive_disabled_large_dataset(monkeypatch, capsys):
         'model_filename': None,
         'output_dag_file': None,
         'adaptive_shap_sampling': False,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
     }
     monkeypatch.setattr(main_mod, "GraphDiscovery", DummyDiscovery)
     monkeypatch.setattr(main_mod, "parse_args", lambda: SimpleNamespace())

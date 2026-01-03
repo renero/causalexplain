@@ -41,7 +41,7 @@ from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
 
 from causalexplain.explainability.hierarchies import Hierarchies
 from ..independence.feature_selection import select_features
-from ..common import utils
+from ..common import DEFAULT_MAX_SAMPLES, utils
 
 RED = colorama.Fore.RED
 GREEN = colorama.Fore.GREEN
@@ -848,8 +848,7 @@ def compute_shap_adaptive(
         model: Any,
         backend: Literal["kernel", "gradient", "explainer"],
         y: Optional[Any] = None,
-        max_shap_samples: int = 250,
-        min_shap_samples: int = 200,
+        max_shap_samples: int = DEFAULT_MAX_SAMPLES,
         K_max: int = 5,
         max_explain_samples: Optional[int] = None,
         random_state: Optional[int] = None,
@@ -872,7 +871,6 @@ def compute_shap_adaptive(
         backend: SHAP backend name ("kernel", "gradient", "explainer").
         y: Optional target values for stratification or diagnostics.
         max_shap_samples: Background cap for adaptive sampling.
-        min_shap_samples: Background size for repeated sampling mode.
         K_max: Maximum number of repeated sampling runs.
         max_explain_samples: Optional cap for explained rows.
         random_state: Random seed for deterministic sampling.
@@ -892,8 +890,8 @@ def compute_shap_adaptive(
     X = _normalize_tabular(X)
     if backend not in {"kernel", "gradient", "explainer"}:
         raise ValueError("backend must be one of: kernel, gradient, explainer.")
-    if max_shap_samples <= 0 or min_shap_samples <= 0:
-        raise ValueError("max_shap_samples and min_shap_samples must be > 0.")
+    if max_shap_samples <= 0:
+        raise ValueError("max_shap_samples must be > 0.")
     if K_max <= 0:
         raise ValueError("K_max must be > 0.")
     if topN_important <= 0:
@@ -941,7 +939,7 @@ def compute_shap_adaptive(
         K_target = 1
     else:
         mode = "multi_sample"
-        n_background = min(min_shap_samples, m)
+        n_background = min(max_shap_samples, m)
         K_target = min(int(K_max), 5)
 
     seeds = _make_seeds(random_state, K_target) if mode != "no_sampling" else []
@@ -1240,8 +1238,8 @@ class ShapEstimator(BaseEstimator):
     Parameters
     ----------
     explainer : str, default="explainer"
-        The SHAP explainer to use. Possible values are "kernel", "gradient", and
-        "explainer".
+        The SHAP explainer to use. Possible values are "kernel", "gradient",
+        "explainer", and "tree".
     models : BaseEstimator, default=None
         The models to use for computing SHAP values. If None, a linear regression
         model is used for each feature.
@@ -1316,8 +1314,8 @@ class ShapEstimator(BaseEstimator):
         Parameters
         ----------
         explainer : str, default="explainer"
-            The SHAP explainer to use. Possible values are "kernel", "gradient", and
-            "explainer".
+            The SHAP explainer to use. Possible values are "kernel", "gradient",
+            "explainer", and "tree".
         models : BaseEstimator, default=None
             The models to use for computing SHAP values. If None, a linear regression
             model is used for each feature.
@@ -1764,10 +1762,23 @@ class ShapEstimator(BaseEstimator):
             explanation = self._call_explainer(
                 self.shap_explainer[target_name], X_test, silent=True)
             shap_values = explanation.values
+        elif self.explainer == "tree":
+            background = self._select_background(X_train)
+            self.shap_explainer[target_name] = shap.TreeExplainer(
+                model, background)
+            explanation = self._call_explainer(
+                self.shap_explainer[target_name], X_test, silent=True)
+            shap_values = (
+                explanation.values
+                if hasattr(explanation, "values")
+                else explanation
+            )
+            if isinstance(shap_values, list):
+                shap_values = shap_values[0]
         else:
             raise ValueError(
                 f"Unknown explainer: {self.explainer}. "
-                f"Please select one of: kernel, gradient, explainer.")
+                f"Please select one of: kernel, gradient, explainer, tree.")
 
         return shap_values
 

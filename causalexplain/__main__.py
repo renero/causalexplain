@@ -30,6 +30,7 @@ from causalexplain.common.notebook import Experiment
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
                                   DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
+                                  DEFAULT_MAX_SAMPLES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
 
 
@@ -52,6 +53,10 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help='Enable adaptive SHAP background sampling and stability checks. '
              'Use --no-adaptive-shap-sampling to disable. Default is enabled.')
+    parser.add_argument(
+        '--max-shap-samples', '--max_shap_samples', type=int, required=False,
+        help='Max background samples for adaptive SHAP. '
+             f'Default is {DEFAULT_MAX_SAMPLES}.')
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
         help='Bootstrap iterations. Default is 20.')
@@ -98,6 +103,19 @@ def parse_args() -> argparse.Namespace:
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
         '-v', '--verbose', action='store_true', required=False, help='Verbose mode, instead of progress bar.')
+    parser.add_argument(
+        '--parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for CPU training (0 = sequential).')
+    parser.add_argument(
+        '--bootstrap-parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
+    device_group = parser.add_mutually_exclusive_group()
+    device_group.add_argument(
+        '--cuda', action='store_true', required=False,
+        help='Run on CUDA (requires a CUDA-enabled build).')
+    device_group.add_argument(
+        '--mps', action='store_true', required=False,
+        help='Run on Apple Silicon MPS (requires MPS support).')
 
     args = parser.parse_args()
     return args
@@ -208,6 +226,19 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
+    if args.max_shap_samples is None or args.max_shap_samples <= 0:
+        run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
+    else:
+        run_values['max_shap_samples'] = args.max_shap_samples
+    run_values['parallel_jobs'] = args.parallel_jobs
+    run_values['bootstrap_parallel_jobs'] = args.bootstrap_parallel_jobs
+    if args.cuda:
+        requested_device = "cuda"
+    elif args.mps:
+        requested_device = "mps"
+    else:
+        requested_device = "cpu"
+    run_values['device'] = utils.resolve_device(requested_device)
 
     # return a dictionary with all the new variables created
     return run_values
@@ -267,7 +298,11 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
         csv_filename=run_values['dataset_filepath'],
         true_dag_filename=run_values['true_dag'],
         verbose=run_values['verbose'],
-        seed=run_values['seed']
+        seed=run_values['seed'],
+        parallel_jobs=run_values['parallel_jobs'],
+        bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
+        device=run_values['device'],
+        max_shap_samples=run_values.get('max_shap_samples')
     )
     _check_csv_size_warning(discoverer, run_values)
 
@@ -322,7 +357,8 @@ def _train_if_needed(
         prior=run_values['prior'],
         bootstrap_tolerance=run_values.get('bootstrap_tolerance'),
         quiet=run_values.get('quiet', False),
-        adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True)
+        adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True),
+        max_shap_samples=run_values.get('max_shap_samples')
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])
@@ -430,6 +466,21 @@ def main() -> None:
     if run_values['output_dag_file'] is not None:
         utils.graph_to_dot_file(dag, run_values['output_dag_file'])
         print(f"Saved DAG to {run_values['output_dag_file']}")
+
+
+# TODO
+# [ ] Ensure that the prior is used in all methods that support it and it works correctly
+# [ ] Get rid of the mlforge pipeline dependency in causalexplain
+# [ ] Get rid of the ProgBar dependency in causalexplain
+# [X] Fix the length of the messages printed by the tqdm progress bars
+# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
+# [X] Analyze whether to move to GPU the DNN training for ReX
+# [ ] Add options to run the 'generators' from the CLI
+# [ ] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
+# [X] Cast everything to 'float32' where possible to reduce memory consumption
+# [X] Study how to use GPU acceleration for SHAP computations
+# [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
+# [ ] Add option to save the SHAP values to a CSV file
 
 
 if __name__ == "__main__":

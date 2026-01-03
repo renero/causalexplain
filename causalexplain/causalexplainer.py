@@ -11,6 +11,7 @@ import networkx as nx
 from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from causalexplain.common import (
+    DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     utils,
 )
@@ -27,7 +28,11 @@ class GraphDiscovery:
         csv_filename: Optional[str] = None,
         true_dag_filename: Optional[str] = None,
         verbose: bool = False,
-        seed: int = 42
+        seed: int = 42,
+        device: Optional[str] = None,
+        parallel_jobs: int = 0,
+        bootstrap_parallel_jobs: int = 0,
+        max_shap_samples: Optional[int] = None
     ) -> None:
         """
         Initialize a graph discovery workflow and optionally load dataset metadata.
@@ -47,6 +52,10 @@ class GraphDiscovery:
                 containing the true causal graph.
             verbose (bool, optional): Whether to print verbose output.
             seed (int, optional): The random seed for reproducibility.
+            device (Optional[str], optional): Device selection for regressors.
+            parallel_jobs (int, optional): Number of parallel jobs for CPU training.
+            bootstrap_parallel_jobs (int, optional): Number of parallel jobs for bootstrap.
+            max_shap_samples (Optional[int], optional): Cap for SHAP background samples.
 
         Returns:
             None: This method does not return a value.
@@ -54,9 +63,17 @@ class GraphDiscovery:
         self.trainer: Dict[str, Experiment] = {}
         normalized_experiment = self._normalize_optional_str(experiment_name)
         normalized_csv = self._normalize_optional_str(csv_filename)
+        resolved_device = utils.resolve_device(device)
+        resolved_max_shap = (
+            max_shap_samples
+            if isinstance(max_shap_samples, int) and max_shap_samples > 0
+            else DEFAULT_MAX_SAMPLES
+        )
 
         if normalized_experiment is None and normalized_csv is None:
-            self._init_empty_state(seed)
+            self._init_empty_state(
+                seed, resolved_device, parallel_jobs, bootstrap_parallel_jobs,
+                resolved_max_shap)
             return
 
         self._validate_experiment_inputs(normalized_experiment, normalized_csv)
@@ -68,6 +85,10 @@ class GraphDiscovery:
         self.dot_filename = true_dag_filename
         self.verbose = verbose
         self.seed = seed
+        self.device = resolved_device
+        self.parallel_jobs = parallel_jobs
+        self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
+        self.max_shap_samples = resolved_max_shap
         self.train_size = 0.9
         self.random_state = seed
 
@@ -103,7 +124,14 @@ class GraphDiscovery:
         value = value.strip()
         return value or None
 
-    def _init_empty_state(self, seed: int) -> None:
+    def _init_empty_state(
+        self,
+        seed: int,
+        device: str,
+        parallel_jobs: int,
+        bootstrap_parallel_jobs: int,
+        max_shap_samples: int
+    ) -> None:
         """
         Initialize the instance with placeholder state for deferred configuration.
 
@@ -126,6 +154,10 @@ class GraphDiscovery:
         self.test_idx = None
         self.verbose = False
         self.seed = seed
+        self.device = device
+        self.parallel_jobs = parallel_jobs
+        self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
+        self.max_shap_samples = max_shap_samples
         self.trainer: Dict[str, Experiment] = {}
 
     def _validate_experiment_inputs(
@@ -439,8 +471,13 @@ class GraphDiscovery:
         if self.estimator == 'rex':
             xargs = {
                 'verbose': verbose,
-                'prior': prior
+                'prior': prior,
+                'device': self.device,
+                'parallel_jobs': self.parallel_jobs,
+                'bootstrap_parallel_jobs': self.bootstrap_parallel_jobs
             }
+            if self.max_shap_samples is not None:
+                xargs['max_shap_samples'] = self.max_shap_samples
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations
             if bootstrap_iterations is not None:
@@ -689,13 +726,11 @@ class GraphDiscovery:
             return "SHAP adaptive sampling: unavailable"
 
         adaptive = getattr(rex_estimator, 'adaptive_shap_sampling', True)
-        max_shap_samples = getattr(rex_estimator, 'max_shap_samples', 250)
-        min_shap_samples = getattr(rex_estimator, 'min_shap_samples', 200)
+        max_shap_samples = getattr(
+            rex_estimator, 'max_shap_samples', DEFAULT_MAX_SAMPLES)
         k_max = getattr(rex_estimator, 'K_max', 5)
         if not isinstance(max_shap_samples, int) or max_shap_samples <= 0:
-            max_shap_samples = 250
-        if not isinstance(min_shap_samples, int) or min_shap_samples <= 0:
-            min_shap_samples = 200
+            max_shap_samples = DEFAULT_MAX_SAMPLES
         if not isinstance(k_max, int) or k_max <= 0:
             k_max = 5
 
@@ -728,7 +763,7 @@ class GraphDiscovery:
             k_target = 1
         else:
             mode = "multi_sample"
-            n_background = min(min_shap_samples, n_rows)
+            n_background = min(max_shap_samples, n_rows)
             k_target = min(int(k_max), 5)
 
         return f"SHAP adaptive sampling: {mode} (K={k_target}, samples={n_background})"

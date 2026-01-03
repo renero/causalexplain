@@ -215,6 +215,67 @@ def test_gbt_fit_sets_caller_name_from_call(monkeypatch):
     model.fit(df)
 
 
+def test_gbt_fit_parallel_jobs(monkeypatch):
+    class DummyExecutor:
+        def __init__(self, max_workers=None):
+            self.max_workers = max_workers
+            self.submitted = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            future = type("F", (), {"result": lambda self: fn(*args, **kwargs)})()
+            self.submitted.append(future)
+            return future
+
+    monkeypatch.setattr(
+        "concurrent.futures.ThreadPoolExecutor", DummyExecutor)
+    monkeypatch.setattr(
+        "concurrent.futures.as_completed", lambda futures: futures)
+
+    FakeRegressor = type(
+        "GradientBoostingRegressor",
+        (),
+        {
+            "__init__": lambda self, *args, **kwargs: None,
+            "fit": lambda self, X, y: setattr(self, "n_features_in_", X.shape[1]) or self,
+            "predict": lambda self, X: np.zeros(len(X)),
+            "score": lambda self, X, y: 0.5,
+        },
+    )
+    FakeClassifier = type(
+        "GradientBoostingClassifier",
+        (),
+        {
+            "__init__": lambda self, *args, **kwargs: None,
+            "fit": lambda self, X, y: setattr(self, "n_features_in_", X.shape[1]) or self,
+            "predict": lambda self, X: np.ones(len(X)),
+            "score": lambda self, X, y: 0.5,
+        },
+    )
+
+    monkeypatch.setattr(gbt, "GradientBoostingRegressor", FakeRegressor)
+    monkeypatch.setattr(gbt, "GradientBoostingClassifier", FakeClassifier)
+    monkeypatch.setattr(gbt.utils, "get_feature_names", lambda X: list(X.columns))
+    monkeypatch.setattr(
+        gbt.utils,
+        "get_feature_types",
+        lambda X: {list(X.columns)[0]: "numerical", list(X.columns)[1]: "binary"},
+    )
+
+    df = _dataframe()
+    model = gbt.GBTRegressor(prog_bar=False, parallel_jobs=2, n_estimators=1)
+    model.fit(df)
+
+    assert set(model.regressor.keys()) == set(df.columns)
+    assert model.regressor["x"].n_features_in_ == 1
+    assert model.regressor["y"].n_features_in_ == 1
+
+
 def test_gbt_custom_main_runs_with_mocks(monkeypatch):
     monkeypatch.setattr(gbt.utils, "graph_from_dot_file", lambda *_: None)
 

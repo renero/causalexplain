@@ -15,6 +15,8 @@ source of random noise.
 # pylint: disable=W0102:dangerous-default-value
 
 import inspect
+import os
+import tempfile
 import types
 import warnings
 from typing import Dict, List, Tuple, Union, Any
@@ -34,6 +36,55 @@ from ._columnar import ColumnsDataset
 from ._models import MLPModel
 
 warnings.filterwarnings("ignore")
+
+
+def _is_readonly_storage_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    if "readonly" in message and "database" in message:
+        return True
+    cause = getattr(exc, "__cause__", None)
+    while cause is not None:
+        message = str(cause).lower()
+        if "readonly" in message and "database" in message:
+            return True
+        cause = getattr(cause, "__cause__", None)
+    return False
+
+
+def _fallback_optuna_storage(storage: str | None, study_name: str | None) -> str | None:
+    if not storage or not isinstance(storage, str):
+        return storage
+    if not storage.startswith("sqlite:///"):
+        return storage
+    db_path = storage.replace("sqlite:///", "", 1)
+    if not db_path or db_path == ":memory:":
+        return storage
+    base = study_name or os.path.splitext(os.path.basename(db_path))[0] or "optuna"
+    filename = f"{base}_tuning.db"
+    return f"sqlite:///{os.path.join(tempfile.gettempdir(), filename)}"
+
+
+def _ensure_writable_optuna_storage(
+        storage: str | None, study_name: str | None) -> str | None:
+    if not storage or not isinstance(storage, str):
+        return storage
+    if not storage.startswith("sqlite:///"):
+        return storage
+    db_path = storage.replace("sqlite:///", "", 1)
+    if not db_path or db_path == ":memory:":
+        return storage
+    if not os.path.isabs(db_path):
+        db_path = os.path.abspath(db_path)
+    db_dir = os.path.dirname(db_path) or os.getcwd()
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+    except OSError:
+        return _fallback_optuna_storage(storage, study_name)
+    if os.path.exists(db_path) and not os.access(db_path, os.W_OK):
+        return _fallback_optuna_storage(storage, study_name)
+    if not os.access(db_dir, os.W_OK):
+        return _fallback_optuna_storage(storage, study_name)
+    return f"sqlite:///{db_path}"
 
 
 class NNRegressor(BaseEstimator):
@@ -81,12 +132,13 @@ class NNRegressor(BaseEstimator):
             early_stop: bool = False,
             patience: int = 10,
             min_delta: float = 0.001,
-            correlation_th: float = None,
+            correlation_th: float|None = None,
             random_state: int = 1234,
             verbose: bool = False,
             prog_bar: bool = True,
             silent: bool = False,
-            optuna_prog_bar: bool = False):
+            optuna_prog_bar: bool = False,
+            parallel_jobs: int = 0):
         """
         Train DFF networks for all variables in data. Each network will be trained to
         predict one of the variables in the data, using the rest as predictors plus one
@@ -115,6 +167,8 @@ class NNRegressor(BaseEstimator):
             min_delta (float): The minimum delta for early stopping. Default is 0.001.
             prog_bar (bool): Whether to enable the progress bar. Default
                 is False.
+            parallel_jobs (int): Number of parallel jobs to use for CPU training.
+                Default is 0 (sequential).
 
         Returns:
             dict: A dictionary with the trained DFF networks, using the name of the
@@ -138,6 +192,7 @@ class NNRegressor(BaseEstimator):
         self.prog_bar = prog_bar
         self.silent = silent
         self.optuna_prog_bar = optuna_prog_bar
+        self.parallel_jobs = parallel_jobs
 
         self.regressor = None
         self._fit_desc = "Training NNs"
@@ -182,44 +237,52 @@ class NNRegressor(BaseEstimator):
             self.correlated_features = Hierarchies.compute_correlated_features(
                 self.corr_matrix, self.correlation_th, self.feature_names,
                 verbose=self.verbose)
-            X_original = X.copy()
+            X_original = X
+            drop_cols_by_target = {
+                target: self.correlated_features.get(target, [])
+                for target in self.feature_names
+            }
+        else:
+            X_original = X
+            drop_cols_by_target = {}
 
+        loss_fn_by_target = {}
+        for target_name in self.feature_names:
+            if self.feature_types[target_name] == 'categorical':
+                loss_fn_by_target[target_name] = 'crossentropy'
+            elif self.feature_types[target_name] == 'binary':
+                loss_fn_by_target[target_name] = 'binary_crossentropy'
+            else:
+                loss_fn_by_target[target_name] = self.loss_fn
+
+        pbar = None
+        pbar_name = ""
         if self.prog_bar and not self.verbose:
             pbar_name = f"({caller_name}) DNN_fit"
             pbar = ProgBar().start_subtask(pbar_name, len(self.feature_names))
         else:
             pbar = None
 
-        for target_idx, target_name in enumerate(self.feature_names):
-            # if correlation_th is not None then, remove features that are highly
-            # correlated with the target, at each step of the loop
-            if self.correlation_th is not None:
-                X = X_original.copy()
-                if len(self.correlated_features[target_name]) > 0:
-                    X = X.drop(self.correlated_features[target_name], axis=1)
-                    if self.verbose:
-                        print("REMOVED CORRELATED FEATURES: ",
-                              self.correlated_features[target_name])
-
-            # Determine Loss function based on the type of target variable
-            if self.feature_types[target_name] == 'categorical':
-                loss_fn = 'crossentropy'
-            elif self.feature_types[target_name] == 'binary':
-                loss_fn = 'binary_crossentropy'
+        def _fit_target(target_name: str) -> Tuple[str, MLPModel]:
+            drop_cols = drop_cols_by_target.get(target_name, [])
+            if drop_cols:
+                X_target = X_original.drop(drop_cols, axis=1)
+                if self.verbose:
+                    print("REMOVED CORRELATED FEATURES: ", drop_cols)
             else:
-                loss_fn = self.loss_fn
+                X_target = X_original
 
-            self.regressor[target_name] = MLPModel(
+            model = MLPModel(
                 target=target_name,
-                input_size=X.shape[1],
+                input_size=X_target.shape[1],
                 activation=self.activation,
                 hidden_dim=self.hidden_dim,
                 learning_rate=self.learning_rate,
                 batch_size=self.batch_size,
-                loss_fn=loss_fn,
+                loss_fn=loss_fn_by_target[target_name],
                 dropout=self.dropout,
                 num_epochs=self.num_epochs,
-                dataframe=X,
+                dataframe=X_target,
                 test_size=self.test_size,
                 device=self.device,
                 seed=self.random_state,
@@ -227,9 +290,31 @@ class NNRegressor(BaseEstimator):
                 patience=self.patience,
                 min_delta=self.min_delta,
                 prog_bar=self.prog_bar)
-            self.regressor[target_name].train()
+            model.train()
+            return target_name, model
 
-            pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
+        use_parallel = self.parallel_jobs and self.parallel_jobs > 1
+        use_parallel = use_parallel and str(self.device).lower() == "cpu"
+
+        if use_parallel:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            results: Dict[str, MLPModel] = {}
+            with ThreadPoolExecutor(max_workers=self.parallel_jobs) as executor:
+                futures = [
+                    executor.submit(_fit_target, name)
+                    for name in self.feature_names
+                ]
+                for idx, future in enumerate(as_completed(futures)):
+                    target_name, model = future.result()
+                    results[target_name] = model
+                    pbar.update_subtask(pbar_name, idx + 1) if pbar else None
+            for target_name in self.feature_names:
+                self.regressor[target_name] = results[target_name]
+        else:
+            for target_idx, target_name in enumerate(self.feature_names):
+                target_name, model = _fit_target(target_name)
+                self.regressor[target_name] = model
+                pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
 
         pbar.remove(pbar_name) if pbar else None
         self.is_fitted_ = True
@@ -258,6 +343,15 @@ class NNRegressor(BaseEstimator):
 
         if self.correlation_th is not None:
             X_original = X.copy()
+            loaders = None
+        else:
+            loaders = {
+                target: DataLoader(
+                    ColumnsDataset(target, X),
+                    batch_size=self.batch_size,
+                    shuffle=False)
+                for target in self.feature_names
+            }
 
         prediction = pd.DataFrame(columns=self.feature_names)
         for target in self.feature_names:
@@ -268,17 +362,25 @@ class NNRegressor(BaseEstimator):
             # Creat a data loader for the target variable. The ColumnsDataset will
             # return the target variable as the second element of the tuple, and
             # will drop the target from the features.
-            loader = DataLoader(
-                ColumnsDataset(target, X), batch_size=self.batch_size,
-                shuffle=False)
+            if loaders is not None:
+                loader = loaders[target]
+            else:
+                loader = DataLoader(
+                    ColumnsDataset(target, X), batch_size=self.batch_size,
+                    shuffle=False)
             model = self.regressor[target].model
 
             # Obtain the predictions for the target variable
-            preds = np.empty((0,), dtype=np.float16)
+            preds = np.empty((0,), dtype=np.float32)
             for (tensor_X, _) in loader:
-                tensor_X = tensor_X.to(self.device)
+                tensor_X = tensor_X.to(self.device).float()
+                model = model.to(tensor_X.device).float()
                 y_hat = model.forward(tensor_X)
-                preds = np.append(preds, y_hat.detach().numpy().flatten())
+                preds = np.append(
+                    preds,
+                    y_hat.detach().cpu().numpy().astype(
+                        np.float32, copy=False).flatten(),
+                )
             prediction[target] = preds
 
         # Concatenate the numpy array for all the batchs
@@ -302,7 +404,7 @@ class NNRegressor(BaseEstimator):
         if len(final_preds) == 0:
             final_preds = np_preds
 
-        return np.array(final_preds)
+        return np.asarray(final_preds, dtype=np.float32)
 
     def score(self, X):
         """
@@ -321,18 +423,27 @@ class NNRegressor(BaseEstimator):
         # Handle the case where the prediction returned by the model is not a
         # numpy array but a numpy object type
         if isinstance(y_hat, np.ndarray) and y_hat.dtype == np.object_:
-            y_hat = np.vstack(y_hat[:, :].flatten()).astype('float')
-            y_hat = torch.Tensor(y_hat)
+            y_hat = np.vstack(y_hat[:, :].flatten()).astype(np.float32)
+            y_hat = torch.as_tensor(y_hat, dtype=torch.float32)
         scores = []
         for i, target in enumerate(self.feature_names):
-            y_preds = torch.Tensor(y_hat[i])
-            y = torch.Tensor(X[target].values)
+            y_preds = torch.as_tensor(y_hat[i], dtype=torch.float32)
+            y = torch.as_tensor(X[target].values, dtype=torch.float32)
             scores.append(self.regressor[target].model.loss_fn(y_preds, y))
 
         self.scoring = np.array(scores)
         return self.scoring
 
     def __repr__(self):
+        """
+        Return a readable snapshot of user-facing attributes.
+
+        Args:
+            None.
+
+        Returns:
+            str: A formatted summary of non-callable attributes.
+        """
         forbidden_attrs = [
             'fit', 'predict', 'score', 'get_params', 'set_params']
         ret = f"REX object attributes\n"
@@ -357,7 +468,7 @@ class NNRegressor(BaseEstimator):
             self,
             training_data: pd.DataFrame,
             test_data: pd.DataFrame,
-            study_name: str = None,
+            study_name: str|None = None,
             min_loss: float = 0.05,
             storage: str = 'sqlite:///rex_tuning.db',
             load_if_exists: bool = True,
@@ -391,6 +502,19 @@ class NNRegressor(BaseEstimator):
                     device='cpu',
                     prog_bar=True,
                     verbose=False):
+                """
+                Initialize the Optuna objective with training data and settings.
+
+                Args:
+                    train_data (pd.DataFrame): Training dataset.
+                    test_data (pd.DataFrame): Validation dataset.
+                    device (str): Device to run the model on.
+                    prog_bar (bool): Whether to show a progress bar.
+                    verbose (bool): Whether to enable verbose logging.
+
+                Returns:
+                    None: This method does not return a value.
+                """
                 self.train_data = train_data
                 self.test_data = test_data
                 self.device = device
@@ -455,7 +579,7 @@ class NNRegressor(BaseEstimator):
                     self,
                     model: torch.nn.Module,
                     dataloader: torch.utils.data.DataLoader,
-                    n_repeats: int = 10) -> Tuple[float, float, np.ndarray]:
+                    n_repeats: int = 10) -> tuple[float, float, np.ndarray[Any] | np.ndarray[Any]]:
                 """
                 Computes the average MSE loss for a given model and dataloader.
 
@@ -479,6 +603,7 @@ class NNRegressor(BaseEstimator):
                 """
                 mse = np.array([])
                 num_batches = 0
+                model = model.to(self.device)
                 for _ in range(n_repeats):
                     loss = []
                     for _, (X, y) in enumerate(dataloader):
@@ -496,6 +621,16 @@ class NNRegressor(BaseEstimator):
 
         # Callback to stop the study if the MSE is below a threshold.
         def callback(study: optuna.study.Study, trial: optuna.trial.FrozenTrial):
+            """
+            Stop the Optuna study when the loss threshold is reached.
+
+            Args:
+                study (optuna.study.Study): The active Optuna study.
+                trial (optuna.trial.FrozenTrial): The completed trial.
+
+            Returns:
+                None: This method does not return a value.
+            """
             if trial.value < min_loss or study.best_value < min_loss:
                 study.stop()
 
@@ -503,17 +638,42 @@ class NNRegressor(BaseEstimator):
             optuna.logging.set_verbosity(optuna.logging.WARNING)
 
         # Create and run the HPO study.
-        study = optuna.create_study(
-            direction='minimize', study_name=study_name, storage=storage,
-            load_if_exists=load_if_exists)
-        study.optimize(
-            Objective(
-                training_data, test_data, prog_bar=self.prog_bar, verbose=self.verbose),
-            n_trials=n_trials,
-            show_progress_bar=(self.optuna_prog_bar & (
-                not self.silent) & (not self.verbose)),
-            callbacks=[callback]
-        )
+        resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
+        fallback_storage = _fallback_optuna_storage(storage, study_name)
+        try:
+            study = optuna.create_study(
+                direction='minimize', study_name=study_name,
+                storage=resolved_storage, load_if_exists=load_if_exists)
+            study.optimize(
+                Objective(
+                    training_data, test_data, device=self.device,
+                    prog_bar=self.prog_bar, verbose=self.verbose),
+                n_trials=n_trials,
+                show_progress_bar=(self.optuna_prog_bar & (
+                    not self.silent) & (not self.verbose)),
+                callbacks=[callback]
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            if not _is_readonly_storage_error(exc):
+                raise
+            if fallback_storage == resolved_storage:
+                raise
+            if self.verbose and not self.silent:
+                print(
+                    "Optuna storage is read-only; retrying with "
+                    f"storage={fallback_storage}")
+            study = optuna.create_study(
+                direction='minimize', study_name=study_name,
+                storage=fallback_storage, load_if_exists=load_if_exists)
+            study.optimize(
+                Objective(
+                    training_data, test_data, device=self.device,
+                    prog_bar=self.prog_bar, verbose=self.verbose),
+                n_trials=n_trials,
+                show_progress_bar=(self.optuna_prog_bar & (
+                    not self.silent) & (not self.verbose)),
+                callbacks=[callback]
+            )
 
         # Capture the best parameters and the minimum loss.
         best_trials = sorted(study.best_trials, key=lambda x: x.values[0])
@@ -576,6 +736,16 @@ class NNRegressor(BaseEstimator):
 #
 
 def custom_main(score: bool = False, tune: bool = False):
+    """
+    Run a small local workflow for scoring or tuning.
+
+    Args:
+        score (bool): Whether to load and score an existing model.
+        tune (bool): Whether to run hyperparameter tuning.
+
+    Returns:
+        None: This function does not return a value.
+    """
     import os
     from causalexplain.common import utils
     path = "/Users/renero/phd/data/RC4/risks"

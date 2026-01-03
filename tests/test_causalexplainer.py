@@ -53,6 +53,9 @@ def test_default_initialization():
     assert gd.dot_filename is None
     assert gd.verbose is False
     assert gd.seed == 42
+    assert gd.device == "cpu"
+    assert gd.parallel_jobs == 0
+    assert gd.bootstrap_parallel_jobs == 0
 
 
 def test_valid_initialization(sample_csv, sample_dot):
@@ -71,9 +74,39 @@ def test_valid_initialization(sample_csv, sample_dot):
     assert gd.dot_filename == sample_dot
     assert gd.verbose is True
     assert gd.seed == 123
+    assert gd.device == "cpu"
+    assert gd.parallel_jobs == 0
+    assert gd.bootstrap_parallel_jobs == 0
     assert gd.dataset_name == "test_data"
     assert gd.data_columns == ['A', 'B', 'C']
     assert gd.regressors == DEFAULT_REGRESSORS
+
+
+def test_device_argument_cpu():
+    gd = GraphDiscovery(device="cpu")
+    assert gd.device == "cpu"
+
+
+def test_device_argument_cuda_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "causalexplain.causalexplainer.utils.torch.cuda.is_available",
+        lambda: False)
+    monkeypatch.setattr(
+        "causalexplain.causalexplainer.utils.torch.backends.cuda.is_built",
+        lambda: False)
+    with pytest.raises(ValueError, match="CUDA requested"):
+        GraphDiscovery(device="cuda")
+
+
+def test_device_argument_mps_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        "causalexplain.causalexplainer.utils.torch.backends.mps.is_available",
+        lambda: False, raising=False)
+    monkeypatch.setattr(
+        "causalexplain.causalexplainer.utils.torch.backends.mps.is_built",
+        lambda: False, raising=False)
+    with pytest.raises(ValueError, match="MPS requested"):
+        GraphDiscovery(device="mps")
 
 
 def test_initialization_with_non_rex_model(sample_csv, sample_dot):
