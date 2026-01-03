@@ -33,25 +33,25 @@ def test_gbt_predict_requires_fit():
         model.predict(_dataframe())
 
 
-def test_gbt_correlation_filter(monkeypatch):
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [] for name in feature_names}
-
-    monkeypatch.setattr(gbt, "Hierarchies", FakeHierarchies)
+def test_gbt_keeps_correlated_features(monkeypatch):
     monkeypatch.setattr(gbt, "ProgBar", lambda *_, **__: None)
 
     df = _dataframe()
-    model = gbt.GBTRegressor(correlation_th=0.5, prog_bar=False, n_estimators=5)
-    model.fit(df)
+    df["z"] = df["x"]
+    base = gbt.GBTRegressor(correlation_th=None, prog_bar=False, n_estimators=5)
+    with_corr = gbt.GBTRegressor(correlation_th=0.5, prog_bar=False, n_estimators=5)
+    base.fit(df)
+    with_corr.fit(df)
 
-    # Every model should have been trained on a single predictor after dropping correlations.
-    assert all(reg.n_features_in_ == 1 for reg in model.regressor.values())
+    expected_features = len(df.columns) - 1
+    assert all(reg.n_features_in_ == expected_features for reg in with_corr.regressor.values())
+    assert {
+        name: reg.n_features_in_
+        for name, reg in base.regressor.items()
+    } == {
+        name: reg.n_features_in_
+        for name, reg in with_corr.regressor.items()
+    }
 
 
 def test_gbt_tune_and_tune_fit(monkeypatch):
@@ -173,17 +173,6 @@ def test_gbt_fit_with_progress_bar(monkeypatch):
         "get_feature_types",
         lambda X: {list(X.columns)[0]: "numerical", list(X.columns)[1]: "binary"},
     )
-
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [] for name in feature_names}
-
-    monkeypatch.setattr(gbt, "Hierarchies", FakeHierarchies)
 
     df = _dataframe()
     model = gbt.GBTRegressor(prog_bar=True, correlation_th=0.5, n_estimators=2, verbose=False)

@@ -226,15 +226,17 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
-    if args.max_shap_samples is None or args.max_shap_samples <= 0:
+    max_shap_samples = getattr(args, "max_shap_samples", None)
+    if max_shap_samples is None or max_shap_samples <= 0:
         run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
     else:
-        run_values['max_shap_samples'] = args.max_shap_samples
-    run_values['parallel_jobs'] = args.parallel_jobs
-    run_values['bootstrap_parallel_jobs'] = args.bootstrap_parallel_jobs
-    if args.cuda:
+        run_values['max_shap_samples'] = max_shap_samples
+    run_values['parallel_jobs'] = getattr(args, "parallel_jobs", 0)
+    run_values['bootstrap_parallel_jobs'] = getattr(
+        args, "bootstrap_parallel_jobs", 0)
+    if getattr(args, "cuda", False):
         requested_device = "cuda"
-    elif args.mps:
+    elif getattr(args, "mps", False):
         requested_device = "mps"
     else:
         requested_device = "cpu"

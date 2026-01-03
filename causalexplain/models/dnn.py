@@ -31,7 +31,6 @@ from torch.utils.data import DataLoader
 from mlforge.progbar import ProgBar   # type: ignore
 
 from ..common import DEFAULT_HPO_TRIALS,  utils
-from ..explainability.hierarchies import Hierarchies
 from ._columnar import ColumnsDataset
 from ._models import MLPModel
 
@@ -232,19 +231,7 @@ class NNRegressor(BaseEstimator):
         except Exception:                                # pylint: disable=broad-except
             caller_name = "unknown"
 
-        if self.correlation_th:
-            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
-            self.correlated_features = Hierarchies.compute_correlated_features(
-                self.corr_matrix, self.correlation_th, self.feature_names,
-                verbose=self.verbose)
-            X_original = X
-            drop_cols_by_target = {
-                target: self.correlated_features.get(target, [])
-                for target in self.feature_names
-            }
-        else:
-            X_original = X
-            drop_cols_by_target = {}
+        X_original = X
 
         loss_fn_by_target = {}
         for target_name in self.feature_names:
@@ -264,13 +251,7 @@ class NNRegressor(BaseEstimator):
             pbar = None
 
         def _fit_target(target_name: str) -> Tuple[str, MLPModel]:
-            drop_cols = drop_cols_by_target.get(target_name, [])
-            if drop_cols:
-                X_target = X_original.drop(drop_cols, axis=1)
-                if self.verbose:
-                    print("REMOVED CORRELATED FEATURES: ", drop_cols)
-            else:
-                X_target = X_original
+            X_target = X_original
 
             model = MLPModel(
                 target=target_name,
@@ -341,24 +322,16 @@ class NNRegressor(BaseEstimator):
             raise ValueError("This Rex instance is not fitted yet. \
                 Call 'fit' with appropriate arguments before using this estimator.")
 
-        if self.correlation_th is not None:
-            X_original = X.copy()
-            loaders = None
-        else:
-            loaders = {
-                target: DataLoader(
-                    ColumnsDataset(target, X),
-                    batch_size=self.batch_size,
-                    shuffle=False)
-                for target in self.feature_names
-            }
+        loaders = {
+            target: DataLoader(
+                ColumnsDataset(target, X),
+                batch_size=self.batch_size,
+                shuffle=False)
+            for target in self.feature_names
+        }
 
         prediction = pd.DataFrame(columns=self.feature_names)
         for target in self.feature_names:
-            # Remove those features from the loader that are highly correlated to target
-            if self.correlation_th is not None:
-                X = X_original.drop(self.correlated_features[target], axis=1)
-
             # Creat a data loader for the target variable. The ColumnsDataset will
             # return the target variable as the second element of the tuple, and
             # will drop the target from the features.

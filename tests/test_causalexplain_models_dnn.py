@@ -95,28 +95,27 @@ def test_nnregressor_predict_requires_fit(monkeypatch):
         rex.predict(_small_frame())
 
 
-def test_nnregressor_drops_correlated_features(monkeypatch):
+def test_nnregressor_keeps_correlated_features(monkeypatch):
     monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
-
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [f for f in feature_names if f != name] for name in feature_names}
-
-    monkeypatch.setattr(dnn, "Hierarchies", FakeHierarchies)
     monkeypatch.setattr(dnn, "ProgBar", lambda *_, **__: None)
 
     df = _small_frame()
-    rex = dnn.NNRegressor(correlation_th=0.5, prog_bar=False, early_stop=False, min_delta=0.0, num_epochs=1)
-    rex.fit(df)
+    df["c"] = df["a"]
+    base = dnn.NNRegressor(correlation_th=None, prog_bar=False, early_stop=False, min_delta=0.0, num_epochs=1)
+    with_corr = dnn.NNRegressor(correlation_th=0.5, prog_bar=False, early_stop=False, min_delta=0.0, num_epochs=1)
+    base.fit(df)
+    with_corr.fit(df)
 
-    # Each model should have received a single predictor after correlated removal.
-    for target, model in rex.regressor.items():
-        assert model.kwargs["input_size"] == 1
+    expected_features = len(df.columns)
+    for model in with_corr.regressor.values():
+        assert model.kwargs["input_size"] == expected_features
+    assert {
+        target: model.kwargs["input_size"]
+        for target, model in base.regressor.items()
+    } == {
+        target: model.kwargs["input_size"]
+        for target, model in with_corr.regressor.items()
+    }
 
 
 def test_nnregressor_fit_parallel_jobs(monkeypatch):
@@ -274,16 +273,6 @@ def test_nnregressor_fit_with_progress_and_correlation(monkeypatch):
     )
     monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
 
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [f for f in feature_names if f != name] for name in feature_names}
-
-    monkeypatch.setattr(dnn, "Hierarchies", FakeHierarchies)
     monkeypatch.setattr(
         dnn,
         "ProgBar",

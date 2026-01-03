@@ -47,7 +47,6 @@ from sklearn.preprocessing import StandardScaler
 
 from causalexplain.common import utils
 from causalexplain.common.plot import subplots
-from causalexplain.explainability.hierarchies import Hierarchies
 from causalexplain.independence.feature_selection import select_features
 from causalexplain.models._models import MLPModel
 
@@ -143,11 +142,8 @@ class PermutationImportance(BaseEstimator):
             return self._fit_sklearn(X)
 
     def _obtain_correlation_info(self, X):
-        if self.correlation_th:
-            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
-            self.correlated_features = Hierarchies.compute_correlated_features(
-                self.corr_matrix, self.correlation_th, self.feature_names,
-                verbose=self.verbose)
+        self.corr_matrix = None
+        self.correlated_features = None
 
     def _fit_pytorch(self):
         """
@@ -184,28 +180,11 @@ class PermutationImportance(BaseEstimator):
         """
         pbar = ProgBar().start_subtask("Perm.Imp_fit(sklearn)", len(self.feature_names))
 
-        # If me must exclude features due to correlation, we must do it before
-        # computing the base loss
-        if self.correlation_th:
-            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
-            self.correlated_features = Hierarchies.compute_correlated_features(
-                self.corr_matrix, self.correlation_th, self.feature_names,
-                verbose=self.verbose)
-
         self.pi = {}
         self.all_pi = []
         X_original = X.copy()
         for target_idx, target_name in enumerate(self.feature_names):
             X = X_original.copy()
-
-            # if correlation_th is not None then, remove features that are highly
-            # correlated with the target, at each step of the loop
-            if self.correlation_th is not None:
-                if len(self.correlated_features[target_name]) > 0:
-                    X = X.drop(self.correlated_features[target_name], axis=1)
-                    if self.verbose:
-                        print("REMOVED CORRELATED FEATURES: ",
-                              self.correlated_features[target_name])
 
             # print(f"Feature: {target_name} ", end="") if self.verbose else None
 
@@ -215,10 +194,6 @@ class PermutationImportance(BaseEstimator):
             self.pi[target_name] = permutation_importance(
                 regressor, X, y, n_repeats=10,
                 random_state=self.random_state)
-
-            if self.correlation_th is not None:
-                self._add_zeroes(
-                    target_name, self.correlated_features[target_name])
 
             self.all_pi.append(self.pi[target_name]['importances_mean'])
 
@@ -282,20 +257,12 @@ class PermutationImportance(BaseEstimator):
             # Create the dictionary to store the permutation importance, same way
             # as the sklearn implementation
             self.pi[target] = {}
-            if self.correlation_th is not None:
-                num_vars = len(self.feature_names) - \
-                    len(self.correlated_features[target])
-                # Filter out features that are highly correlated with the target
-                candidate_causes = [f for f in candidate_causes
-                                    if f not in self.correlated_features[target]]
+            num_vars = len(self.feature_names)
 
             # Compute the permutation importance for each feature
             self.pi[target]['importances_mean'], self.pi[target]['importances_std'] = \
                 self._compute_perm_imp(target, regressor, model, num_vars)
 
-
-            if self.correlation_th is not None:
-                self._add_zeroes(target, self.correlated_features[target])
 
             self.all_pi.append(self.pi[target]['importances_mean'])
 
@@ -401,18 +368,6 @@ class PermutationImportance(BaseEstimator):
                     f"+/- {importances_std[-1]:.6f}")
 
         return np.array(importances_mean), np.array(importances_std)
-
-    def _add_zeroes(self, target, correlated_features):
-        """
-        Add zeroes to the mean perm imp. values for correlated features.
-        """
-        features = [f for f in self.feature_names if f != target]
-        for correlated_feature in correlated_features:
-            correlated_feature_position = features.index(correlated_feature)
-            self.pi[target]['importances_mean'] = np.insert(
-                self.pi[target]['importances_mean'], correlated_feature_position, 0.)
-            self.pi[target]['importances_std'] = np.insert(
-                self.pi[target]['importances_std'], correlated_feature_position, 0.)
 
     def fit_predict(self, X, root_causes):
         self._obtain_correlation_info(X)

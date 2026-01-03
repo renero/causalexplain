@@ -130,7 +130,7 @@ class Rex(BaseEstimator, ClassifierMixin):
                 "kernel", which uses the shap.KernelExplainer class, and "tree",
                 which uses the shap.TreeExplainer class.
             tune_model (bool): Whether to tune the model for HPO. Default is False.
-            correlation_th (float): The threshold for the correlation. Default is None.
+            correlation_th (float): Deprecated; retained for backward compatibility.
             corr_method (str): The method to use for the correlation.
                 Default is "spearman", but it can also be 'pearson', 'kendall or 'mic'.
             corr_alpha (float): The alpha value for the correlation. Default is 0.6.

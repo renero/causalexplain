@@ -66,7 +66,6 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 
 from ..common import DEFAULT_HPO_TRIALS, utils
-from ..explainability.hierarchies import Hierarchies
 
 
 def _is_readonly_storage_error(exc: Exception) -> bool:
@@ -173,7 +172,7 @@ class GBTRegressor(GradientBoostingRegressor):
             n_iter_no_change (int|None): Early stopping patience.
             tol (float): Tolerance for early stopping.
             ccp_alpha (float): Complexity parameter for pruning.
-            correlation_th (float|None): Correlation threshold for feature filtering.
+            correlation_th (float|None): Deprecated; ignored.
             verbose (bool): Enable verbose logging.
             silent (bool): Suppress output and progress bars.
             prog_bar (bool): Enable progress bar.
@@ -228,28 +227,13 @@ class GBTRegressor(GradientBoostingRegressor):
         X = utils.cast_categoricals_to_int(X)
         self.regressor = dict()
 
-        if self.correlation_th:
-            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
-            self.correlated_features = Hierarchies.compute_correlated_features(
-                self.corr_matrix, self.correlation_th, self.feature_names,
-                verbose=self.verbose)
-            X_original = X
-            drop_cols_by_target = {
-                target: self.correlated_features.get(target, [])
-                for target in self.feature_names
-            }
-        else:
-            X_original = X
-            drop_cols_by_target = {}
+        X_original = X
 
         columns = list(X_original.columns)
         features_by_target = {}
         for target_name in self.feature_names:
             base_features = [col for col in columns if col != target_name]
-            drop_cols = set(drop_cols_by_target.get(target_name, []))
-            features_by_target[target_name] = [
-                col for col in base_features if col not in drop_cols
-            ]
+            features_by_target[target_name] = base_features
 
         model_class_by_target = {}
         loss_by_target = {}
@@ -278,10 +262,6 @@ class GBTRegressor(GradientBoostingRegressor):
             pbar = None
 
         def _fit_target(target_name: str, loss_value: str, gbt_model):
-            drop_cols = drop_cols_by_target.get(target_name, [])
-            if drop_cols and self.verbose:
-                print("REMOVED CORRELATED FEATURES: ", drop_cols)
-
             model = gbt_model(
                 loss=loss_value,
                 learning_rate=self.learning_rate,
@@ -358,14 +338,7 @@ class GBTRegressor(GradientBoostingRegressor):
                 f"Call 'fit' with appropriate arguments before using this method.")
         y_pred = list()
 
-        if self.correlation_th is not None:
-            X_original = X.copy()
-
         for target_name in self.feature_names:
-            if self.correlation_th is not None:
-                X = X_original.drop(
-                    self.correlated_features[target_name], axis=1)
-
             y_pred.append(
                 self.regressor[target_name].predict(X.drop(target_name, axis=1)))
 
@@ -382,16 +355,9 @@ class GBTRegressor(GradientBoostingRegressor):
                 f"This {self.__class__.__name__} instance is not fitted yet."
                 f"Call 'fit' with appropriate arguments before using this method.")
 
-        if self.correlation_th is not None:
-            X_original = X.copy()
-
         scores = list()
         X_eval = utils.cast_categoricals_to_int(X)
         for target_name in self.feature_names:
-            if self.correlation_th is not None:
-                X_eval = X_original.drop(
-                    self.correlated_features[target_name], axis=1)
-
             R2 = self.regressor[target_name].score(
                 X_eval.drop(target_name, axis=1), X_eval[target_name])
 

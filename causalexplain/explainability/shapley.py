@@ -39,7 +39,6 @@ from sklearn.discriminant_analysis import StandardScaler
 from sklearn.metrics import r2_score
 from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
 
-from causalexplain.explainability.hierarchies import Hierarchies
 from ..independence.feature_selection import select_features
 from ..common import DEFAULT_MAX_SAMPLES, utils
 
@@ -1244,7 +1243,7 @@ class ShapEstimator(BaseEstimator):
         The models to use for computing SHAP values. If None, a linear regression
         model is used for each feature.
     correlation_th : float, default=None
-        The correlation threshold to use for removing highly correlated features.
+        Deprecated; retained for backward compatibility. No features are dropped.
     mean_shap_percentile : float, default=0.8
         The percentile threshold for selecting features based on their mean SHAP value.
     iters : int, default=20
@@ -1320,7 +1319,7 @@ class ShapEstimator(BaseEstimator):
             The models to use for computing SHAP values. If None, a linear regression
             model is used for each feature.
         correlation_th : float, default=None
-            The correlation threshold to use for removing highly correlated features.
+            Deprecated; retained for backward compatibility. No features are dropped.
         mean_shap_percentile : float, default=0.8
             The percentile threshold for selecting features based on their
             mean SHAP value.
@@ -1356,7 +1355,7 @@ class ShapEstimator(BaseEstimator):
         Args:
             explainer: SHAP explainer name to use.
             models: Optional estimator collection used for SHAP computation.
-            correlation_th: Optional correlation threshold for pruning.
+            correlation_th: Deprecated; retained for backward compatibility.
             mean_shap_percentile: Percentile used to compute SHAP threshold.
             iters: Number of iterations for feature selection.
             reciprocity: Whether to enforce reciprocal edges.
@@ -1587,12 +1586,6 @@ class ShapEstimator(BaseEstimator):
         self.shap_mean_values = {}
         self.feature_order = {}
         self.all_mean_shap_values = np.empty((0,), dtype=np.float16)
-        if self.correlation_th is not None:
-            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
-            self.correlated_features = Hierarchies.compute_correlated_features(
-                self.corr_matrix, self.correlation_th, self.feature_names,
-                verbose=self.verbose)
-
         # Initialize the progress bar
         if self.prog_bar and not self.verbose:
             caller_name = self._get_method_caller_name()
@@ -1781,23 +1774,6 @@ class ShapEstimator(BaseEstimator):
                 f"Please select one of: kernel, gradient, explainer, tree.")
 
         return shap_values
-
-    def _add_zeroes(self, target: str, correlated_features: List[str]) -> None:
-        """
-        Insert zeros for dropped correlated features in mean SHAP values.
-
-        Args:
-            target: Target feature name.
-            correlated_features: Features removed due to correlation.
-
-        Returns:
-            None.
-        """
-        features = [f for f in self.feature_names if f != target]
-        for correlated_feature in correlated_features:
-            correlated_feature_position = features.index(correlated_feature)
-            self.all_mean_shap_values[-1] = np.insert(
-                self.all_mean_shap_values[-1], correlated_feature_position, 0.)
 
     def predict(
             self,
@@ -2515,12 +2491,8 @@ class ShapEstimator(BaseEstimator):
             fig, ax = plt.subplots(1, 1, figsize=figsize_)
 
         feature_inds = self.feature_order[target_name][:max_features_to_display]
-        if self.correlation_th is not None:
-            feature_names = [f for f in self.feature_names if (f != target_name) & (
-                f not in self.correlated_features[target_name])]
-        else:
-            feature_names = [
-                f for f in self.feature_names if f != target_name]
+        feature_names = [
+            f for f in self.feature_names if f != target_name]
         selected_features = list(self.connections[target_name])
 
         y_pos = np.arange(len(feature_inds))
