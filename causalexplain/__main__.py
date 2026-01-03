@@ -101,6 +101,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--parallel-jobs', type=int, required=False, default=0,
         help='Number of parallel jobs for CPU training (0 = sequential).')
+    parser.add_argument(
+        '--bootstrap-parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
     device_group = parser.add_mutually_exclusive_group()
     device_group.add_argument(
         '--cuda', action='store_true', required=False,
@@ -219,6 +222,7 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
     run_values['parallel_jobs'] = args.parallel_jobs
+    run_values['bootstrap_parallel_jobs'] = args.bootstrap_parallel_jobs
     if args.cuda:
         requested_device = "cuda"
     elif args.mps:
@@ -287,6 +291,7 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
         verbose=run_values['verbose'],
         seed=run_values['seed'],
         parallel_jobs=run_values['parallel_jobs'],
+        bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
         device=run_values['device']
     )
     _check_csv_size_warning(discoverer, run_values)
