@@ -1,3 +1,19 @@
+version 0.8.0
+-------------
+- Explainability: adaptive SHAP background sampling with stability checks and
+  max_shap_samples; GBT path now uses shap.TreeExplainer; removed
+  min_shap_samples and correlation-based pruning.
+- Performance: GBT optimizations; DNN fit parallelization (parallel_jobs);
+  bootstrap parallelization (bootstrap_parallel_jobs); PyTorch float32
+  enforcement; CUDA/MPS device selection.
+- API/CLI: new flags for adaptive SHAP sampling, max_shap_samples, parallel jobs,
+  bootstrap parallel jobs, and device selection; GraphDiscovery run output and
+  explainer selection fixes.
+- Prior handling and debug output: prior forwarding and candidate selection
+  fixes with clearer diagnostics across ReX/SHAP/feature selection.
+- Maintenance: docstring/typing cleanup, updated README/quickstart/installation
+  docs, and added tests.
+
 version 0.7.0
 -------------
 - Notebook API: GraphDiscovery.run supports combine_op, bootstrap_tolerance, and quiet,
