@@ -8,10 +8,11 @@ from causalexplain.models import dnn
 class DummyTorchModel(torch.nn.Module):
     def __init__(self):
         super().__init__()
+        self.linear = torch.nn.Linear(1, 1)
         self.loss_fn = torch.nn.MSELoss()
 
     def forward(self, x):
-        return torch.zeros((x.shape[0], 1))
+        return self.linear(x)
 
 
 class DummyMLPModel:
@@ -63,6 +64,30 @@ def test_nnregressor_fit_predict_and_score(monkeypatch):
     assert rex.is_fitted_ is True
 
 
+@pytest.mark.skipif(
+    not (torch.backends.mps.is_available() and torch.backends.mps.is_built()),
+    reason="MPS not available",
+)
+def test_nnregressor_predict_on_mps(monkeypatch):
+    old_dtype = torch.get_default_dtype()
+    torch.set_default_dtype(torch.float32)
+    monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
+    df = _small_frame()
+    try:
+        rex = dnn.NNRegressor(
+            device="mps",
+            prog_bar=False,
+            early_stop=False,
+            min_delta=0.0,
+            num_epochs=1,
+        )
+        rex.fit(df)
+        preds = rex.predict(df)
+        assert preds.shape[0] == len(df.columns)
+    finally:
+        torch.set_default_dtype(old_dtype)
+
+
 def test_nnregressor_predict_requires_fit(monkeypatch):
     monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
     rex = dnn.NNRegressor()
@@ -70,28 +95,64 @@ def test_nnregressor_predict_requires_fit(monkeypatch):
         rex.predict(_small_frame())
 
 
-def test_nnregressor_drops_correlated_features(monkeypatch):
+def test_nnregressor_keeps_correlated_features(monkeypatch):
     monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
-
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [f for f in feature_names if f != name] for name in feature_names}
-
-    monkeypatch.setattr(dnn, "Hierarchies", FakeHierarchies)
     monkeypatch.setattr(dnn, "ProgBar", lambda *_, **__: None)
 
     df = _small_frame()
-    rex = dnn.NNRegressor(correlation_th=0.5, prog_bar=False, early_stop=False, min_delta=0.0, num_epochs=1)
+    df["c"] = df["a"]
+    base = dnn.NNRegressor(correlation_th=None, prog_bar=False, early_stop=False, min_delta=0.0, num_epochs=1)
+    with_corr = dnn.NNRegressor(correlation_th=0.5, prog_bar=False, early_stop=False, min_delta=0.0, num_epochs=1)
+    base.fit(df)
+    with_corr.fit(df)
+
+    expected_features = len(df.columns)
+    for model in with_corr.regressor.values():
+        assert model.kwargs["input_size"] == expected_features
+    assert {
+        target: model.kwargs["input_size"]
+        for target, model in base.regressor.items()
+    } == {
+        target: model.kwargs["input_size"]
+        for target, model in with_corr.regressor.items()
+    }
+
+
+def test_nnregressor_fit_parallel_jobs(monkeypatch):
+    class DummyExecutor:
+        def __init__(self, max_workers=None):
+            self.max_workers = max_workers
+            self.submitted = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            future = type("F", (), {"result": lambda self: fn(*args, **kwargs)})()
+            self.submitted.append(future)
+            return future
+
+    monkeypatch.setattr(
+        "concurrent.futures.ThreadPoolExecutor", DummyExecutor)
+    monkeypatch.setattr(
+        "concurrent.futures.as_completed", lambda futures: futures)
+    monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
+
+    df = _small_frame()
+    rex = dnn.NNRegressor(
+        prog_bar=False,
+        early_stop=False,
+        min_delta=0.0,
+        num_epochs=1,
+        parallel_jobs=2,
+        device="cpu",
+    )
     rex.fit(df)
 
-    # Each model should have received a single predictor after correlated removal.
-    for target, model in rex.regressor.items():
-        assert model.kwargs["input_size"] == 1
+    assert set(rex.regressor.keys()) == set(df.columns)
 
 
 def test_nnregressor_tune_runs_with_fake_optuna(monkeypatch):
@@ -212,16 +273,6 @@ def test_nnregressor_fit_with_progress_and_correlation(monkeypatch):
     )
     monkeypatch.setattr(dnn, "MLPModel", DummyMLPModel)
 
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [f for f in feature_names if f != name] for name in feature_names}
-
-    monkeypatch.setattr(dnn, "Hierarchies", FakeHierarchies)
     monkeypatch.setattr(
         dnn,
         "ProgBar",

@@ -16,7 +16,7 @@ class RBF(nn.Module):
     def __init__(self, n_kernels=5, mul_factor=2.0, bandwidth=None):
         super().__init__()
         self.bandwidth_multipliers = mul_factor ** (
-            torch.arange(n_kernels) - n_kernels // 2)
+            torch.arange(n_kernels, dtype=torch.float32) - n_kernels // 2)
         self.bandwidth = bandwidth
 
     def get_bandwidth(self, L2_distances):

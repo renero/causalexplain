@@ -82,7 +82,7 @@ def test_info_builds_dataframe_and_retrieve(base_rex_stub):
     assert knowledge.retrieve("A", "B", "pot_root") == 0
 
 
-def test_info_skips_correlated_features(monkeypatch, base_rex_stub):
+def test_info_does_not_skip_correlated_features(monkeypatch, base_rex_stub):
     rex, ref_graph = base_rex_stub
     rex.correlation_th = 0.5
     rex.hierarchies.correlated_features = {"A": ["B"], "B": []}
@@ -90,5 +90,4 @@ def test_info_skips_correlated_features(monkeypatch, base_rex_stub):
 
     results = knowledge.info()
 
-    assert list(results.origin) == ["A"]
-    assert list(results.target) == ["B"]
+    assert set(results[["origin", "target"]].apply(tuple, axis=1)) == {("B", "A"), ("A", "B")}

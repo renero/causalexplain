@@ -11,11 +11,16 @@ from causalexplain.estimators.rex.rex import Rex
 
 @pytest.mark.parametrize(
     "model_type, explainer, expected",
-    [("nn", "explainer", "gradient"), ("gbt", "gradient", "explainer")],
+    [("nn", "explainer", "gradient"), ("gbt", "gradient", "tree")],
 )
 def test_check_model_and_explainer_adjusts(model_type, explainer, expected):
     rex = Rex(name="demo", model_type=model_type, explainer=explainer)
     assert rex.explainer == expected
+
+
+def test_gbt_explainer_forces_tree():
+    rex = Rex(name="demo", model_type="gbt", explainer="explainer")
+    assert rex.explainer == "tree"
 
 
 def test_get_prior_from_ref_graph(monkeypatch):

@@ -44,7 +44,12 @@ def args_factory():
             quiet=False,
             verbose=False,
             save_model=None,
-            output=None
+            output=None,
+            adaptive_shap_sampling=True,
+            cuda=False,
+            mps=False,
+            parallel_jobs=0,
+            bootstrap_parallel_jobs=0
         )
         for key, value in overrides.items():
             setattr(base, key, value)
@@ -62,6 +67,63 @@ def test_parse_args_combine_option(monkeypatch):
     args = main_mod.parse_args()
     assert args.combine == "intersection"
     assert args.dataset == "data.csv"
+
+
+def test_parse_args_adaptive_shap_sampling(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--no-adaptive-shap-sampling",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.adaptive_shap_sampling is False
+
+
+def test_parse_args_cuda_flag(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--cuda",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.cuda is True
+    assert args.mps is False
+
+
+def test_parse_args_mps_flag(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--mps",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.mps is True
+    assert args.cuda is False
+
+
+def test_parse_args_parallel_jobs(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--parallel-jobs", "3",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.parallel_jobs == 3
+
+
+def test_parse_args_bootstrap_parallel_jobs(monkeypatch):
+    argv = [
+        "prog",
+        "-d", "data.csv",
+        "--bootstrap-parallel-jobs", "2",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.bootstrap_parallel_jobs == 2
 
 
 def test_check_args_requires_dataset_or_model(args_factory):
@@ -84,6 +146,9 @@ def test_check_args_with_dataset_and_save_defaults(
         sample_csv).replace('.csv', '') + "_rex.pickle"
     assert run_values['output_path'] == os.getcwd()
     assert run_values['bootstrap_iterations'] == main_mod.DEFAULT_BOOTSTRAP_TRIALS
+    assert run_values['device'] == "cpu"
+    assert run_values['parallel_jobs'] == 0
+    assert run_values['bootstrap_parallel_jobs'] == 0
 
 
 def test_check_args_load_model_without_dataset(tmp_path, args_factory, monkeypatch):
@@ -100,6 +165,50 @@ def test_check_args_fails_when_load_model_missing(tmp_path, args_factory):
     args = args_factory(load_model=str(
         tmp_path / "missing.pkl"), no_train=True)
     with pytest.raises(FileNotFoundError):
+        main_mod.check_args_validity(args)
+
+
+def test_check_args_cuda_available(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.cuda, "is_built", lambda: True)
+    args = args_factory(dataset=sample_csv, cuda=True)
+    run_values = main_mod.check_args_validity(args)
+    assert run_values['device'] == "cuda"
+
+
+def test_check_args_cuda_unavailable(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.cuda, "is_built", lambda: False)
+    args = args_factory(dataset=sample_csv, cuda=True)
+    with pytest.raises(ValueError, match="CUDA requested"):
+        main_mod.check_args_validity(args)
+
+
+def test_check_args_mps_available(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_available",
+        lambda: True, raising=False)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_built",
+        lambda: True, raising=False)
+    args = args_factory(dataset=sample_csv, mps=True)
+    run_values = main_mod.check_args_validity(args)
+    assert run_values['device'] == "mps"
+
+
+def test_check_args_mps_unavailable(sample_csv, args_factory, monkeypatch):
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_available",
+        lambda: False, raising=False)
+    monkeypatch.setattr(
+        main_mod.utils.torch.backends.mps, "is_built",
+        lambda: False, raising=False)
+    args = args_factory(dataset=sample_csv, mps=True)
+    with pytest.raises(ValueError, match="MPS requested"):
         main_mod.check_args_validity(args)
 
 
@@ -182,6 +291,10 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         'output_path': str(tmp_path),
         'model_filename': str(tmp_path / "saved.pkl"),
         'output_dag_file': str(tmp_path / "dag.dot"),
+        'adaptive_shap_sampling': False,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
     }
     times = iter([100.0, 101.0])
     monkeypatch.setattr(main_mod.time, "time", lambda: next(times))
@@ -202,6 +315,7 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
     monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
     main_mod.main()
     dummy = instances[0]
+    assert dummy.fit_args[1]["adaptive_shap_sampling"] is False
     assert dummy.saved == run_values['model_filename']
     assert saved_paths[0][1] == run_values['output_dag_file']
 
@@ -243,6 +357,9 @@ def test_main_loads_existing_model(monkeypatch):
         'output_path': None,
         'model_filename': None,
         'output_dag_file': None,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
     }
     instances = []
 
@@ -261,6 +378,51 @@ def test_main_loads_existing_model(monkeypatch):
     assert instances[0].loaded == 'model.pkl'
 
 
+def test_main_warns_when_adaptive_disabled_large_dataset(monkeypatch, capsys):
+    class DummyDiscovery:
+        def __init__(self, **kwargs):
+            self.data = pd.DataFrame({"a": range(2001)})
+            self.trainer = {'one': SimpleNamespace(
+                dag='loaded', metrics=None)}
+
+        def load_model(self, path):
+            self.loaded = path
+
+        def printout_results(self, dag, metrics, combine_op='union'):
+            self.printed = (dag, metrics, combine_op)
+
+    run_values = {
+        'dataset_name': 'sample',
+        'estimator': 'rex',
+        'dataset_filepath': None,
+        'true_dag': None,
+        'verbose': False,
+        'seed': 0,
+        'load_model': 'model.pkl',
+        'no_train': True,
+        'hpo_iterations': 0,
+        'bootstrap_iterations': 0,
+        'prior': None,
+        'combine_op': 'union',
+        'output_path': None,
+        'model_filename': None,
+        'output_dag_file': None,
+        'adaptive_shap_sampling': False,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
+    }
+    monkeypatch.setattr(main_mod, "GraphDiscovery", DummyDiscovery)
+    monkeypatch.setattr(main_mod, "parse_args", lambda: SimpleNamespace())
+    monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
+    monkeypatch.setattr(main_mod.time, "time", lambda: 0.0)
+    monkeypatch.setattr(main_mod.utils, "format_time",
+                        lambda delta: (delta, "seconds"))
+    main_mod.main()
+    captured = capsys.readouterr()
+    assert "Adaptive SHAP sampling is disabled" in captured.err
+
+
 def make_graph_discovery(sample_csv, tmp_path, model_type='rex'):
     return GraphDiscovery(
         experiment_name="exp",
@@ -276,9 +438,14 @@ def test_fit_experiments_non_rex_calls_fit(sample_csv, tmp_path):
     gd = make_graph_discovery(sample_csv, tmp_path, model_type='pc')
     trainer = MagicMock()
     gd.trainer = {f"{gd.dataset_name}_pc": trainer}
-    gd.fit_experiments(hpo_iterations=5, bootstrap_iterations=6, extra="value")
+    gd.fit_experiments(
+        hpo_iterations=5,
+        bootstrap_iterations=6,
+        extra="value",
+        adaptive_shap_sampling=False)
     trainer.fit_predict.assert_called_once_with(
-        estimator='pc', verbose=False, extra="value")
+        estimator='pc', verbose=False, extra="value",
+        adaptive_shap_sampling=False)
 
 
 def test_fit_experiments_rex_skips_rex_named_entries(sample_csv, tmp_path):

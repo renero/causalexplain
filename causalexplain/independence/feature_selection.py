@@ -28,7 +28,7 @@ def select_features(
         return_shaps=False,
         min_impact: float = 1e-06,
         exhaustive=False,
-        threshold: float = None,
+        threshold: float|None = None,
         verbose=False) -> List[str]:
     """
     Sort the values and select those before (strict) the point of max. curvature,
@@ -66,14 +66,14 @@ def select_features(
         mean_values = np.abs(values)
     sorted_shap_values = np.array([mean_values[idx] for idx in feature_order])
     if verbose:
-        print(f"  Feature order......: {feature_order}")
+        print(f"  > Feature order......: {feature_order}")
 
     # In some cases, the mean SHAP values are 0. We return an empty list in that case.
     if np.all(mean_values < min_impact):
         return []
 
     if verbose:
-        print("  Sum values.........: ", end="")
+        print("  > Sum values.........: ", end="")
         if len(values.shape) > 1:
             print(','.join([f"({f}:{s:.03f})" for f, s in zip(
                 feature_names, np.sum(np.abs(values), axis=0))]))
@@ -81,11 +81,11 @@ def select_features(
             print(','.join([f"({f}:{s:.03f})" for f, s in zip(
                 feature_names, np.abs(values))]))
         print(
-            f"  Feature_order......: "
-            f"{','.join([f'{feature_names[i]}' for i in feature_order])}\n"
-            f"  sorted_mean_values.: "
+            f"  > Feature_order......: "
+            f"{','.join([f'{feature_names[i]}' for i in feature_order if i < len(feature_names)])}\n"
+            f"  > sorted_mean_values.: "
             f"{','.join([f'{x:.6f}' for x in sorted_shap_values])}\n"
-            f"  threshold..........: {threshold:.6f}")
+            f"  > threshold..........: {threshold:.6f}")
 
     sorted_impact_values = copy(sorted_shap_values)
     selected_features = []
@@ -97,8 +97,20 @@ def select_features(
             break
 
         limit_idx = find_cluster_change_point(sorted_impact_values, verbose=verbose)
+
+        if verbose:
+            print("  > Clustering iteration Details:")
+            print(
+                f"     > Iteration..........: {iteration}\n"
+                f"     > Limit_idx..........: {limit_idx}\n"
+                f"     > feature_names......: {feature_names}\n"
+                f"     > feature_order......: "
+                f"{','.join([str(i) for i in feature_order])}\n"
+                f"     > Sorted_impact_vals.: "
+                f"{','.join([f'{x:.6f}' for x in sorted_impact_values])}")
+
         selected_features = list(reversed(
-            [feature_names[i] for i in feature_order[limit_idx:]]))
+            [feature_names[i] for i in feature_order[limit_idx:] if i < len(feature_names)]))
 
         if not exhaustive:
             break
@@ -107,15 +119,15 @@ def select_features(
         iteration += 1
 
     if verbose:
-        print(f"  Limit_idx(cut-off).: {limit_idx}")
-        print(f"  Selected_features..: {selected_features}")
+        print(f"  > Limit_idx(cut-off).: {limit_idx}")
+        print(f"  > Selected_features..: {selected_features}")
     if return_shaps:
         return selected_features, list(reversed(sorted(mean_values)[limit_idx:]))
 
     return selected_features
 
 
-def find_cluster_change_point(X: List, verbose: bool = False) -> int:
+def find_cluster_change_point(X: List, verbose: bool = False) -> int|None:
     """
     Given an array of values in increasing or decreasing order, detect what are the
     elements that belong to the same cluster. The clustering is done using DBSCAN
@@ -152,8 +164,8 @@ def find_cluster_change_point(X: List, verbose: bool = False) -> int:
         max_distance = 0.001 if max_distance <= 0.0 else max_distance
 
         if verbose:
-            print(f"  pairwise_distances.: {pairwise_distances}")
-            print(f"  max_distance.......: {max_distance:.4f}")
+            print(f"  > pairwise_distances.: {pairwise_distances}")
+            print(f"  > max_distance.......: {max_distance:.4f}")
 
         db = DBSCAN(eps=max_distance, min_samples=1).fit(X)
         labels = db.labels_
@@ -162,7 +174,7 @@ def find_cluster_change_point(X: List, verbose: bool = False) -> int:
         n_noise_ = list(labels).count(-1)
         if n_clusters_ <= 1:
             if verbose:
-                print("    ↳ Only 1 cluster generated. Decreasing max_distance.")
+                print("      ↳ Only 1 cluster generated. Decreasing max_distance.")
             pairwise_distances = pairwise_distances[1:]
 
     if pairwise_distances.size == 0:
@@ -170,7 +182,7 @@ def find_cluster_change_point(X: List, verbose: bool = False) -> int:
         return None
 
     if verbose:
-        print(f"  Est.clusters/noise.: {n_clusters_}/{n_noise_}")
+        print(f"  > Est.clusters/noise.: {n_clusters_}/{n_noise_}")
         if (len(labels) > 3) and (len(labels) < (X.shape[0]-1)):
             print(
                 f"  Silhouette Coeff...: {metrics.silhouette_score(X, labels):.3f}\n"

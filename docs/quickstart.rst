@@ -53,6 +53,7 @@ The basic arguments are:
 * ``-d`` or ``--dataset``: The path to the dataset file in CSV format.
 * ``-t`` or ``--true_dag``: The path to the true DAG file in DOT format.
 * ``-m`` or ``--method``: The method to use to infer the causal graph.
+* ``-p`` or ``--prior``: JSON file with prior knowledge for ReX (optional).
 
 These options allow you to specify the dataset, true DAG, and method to be used.
 In case you don't have a true DAG, the result is the plausible causal graph,
@@ -70,6 +71,81 @@ DAG.
 In those cases where training or running a method takes a long time, ``causalexplain``
 allows you to save the model (``-s`` or ```--save_model```) trained in a file and
 load it later. To load the model, use the ``-l`` or ``--load_model`` option.
+
+ReX can also use prior knowledge to constrain edge directions. The prior is a
+JSON file with a single ``prior`` key whose value is a list of tiers; each tier
+is a list of column names. Variables in earlier tiers may cause variables in
+later tiers, but not vice versa. All names must match the dataset columns.
+
+.. code-block:: json
+
+   {
+     "prior": [
+       ["A", "B"],
+       ["C", "D"]
+     ]
+   }
+
+Use it from the CLI like this:
+
+.. code-block:: bash
+
+   python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+
+Adaptive SHAP sampling
+----------------------
+
+For direct SHAP usage in notebooks, the explainability module exposes a
+high-level wrapper that defaults to adaptive sampling.
+
+Notebook example
+
+.. code-block:: python
+
+   from causalexplain.explainability.shapley import compute_shap
+
+   # default: adaptive_shap_sampling=True
+   res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=True)
+
+   # disable (may be slow for large m)
+   res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=False)
+
+CLI example
+
+.. code-block:: bash
+
+   python -m causalexplain --adaptive-shap-sampling
+   python -m causalexplain --no-adaptive-shap-sampling
+
+Available SHAP backends are ``kernel``, ``gradient``, ``explainer``, and
+``tree``. ReX defaults to ``tree`` when running the GBT regressor.
+
+When adaptive sampling is enabled, the key knobs are ``max_shap_samples``,
+``K_max``, ``max_explain_samples``, and ``stratify``.
+
+If ``adaptive_shap_sampling=False`` and ``m > 2000``, the tool emits a warning
+about potential non-termination (the threshold is conservative).
+
+Why adaptive sampling is mathematically reasonable
+--------------------------------------------------
+
+Many SHAP explainers approximate an expectation over a background
+distribution; using ``n`` background points gives a Monte Carlo estimate.
+The standard error scales approximately as :math:`SE \propto 1/\sqrt{n}`.
+
+When sampling without replacement from a finite dataset of size ``m``, the
+finite population correction factor applies as :math:`\sqrt{1 - n/m}`.
+This means increasing ``n`` yields diminishing returns, so capping the
+background around 200-250 is a pragmatic speed/accuracy tradeoff.
+
+Repeating the sampling (``K`` runs) provides a stability diagnostic: compute
+a global importance vector per run as ``mean(|SHAP|)`` per feature, then check
+variability (CV) and rank stability (Spearman correlation) across runs.
+
+Backend-aware note: Kernel SHAP is particularly sensitive and expensive, so
+caps like ``max_explain_samples`` matter most there. Gradient and generic
+explainers often have different performance profiles, but still benefit from
+controlled baselines/background sizes.
 
 The option ``-b`` or ``--bootstrap`` allows you to specify the number of iterations
 for bootstrap in the ReX method.

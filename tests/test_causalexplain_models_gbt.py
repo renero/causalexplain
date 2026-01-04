@@ -33,25 +33,25 @@ def test_gbt_predict_requires_fit():
         model.predict(_dataframe())
 
 
-def test_gbt_correlation_filter(monkeypatch):
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [] for name in feature_names}
-
-    monkeypatch.setattr(gbt, "Hierarchies", FakeHierarchies)
+def test_gbt_keeps_correlated_features(monkeypatch):
     monkeypatch.setattr(gbt, "ProgBar", lambda *_, **__: None)
 
     df = _dataframe()
-    model = gbt.GBTRegressor(correlation_th=0.5, prog_bar=False, n_estimators=5)
-    model.fit(df)
+    df["z"] = df["x"]
+    base = gbt.GBTRegressor(correlation_th=None, prog_bar=False, n_estimators=5)
+    with_corr = gbt.GBTRegressor(correlation_th=0.5, prog_bar=False, n_estimators=5)
+    base.fit(df)
+    with_corr.fit(df)
 
-    # Every model should have been trained on a single predictor after dropping correlations.
-    assert all(reg.n_features_in_ == 1 for reg in model.regressor.values())
+    expected_features = len(df.columns) - 1
+    assert all(reg.n_features_in_ == expected_features for reg in with_corr.regressor.values())
+    assert {
+        name: reg.n_features_in_
+        for name, reg in base.regressor.items()
+    } == {
+        name: reg.n_features_in_
+        for name, reg in with_corr.regressor.items()
+    }
 
 
 def test_gbt_tune_and_tune_fit(monkeypatch):
@@ -174,17 +174,6 @@ def test_gbt_fit_with_progress_bar(monkeypatch):
         lambda X: {list(X.columns)[0]: "numerical", list(X.columns)[1]: "binary"},
     )
 
-    class FakeHierarchies:
-        @staticmethod
-        def compute_correlation_matrix(X):
-            return X
-
-        @staticmethod
-        def compute_correlated_features(matrix, _th, feature_names, verbose=False):
-            return {name: [] for name in feature_names}
-
-    monkeypatch.setattr(gbt, "Hierarchies", FakeHierarchies)
-
     df = _dataframe()
     model = gbt.GBTRegressor(prog_bar=True, correlation_th=0.5, n_estimators=2, verbose=False)
     model.fit(df)
@@ -213,6 +202,67 @@ def test_gbt_fit_sets_caller_name_from_call(monkeypatch):
     df = _dataframe()
     model = gbt.GBTRegressor(prog_bar=False, n_estimators=1)
     model.fit(df)
+
+
+def test_gbt_fit_parallel_jobs(monkeypatch):
+    class DummyExecutor:
+        def __init__(self, max_workers=None):
+            self.max_workers = max_workers
+            self.submitted = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            future = type("F", (), {"result": lambda self: fn(*args, **kwargs)})()
+            self.submitted.append(future)
+            return future
+
+    monkeypatch.setattr(
+        "concurrent.futures.ThreadPoolExecutor", DummyExecutor)
+    monkeypatch.setattr(
+        "concurrent.futures.as_completed", lambda futures: futures)
+
+    FakeRegressor = type(
+        "GradientBoostingRegressor",
+        (),
+        {
+            "__init__": lambda self, *args, **kwargs: None,
+            "fit": lambda self, X, y: setattr(self, "n_features_in_", X.shape[1]) or self,
+            "predict": lambda self, X: np.zeros(len(X)),
+            "score": lambda self, X, y: 0.5,
+        },
+    )
+    FakeClassifier = type(
+        "GradientBoostingClassifier",
+        (),
+        {
+            "__init__": lambda self, *args, **kwargs: None,
+            "fit": lambda self, X, y: setattr(self, "n_features_in_", X.shape[1]) or self,
+            "predict": lambda self, X: np.ones(len(X)),
+            "score": lambda self, X, y: 0.5,
+        },
+    )
+
+    monkeypatch.setattr(gbt, "GradientBoostingRegressor", FakeRegressor)
+    monkeypatch.setattr(gbt, "GradientBoostingClassifier", FakeClassifier)
+    monkeypatch.setattr(gbt.utils, "get_feature_names", lambda X: list(X.columns))
+    monkeypatch.setattr(
+        gbt.utils,
+        "get_feature_types",
+        lambda X: {list(X.columns)[0]: "numerical", list(X.columns)[1]: "binary"},
+    )
+
+    df = _dataframe()
+    model = gbt.GBTRegressor(prog_bar=False, parallel_jobs=2, n_estimators=1)
+    model.fit(df)
+
+    assert set(model.regressor.keys()) == set(df.columns)
+    assert model.regressor["x"].n_features_in_ == 1
+    assert model.regressor["y"].n_features_in_ == 1
 
 
 def test_gbt_custom_main_runs_with_mocks(monkeypatch):

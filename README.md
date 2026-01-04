@@ -144,6 +144,67 @@ experiment = GraphDiscovery()
 experiment.load("/path/to/model.pkl")
 ```
 
+## Adaptive SHAP sampling
+
+For direct SHAP usage in notebooks, the explainability module exposes a
+high-level wrapper that defaults to adaptive sampling:
+
+```python
+from causalexplain.explainability.shapley import compute_shap
+
+# default: adaptive_shap_sampling=True
+res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=True)
+
+# disable (may be slow for large m)
+res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=False)
+```
+
+CLI example (same executable shown above):
+
+```bash
+python -m causalexplain --adaptive-shap-sampling
+python -m causalexplain --no-adaptive-shap-sampling
+```
+
+Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
+ReX defaults to `tree` when running the GBT regressor.
+
+When adaptive sampling is enabled, the key knobs are `max_shap_samples`,
+`K_max`, `max_explain_samples`, and `stratify`. These
+control background size, repeated sampling for stability, and how many rows
+are explained.
+
+Note on large datasets: if `adaptive_shap_sampling=False` and `m > 2000`, the
+tool warns about potential non-termination (the threshold is conservative).
+
+### Why adaptive sampling is mathematically reasonable
+
+Many SHAP explainers approximate an expectation over a background
+distribution; using `n` background points gives a Monte Carlo estimate. The
+standard error scales approximately as:
+
+```
+SE ~ 1/sqrt(n)
+```
+
+When sampling without replacement from a finite dataset of size `m`, the
+finite population correction factor applies:
+
+```
+sqrt(1 - n/m)
+```
+
+This means increasing `n` yields diminishing returns, so capping the
+background around 200-250 is a pragmatic speed/accuracy tradeoff. Repeating
+the sampling (`K` runs) provides a stability diagnostic: compute a global
+importance vector per run as `mean(|SHAP|)` per feature, then check
+variability (CV) and rank stability (Spearman correlation) across runs.
+
+Backend-aware note: Kernel SHAP is particularly sensitive and expensive, so
+caps like `max_explain_samples` matter most there. Gradient and generic
+explainers often have different performance profiles, but still benefit from
+controlled baselines/background sizes.
+
 This can be useful if you want to train a model on a dataset and then use it
 to predict causal graphs on other datasets, or train a model on different
 batches.
@@ -158,7 +219,6 @@ experiment.plot(show_metrics=True, layout='circular', usetex=False)
 # Save the trained model to a file
 experiment.save("/path/to/model.pkl")
 ```
-
 
 To export the predicted causal graph to a DOT file, you can use the `export`
 method of the `GraphDiscovery` class:
@@ -195,6 +255,38 @@ For more information on command line options, run `causalexplain -h` or go to
 the [Quickstart](https://renero.github.io/causalexplain/quickstart.html)
 section in the documentation.
 
+### Prior knowledge (ReX)
+
+ReX can optionally use prior knowledge to constrain edge directions when you
+already know a rough ordering of variables (for example, temporal tiers).
+The prior is a JSON file with a single `prior` key whose value is a list of
+tiers; each tier is a list of column names. Variables in earlier tiers may
+cause variables in later tiers, but not vice versa. All names must match the
+dataset columns, but you can omit variables you have no prior knowledge about.
+
+Example JSON file:
+
+```json
+{
+  "prior": [
+    ["A", "B"],
+    ["C", "D"]
+  ]
+}
+```
+
+Use it from the CLI with `-p`/`--prior` (ReX only):
+
+```bash
+$ python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+```
+
+Or from a notebook:
+
+```python
+prior = [["A", "B"], ["C", "D"]]
+experiment.run(prior=prior, hpo_iterations=10, bootstrap_iterations=10)
+```
 
 ## Citation
 

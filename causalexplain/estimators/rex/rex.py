@@ -1,6 +1,6 @@
 """
 Main class for the REX estimator.
-(C) J. Renero, 2022, 2023, 2024
+(C) J. Renero, 2022, 2023, 2024, 2025
 """
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
@@ -10,15 +10,15 @@ Main class for the REX estimator.
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
-from multiprocessing import get_context
-from functools import partial
 import multiprocessing
 import os
 import time
 import warnings
 from collections import defaultdict
 from copy import copy, deepcopy
-from typing import Dict, List, Optional, Tuple, Union
+from functools import partial
+from multiprocessing import get_context
+from typing import List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -29,16 +29,14 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_random_state
 
-from ...common import (
-    utils, DEFAULT_HPO_TRIALS, DEFAULT_BOOTSTRAP_TRIALS,
-    DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_SAMPLING_SPLIT
-)
-from .knowledge import Knowledge
+from ...common import (DEFAULT_BOOTSTRAP_SAMPLING_SPLIT,
+                       DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_TRIALS,
+                       DEFAULT_HPO_TRIALS, utils)
 from ...explainability.regression_quality import RegQuality
 from ...explainability.shapley import ShapEstimator
 from ...metrics.compare_graphs import Metrics, evaluate_graph
 from ...models import GBTRegressor, NNRegressor
-
+from .knowledge import Knowledge
 
 np.set_printoptions(precision=4, linewidth=120)
 warnings.filterwarnings('ignore')
@@ -127,9 +125,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             explainer (str): The explainer to use for the shap values. The default
                 values is "explainer", which uses the shap.Explainer class. Other
                 options are "gradient", which uses the shap.GradientExplainer class,
-                and "kernel", which uses the shap.KernelExplainer class.
+                "kernel", which uses the shap.KernelExplainer class, and "tree",
+                which uses the shap.TreeExplainer class.
             tune_model (bool): Whether to tune the model for HPO. Default is False.
-            correlation_th (float): The threshold for the correlation. Default is None.
+            correlation_th (float): Deprecated; retained for backward compatibility.
             corr_method (str): The method to use for the correlation.
                 Default is "spearman", but it can also be 'pearson', 'kendall or 'mic'.
             corr_alpha (float): The alpha value for the correlation. Default is 0.6.
@@ -262,7 +261,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         """
         self.fit_pipeline = Pipeline(
             self,  # type: ignore
-            description="Fitting models", prog_bar=self.prog_bar,
+            description=f"{'Fitting models':<26s}", prog_bar=self.prog_bar,
             verbose=self.verbose, silent=self.silent, subtask=True)
         if pipeline is not None:
             if isinstance(pipeline, list):
@@ -305,6 +304,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             in the following lists cannot be the cause of the nodes in the previous
             lists. If the prior is not provided, the DAG is built without any prior
             information.
+            Example: [['A', 'B'], ['C', 'D']]
 
         Returns
         -------
@@ -346,7 +346,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         # Create a new pipeline for the prediction stages.
         self.predict_pipeline = Pipeline(
             self,  # type: ignore
-            description="Predicting causal graph",
+            description=f"{'Predicting causal graph':<26s}",
             prog_bar=self.prog_bar,
             verbose=self.verbose,
             silent=self.silent,
@@ -417,7 +417,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             steps = [
                 ('shaps', ShapEstimator, {
                     'models': self.models,
-                    'parallel_jobs': self.parallel_jobs
+                    'parallel_jobs': self.parallel_jobs,
+                    'explainer': self.explainer,
+                    'prog_bar': self.prog_bar,
+                    'verbose': self.verbose
                 }),
                 ('G_final', 'bootstrap', {
                     'num_iterations': self.bootstrap_trials,
@@ -465,8 +468,16 @@ class Rex(BaseEstimator, ClassifierMixin):
         return self
 
     @staticmethod
-    def _bootstrap_iteration(iter, X, models, sampling_split, feature_names, prior,
-                             random_state, verbose=False):
+    def _bootstrap_iteration(
+            iter,
+            X,
+            models,
+            sampling_split,
+            feature_names,
+            prior,
+            random_state,
+            explainer: Optional[str] = None,
+            verbose: bool = False):
         """
         Process an iteration of the iterative prediction.
 
@@ -486,13 +497,16 @@ class Rex(BaseEstimator, ClassifierMixin):
             The prior knowledge on the graph to use for bootstrapping.
         random_state : int
             The random state to use for bootstrapping.
+        explainer : str, optional
+            SHAP explainer backend to use ('gradient', 'explainer', 'kernel', or 'tree').
         verbose : bool
             Whether to print verbose messages.
         """
         data_sample = X.sample(frac=sampling_split,
                                random_state=iter * random_state)
         shaps_instance = ShapEstimator(
-            models=models, parallel_jobs=0, prog_bar=False)
+            models=models, explainer=explainer or "explainer",
+            parallel_jobs=0, prog_bar=False, verbose=verbose)
         shaps_instance.fit(data_sample)
         dag = shaps_instance.predict(data_sample, prior=prior)
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
@@ -508,6 +522,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         prior: Optional[list] = None,
         parallel_jobs: int = 0,
         random_state: int = 1234,
+        explainer: Optional[str] = None,
     ) -> np.ndarray:
         """
         Performs iterative prediction on the given directed acyclic graph (DAG)
@@ -527,6 +542,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             The number of parallel jobs to use for bootstrapping.
         random_state : int
             The random state to use for bootstrapping.
+        explainer : str, optional
+            SHAP explainer backend to use ('gradient', 'explainer', 'kernel', or 'tree').
 
         Returns
         -------
@@ -539,7 +556,7 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         if self.verbose:
             print(
-                f"Building iterative adjacency matrix with {num_iterations} "
+                f"  > Building iterative adjacency matrix with {num_iterations} "
                 f"iterations, {sampling_split:.2f} split.")
 
         iter_adjacency_matrix = np.zeros(
@@ -556,7 +573,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             partial_process_iteration = partial(
                 Rex._bootstrap_iteration, X=X, models=self.models,
                 sampling_split=sampling_split, feature_names=self.feature_names,
-                prior=prior, random_state=random_state, verbose=self.verbose)
+                prior=prior, random_state=random_state, explainer=explainer,
+                verbose=self.verbose)
 
             # Determine the nr of processes to pass to Pool()
             if parallel_jobs == -1:
@@ -578,8 +596,9 @@ class Rex(BaseEstimator, ClassifierMixin):
             # Sequential processing
             for iter in range(num_iterations):
                 result = Rex._bootstrap_iteration(
-                    iter, X, self.models, sampling_split,
-                    self.feature_names, prior, random_state, self.verbose)
+                    iter, X=X, models=self.models, sampling_split=sampling_split,
+                    feature_names=self.feature_names, prior=prior, random_state=random_state,
+                    explainer=explainer, verbose=self.verbose)
                 results.append(result)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
@@ -644,11 +663,12 @@ class Rex(BaseEstimator, ClassifierMixin):
             sampling_split = self._set_sampling_split()
 
         if self.verbose:
-            print(f"Iterative prediction with {num_iterations} iterations, and "
+            print(f"> Bootstrapped prediction with {num_iterations} iterations, and "
                   f"{sampling_split:.2f} sampling split.")
 
         iter_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
-            X, num_iterations, sampling_split, prior, parallel_jobs, random_state)
+            X, num_iterations, sampling_split, prior, parallel_jobs,
+            random_state, explainer=self.explainer)
 
         if self.shaps is not None:
             self.shaps.fit(X)
@@ -710,15 +730,16 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.iterative_metrics = []
         best_tolerance = 0.0
         for tol in np.arange(0.1, 1.0, 0.05):
+            tol_value = float(tol)
             dag = self._dag_from_bootstrap_adj_matrix(
-                iter_adjacency_matrix, tolerance=tol)
+                iter_adjacency_matrix, tolerance=tol_value)
 
             metric = evaluate_graph(ref_graph, dag)
             self.iterative_metrics.append(metric)
             value_obtained = getattr(metric, key_metric)
             if _is_better_value(value_obtained, reference_key_metric):
                 reference_key_metric = value_obtained
-                best_tolerance = tol
+                best_tolerance = tol_value
                 if self.verbose:
                     print(f"· · Better tolerance found: {best_tolerance:.2f}, "
                           f"{key_metric}: {reference_key_metric:.4f}")
@@ -1007,12 +1028,12 @@ class Rex(BaseEstimator, ClassifierMixin):
                     f"WARNING: SHAP '{explainer}' not supported for model "
                     f"'{model_type}'. Using 'gradient' instead.")
             self.explainer = "gradient"
-        if (model_type == "gbt" and explainer != "explainer"):
+        if (model_type == "gbt" and explainer != "tree"):
             if self.verbose:
                 print(
                     f"WARNING: SHAP '{explainer}' not supported for model "
-                    f"'{model_type}'. Using 'explainer' instead.")
-            self.explainer = "explainer"
+                    f"'{model_type}'. Using 'tree' instead.")
+            self.explainer = "tree"
 
     def _more_tags(self):
         return {

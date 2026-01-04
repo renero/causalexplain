@@ -3,7 +3,7 @@
 #
 # causalexplain/__main__.py
 #
-# (C) 2024 J. Renero
+# (C) 2024, 2025 J. Renero
 #
 # This file is part of causalexplain
 #
@@ -14,10 +14,12 @@
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 #
 
+import sentry_sdk
 import argparse
 import os
+import sys
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import networkx as nx
 
@@ -27,24 +29,34 @@ from causalexplain.common.notebook import Experiment
 
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
-                                  DEFAULT_SEED,
+                                  DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
+                                  DEFAULT_MAX_SAMPLES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
 
 
-def parse_args():
-    class SplitArgs(argparse.Action):
-        def __call__(self, parser, namespace, values, option_string=None):
-            """Split a comma-separated list of values."""
-            if values is None:
-                setattr(namespace, self.dest, [])
-            elif isinstance(values, str):
-                setattr(namespace, self.dest, values.split(','))
-            else:
-                setattr(namespace, self.dest, list(values))
+def parse_args() -> argparse.Namespace:
+    """
+    Parse CLI arguments for the causal discovery runner.
 
+    Args:
+        None.
+
+    Returns:
+        argparse.Namespace: Parsed command-line arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Causal Graph Learning with ReX and other compared methods.",
     )
+    parser.add_argument(
+        '-a', '--adaptive-shap-sampling',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Enable adaptive SHAP background sampling and stability checks. '
+             'Use --no-adaptive-shap-sampling to disable. Default is enabled.')
+    parser.add_argument(
+        '--max-shap-samples', '--max_shap_samples', type=int, required=False,
+        help='Max background samples for adaptive SHAP. '
+             f'Default is {DEFAULT_MAX_SAMPLES}.')
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
         help='Bootstrap iterations. Default is 20.')
@@ -91,17 +103,36 @@ def parse_args():
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
         '-v', '--verbose', action='store_true', required=False, help='Verbose mode, instead of progress bar.')
+    parser.add_argument(
+        '--parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for CPU training (0 = sequential).')
+    parser.add_argument(
+        '--bootstrap-parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
+    device_group = parser.add_mutually_exclusive_group()
+    device_group.add_argument(
+        '--cuda', action='store_true', required=False,
+        help='Run on CUDA (requires a CUDA-enabled build).')
+    device_group.add_argument(
+        '--mps', action='store_true', required=False,
+        help='Run on Apple Silicon MPS (requires MPS support).')
 
     args = parser.parse_args()
     return args
 
 
-def check_args_validity(args):
+def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     """
-    Check the validity of the arguments.
+    Validate CLI arguments and derive runtime configuration values.
+
+    This performs file existence checks and computes defaults that drive
+    the end-to-end experiment run.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
 
     Returns:
-        dict: A dictionary of run values
+        Dict[str, Any]: A dictionary of validated run values.
     """
     run_values = {}
 
@@ -192,24 +223,54 @@ def check_args_validity(args):
     run_values['combine_op'] = args.combine if args.combine is not None else 'union'
     run_values['verbose'] = True if args.verbose else False
     run_values['output_dag_file'] = args.output
+    run_values['adaptive_shap_sampling'] = (
+        args.adaptive_shap_sampling
+        if hasattr(args, 'adaptive_shap_sampling') else True)
+    max_shap_samples = getattr(args, "max_shap_samples", None)
+    if max_shap_samples is None or max_shap_samples <= 0:
+        run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
+    else:
+        run_values['max_shap_samples'] = max_shap_samples
+    run_values['parallel_jobs'] = getattr(args, "parallel_jobs", 0)
+    run_values['bootstrap_parallel_jobs'] = getattr(
+        args, "bootstrap_parallel_jobs", 0)
+    if getattr(args, "cuda", False):
+        requested_device = "cuda"
+    elif getattr(args, "mps", False):
+        requested_device = "mps"
+    else:
+        requested_device = "cpu"
+    run_values['device'] = utils.resolve_device(requested_device)
 
     # return a dictionary with all the new variables created
     return run_values
 
 
-def header_():
+def header_() -> None:
     """
-    Done with "Ogre" font from https://patorjk.com/software/taag/
+    Print the ASCII header banner for CLI output.
+
+    The banner was created with the "Ogre" font from
+    https://patorjk.com/software/taag/.
+
+    Args:
+        None.
+
+    Returns:
+        None: This method does not return a value.
     """
     print(HEADER_ASCII)
 
 
-def show_run_values(run_values):
+def show_run_values(run_values: Dict[str, Any]) -> None:
     """
-    Print the run values.
+    Print resolved run values for debugging or transparency.
 
     Args:
-        run_values (dict): A dictionary of run values
+        run_values (Dict[str, Any]): A dictionary of run values.
+
+    Returns:
+        None: This method does not return a value.
     """
     print("-----")
     print("Run values:")
@@ -222,32 +283,47 @@ def show_run_values(run_values):
     print("-----")
 
 
-def _init_discoverer(run_values: dict) -> GraphDiscovery:
+def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
     """
-    Initialize the GraphDiscovery object.
+    Initialize the GraphDiscovery object with run-time configuration.
+    Check also for CSV size warnings related to SHAP sampling.
+
     Args:
-        run_values (dict): A dictionary of run values
+        run_values (Dict[str, Any]): A dictionary of run values.
+
     Returns:
-        GraphDiscovery: The initialized GraphDiscovery object
+        GraphDiscovery: The initialized GraphDiscovery object.
     """
-    return GraphDiscovery(
+    discoverer = GraphDiscovery(
         experiment_name=run_values['dataset_name'],
         model_type=run_values['estimator'],
         csv_filename=run_values['dataset_filepath'],
         true_dag_filename=run_values['true_dag'],
         verbose=run_values['verbose'],
-        seed=run_values['seed']
+        seed=run_values['seed'],
+        parallel_jobs=run_values['parallel_jobs'],
+        bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
+        device=run_values['device'],
+        max_shap_samples=run_values.get('max_shap_samples')
     )
+    _check_csv_size_warning(discoverer, run_values)
+
+    return discoverer
 
 
-def _load_or_prepare(discoverer: GraphDiscovery, run_values: dict) -> Optional[Experiment]:
+def _load_or_prepare(
+    discoverer: GraphDiscovery,
+    run_values: Dict[str, Any]
+) -> Optional[Experiment]:
     """
     Load a model if specified, otherwise prepare experiments.
+
     Args:
-        discoverer (GraphDiscovery): The GraphDiscovery object
-        run_values (dict): A dictionary of run values
+        discoverer (GraphDiscovery): The GraphDiscovery object.
+        run_values (Dict[str, Any]): A dictionary of run values.
+
     Returns:
-        Optional[Experiment]: The loaded experiment or None
+        Optional[Experiment]: The loaded experiment or None if created.
     """
     if run_values['load_model'] is not None:
         discoverer.load_model(run_values['load_model'])
@@ -260,17 +336,19 @@ def _load_or_prepare(discoverer: GraphDiscovery, run_values: dict) -> Optional[E
 
 def _train_if_needed(
     discoverer: GraphDiscovery,
-    run_values: dict,
+    run_values: Dict[str, Any],
     result: Optional[Experiment]
 ) -> Optional[Experiment]:
     """
-    Train the model if needed.
+    Train the model if requested, otherwise return the existing result.
+
     Args:
-        discoverer (GraphDiscovery): The GraphDiscovery object
-        run_values (dict): A dictionary of run values
-        result (Optional[Experiment]): The loaded experiment or None
+        discoverer (GraphDiscovery): The GraphDiscovery object.
+        run_values (Dict[str, Any]): A dictionary of run values.
+        result (Optional[Experiment]): The loaded experiment or None.
+
     Returns:
-        Optional[Experiment]: The trained experiment or the loaded one
+        Optional[Experiment]: The trained experiment or the loaded one.
     """
     if run_values['no_train']:
         return result
@@ -280,7 +358,9 @@ def _train_if_needed(
         bootstrap_iterations=run_values['bootstrap_iterations'],
         prior=run_values['prior'],
         bootstrap_tolerance=run_values.get('bootstrap_tolerance'),
-        quiet=run_values.get('quiet', False)
+        quiet=run_values.get('quiet', False),
+        adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True),
+        max_shap_samples=run_values.get('max_shap_samples')
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])
@@ -288,11 +368,13 @@ def _train_if_needed(
 
 def _ensure_result(result: Optional[Experiment]) -> Experiment:
     """
-    Ensure that the result is not None.
+    Ensure that the experiment result is available.
+
     Args:
-        result (Optional[Experiment]): The loaded experiment or None
+        result (Optional[Experiment]): The loaded experiment or None.
+
     Returns:
-        Experiment: The loaded or trained experiment
+        Experiment: The loaded or trained experiment.
     """
     if result is None:
         raise RuntimeError(
@@ -305,10 +387,12 @@ def _ensure_result(result: Optional[Experiment]) -> Experiment:
 def _ensure_dag(result: Experiment) -> nx.DiGraph:
     """
     Ensure that the result contains a DAG.
+
     Args:
-        result (Experiment): The loaded or trained experiment
+        result (Experiment): The loaded or trained experiment.
+
     Returns:
-        nx.DiGraph: The resulting DAG
+        nx.DiGraph: The resulting DAG.
     """
     dag = result.dag
     if dag is None:
@@ -319,7 +403,50 @@ def _ensure_dag(result: Experiment) -> nx.DiGraph:
     return dag
 
 
-def main():
+def _check_csv_size_warning(
+    discoverer: GraphDiscovery,
+    run_values: dict
+):
+    """
+    Check if the CSV size exceeds the maximum allowed lines and warn the user.
+    Args:
+        discoverer (GraphDiscovery): The GraphDiscovery object
+        run_values (dict): A dictionary of run values
+    """
+    # SAFETY/RUNTIME NOTE:
+    # Why we warn when adaptive sampling is disabled:
+    # Without adaptive sampling, SHAP can scale poorly and appear to hang on
+    # large tables, especially with Kernel-based explainers.
+    # What dataset size threshold is used and why:
+    # We warn when m > DEFAULT_MAX_CSV_LINES to be conservative about runtime/memory blowups.
+    # How users can mitigate (enable adaptive sampling, cap explain set, etc):
+    # Enable adaptive_shap_sampling or reduce rows via max_shap_samples,
+    # max_explain_samples, or external subsampling.
+    if not run_values.get('adaptive_shap_sampling', True):
+        data = getattr(discoverer, "data", None)
+        if data is not None and len(data) > DEFAULT_MAX_CSV_LINES:
+            warning_text = (
+                "Adaptive SHAP sampling is disabled and the dataset has "
+                f"{len(data)} rows (>2000). SHAP computation may take a very "
+                "long time, use excessive memory, or fail to halt. Consider "
+                "enabling adaptive_shap_sampling=True or reducing rows via "
+                "max_shap_samples, max_explain_samples, or subsampling.")
+            print(warning_text, file=sys.stderr)
+
+
+def main() -> None:
+    """
+    Run the CLI entry point for causal discovery experiments.
+
+    This orchestrates argument parsing, model loading or training, evaluation,
+    and optional persistence of outputs.
+
+    Args:
+        None.
+
+    Returns:
+        None: This method does not return a value.
+    """
     header_()
     args = parse_args()
     run_values = check_args_validity(args)
@@ -332,7 +459,7 @@ def main():
     dag = _ensure_dag(result)
 
     elapsed_time, units = utils.format_time(time.time() - start_time)
-    print(f"(Elapsed time: {elapsed_time:.1f}{units})")
+    print(f"Elapsed time: {elapsed_time:.1f}{units}")
     discoverer.printout_results(dag, result.metrics, run_values['combine_op'])
 
     if run_values['output_path'] is not None:
@@ -343,5 +470,36 @@ def main():
         print(f"Saved DAG to {run_values['output_dag_file']}")
 
 
+# TODO
+# [ ] Add options to run the 'generators' from the CLI
+# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
+# [ ] Add option to save the regressors' errors to a CSV file
+# [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
+# [ ] Add option to save the SHAP values to a CSV file
+# [ ] Get rid of the mlforge pipeline dependency in causalexplain
+# [ ] Get rid of the ProgBar dependency in causalexplain
+# [X] Ensure that the prior is used in all methods that support it and it works correctly
+# [X] Fix the length of the messages printed by the tqdm progress bars
+# [X] Analyze whether to move to GPU the DNN training for ReX
+# [X] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
+# [X] Cast everything to 'float32' where possible to reduce memory consumption
+# [X] Study how to use GPU acceleration for SHAP computations
+
+
 if __name__ == "__main__":
+
+    # sentry_sdk.init(
+    #     dsn="https://52bf4a5355c861af1eb5c6395c246d5d@o4510618140999680.ingest.de.sentry.io/4510623000166480",
+    #     # Tracing is not required for profiling to work
+    #     # but for the best experience we recommend enabling it
+    #     traces_sample_rate=1.0,
+    #     # Set profile_session_sample_rate to 1.0 to profile 100%
+    #     # of profile sessions.
+    #     profile_session_sample_rate=1.0
+    # )
+
+    # sentry_sdk.profiler.start_profiler()
+
     main()
+
+    # sentry_sdk.profiler.stop_profiler()
