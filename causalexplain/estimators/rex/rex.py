@@ -598,7 +598,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             # Sequential processing
             for iter in range(num_iterations):
                 result = Rex._bootstrap_iteration(
-                    iter=iter, X=X, models=self.models, sampling_split=sampling_split,
+                    iter, X=X, models=self.models, sampling_split=sampling_split,
                     feature_names=self.feature_names, prior=prior, random_state=random_state,
                     explainer=explainer, verbose=self.verbose)
                 results.append(result)
