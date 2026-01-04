@@ -36,19 +36,19 @@ def get_edge_orientation(data, x, y, iters=20, method='gpr', verbose=False):
     mark = "**" if r1 < 0.05 and r2 < 0.05 else ""
     if r1 > r2:
         if verbose:
-            print(f" {x:>3s}-->{y:<3s}  "
+            print(f"    > {x:>3s}-->{y:<3s}  "
                   f"[p({x:>3s}->{y:<3s}): {r1:8.6f};"
                   f" p({y:>3s}->{x:<3s}): {r2:8.6f}] {mark}")
         return +1
     elif r1 < r2:
         if verbose:
-            print(f" {x:>3s}<--{y:<3s}  "
+            print(f"    > {x:>3s}<--{y:<3s}  "
                   f"[p({x:>3s}->{y:<3s}): {r1:8.6f};"
                   f" p({y:>3s}->{x:<3s}): {r2:8.6f}] {mark}")
         return -1
     else:
         if verbose:
-            print(f" {x:>3s}·-·{y:<3s}", end="")
+            print(f"    > {x:>3s}·-·{y:<3s}", end="")
             print(
                 f"  [p({x:>3s}->{y:<3s}): {r1:8.6f}; p({y:>3s}->{x:<3s}): {r2:8.6f}]")
         return 0

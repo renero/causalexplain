@@ -10,14 +10,14 @@ Main class for the REX estimator.
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
-from multiprocessing import get_context
-from functools import partial
 import multiprocessing
 import os
 import time
 import warnings
 from collections import defaultdict
 from copy import copy, deepcopy
+from functools import partial
+from multiprocessing import get_context
 from typing import List, Optional, Tuple, Union
 
 import networkx as nx
@@ -29,16 +29,14 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_random_state
 
-from ...common import (
-    utils, DEFAULT_HPO_TRIALS, DEFAULT_BOOTSTRAP_TRIALS,
-    DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_SAMPLING_SPLIT
-)
-from .knowledge import Knowledge
+from ...common import (DEFAULT_BOOTSTRAP_SAMPLING_SPLIT,
+                       DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_TRIALS,
+                       DEFAULT_HPO_TRIALS, utils)
 from ...explainability.regression_quality import RegQuality
 from ...explainability.shapley import ShapEstimator
 from ...metrics.compare_graphs import Metrics, evaluate_graph
 from ...models import GBTRegressor, NNRegressor
-
+from .knowledge import Knowledge
 
 np.set_printoptions(precision=4, linewidth=120)
 warnings.filterwarnings('ignore')
@@ -558,7 +556,7 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         if self.verbose:
             print(
-                f"Building iterative adjacency matrix with {num_iterations} "
+                f"  > Building iterative adjacency matrix with {num_iterations} "
                 f"iterations, {sampling_split:.2f} split.")
 
         iter_adjacency_matrix = np.zeros(
@@ -665,7 +663,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             sampling_split = self._set_sampling_split()
 
         if self.verbose:
-            print(f"Iterative prediction with {num_iterations} iterations, and "
+            print(f"> Bootstrapped prediction with {num_iterations} iterations, and "
                   f"{sampling_split:.2f} sampling split.")
 
         iter_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(

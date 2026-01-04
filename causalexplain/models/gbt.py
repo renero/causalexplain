@@ -372,7 +372,7 @@ class GBTRegressor(GradientBoostingRegressor):
         self,
         training_data: pd.DataFrame,
         test_data: pd.DataFrame,
-        study_name: str = None,
+        study_name: str|None = None,
         min_loss: float = 0.05,
         storage: str = "sqlite:///rex_tuning.db",
         load_if_exists: bool = True,
@@ -560,9 +560,10 @@ class GBTRegressor(GradientBoostingRegressor):
         self.min_tunned_loss = best_trials[0].values[0]
 
         if self.verbose and not self.silent:
-            print(f"Best params (min loss:{self.min_tunned_loss:.6f}):")
+            print(
+                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
             for k, v in self.best_params.items():
-                print(f"\t{k:<15s}: {v}")
+                print(f"            > {k:<15s}: {v}")
 
         regressor_args = {
             'learning_rate': self.best_params['learning_rate'],
@@ -581,7 +582,7 @@ class GBTRegressor(GradientBoostingRegressor):
     def tune_fit(
             self,
             X: pd.DataFrame,
-            hpo_study_name: str = None,
+            hpo_study_name: str|None = None,
             hpo_min_loss: float = 0.05,
             hpo_storage: str = 'sqlite:///rex_tuning.db',
             hpo_load_if_exists: bool = True,
@@ -601,9 +602,10 @@ class GBTRegressor(GradientBoostingRegressor):
             load_if_exists=hpo_load_if_exists)
 
         if self.verbose and not self.silent:
-            print(f"Best params (min loss:{self.min_tunned_loss:.6f}):")
+            print(
+                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
             for k, v in regressor_args.items():
-                print(f"\t{k:<15s}: {v}")
+                print(f"            > {k:<15s}: {v}")
 
         # Set the object parameters to the best parameters found.
         for k, v in regressor_args.items():

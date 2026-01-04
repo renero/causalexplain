@@ -3,7 +3,7 @@ A class to train DFF networks for all variables in data. Each network will be tr
 predict one of the variables in the data, using the rest as predictors plus one
 source of random noise.
 
-(C) 2022,2023,2024, J. Renero
+(C) 2022,2023,2024,2025 J. Renero
 """
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
@@ -17,7 +17,6 @@ source of random noise.
 import inspect
 import os
 import tempfile
-import types
 import warnings
 from typing import Dict, List, Tuple, Union, Any
 
@@ -417,25 +416,27 @@ class NNRegressor(BaseEstimator):
         Returns:
             str: A formatted summary of non-callable attributes.
         """
-        forbidden_attrs = [
-            'fit', 'predict', 'score', 'get_params', 'set_params']
-        ret = f"REX object attributes\n"
-        ret += f"{'-'*80}\n"
-        for attr in dir(self):
-            if attr.startswith('_') or \
-                attr in forbidden_attrs or \
-                    type(getattr(self, attr)) == types.MethodType:
-                continue
-            elif attr == "X" or attr == "y":
-                if isinstance(getattr(self, attr), pd.DataFrame):
-                    ret += f"{attr:25} {getattr(self, attr).shape}\n"
-                    continue
-            elif isinstance(getattr(self, attr), pd.DataFrame):
-                ret += f"{attr:25} DataFrame {getattr(self, attr).shape}\n"
-            else:
-                ret += f"{attr:25} {getattr(self, attr)}\n"
+        return utils.pretty_print(self)
 
-        return ret
+        # forbidden_attrs = [
+        #     'fit', 'predict', 'score', 'get_params', 'set_params']
+        # ret = f"REX object attributes\n"
+        # ret += f"{'-'*80}\n"
+        # for attr in dir(self):
+        #     if attr.startswith('_') or \
+        #         attr in forbidden_attrs or \
+        #             type(getattr(self, attr)) == types.MethodType:
+        #         continue
+        #     elif attr == "X" or attr == "y":
+        #         if isinstance(getattr(self, attr), pd.DataFrame):
+        #             ret += f"{attr:25} {getattr(self, attr).shape}\n"
+        #             continue
+        #     elif isinstance(getattr(self, attr), pd.DataFrame):
+        #         ret += f"{attr:25} DataFrame {getattr(self, attr).shape}\n"
+        #     else:
+        #         ret += f"{attr:25} {getattr(self, attr)}\n"
+
+        # return ret
 
     def tune(
             self,
@@ -654,9 +655,10 @@ class NNRegressor(BaseEstimator):
         self.min_tunned_loss = best_trials[0].values[0]
 
         if self.verbose and not self.silent:
-            print(f"Best params (min loss:{self.min_tunned_loss:.6f}):")
+            print(
+                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
             for k, v in self.best_params.items():
-                print(f"\t{k:<15s}: {v}")
+                print(f"            > {k:<15s}: {v}")
 
         regressor_args = {
             'hidden_dim': [self.best_params[f'n_units_l{i}']
@@ -692,9 +694,10 @@ class NNRegressor(BaseEstimator):
             load_if_exists=hpo_load_if_exists)
 
         if self.verbose and not self.silent:
-            print(f"Best params (min loss:{self.min_tunned_loss:.6f}):")
+            print(
+                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
             for k, v in regressor_args.items():
-                print(f"\t{k:<15s}: {v}")
+                print(f"            > {k:<15s}: {v}")
 
         # Set the object parameters to the best parameters found.
         for k, v in regressor_args.items():

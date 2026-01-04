@@ -1553,8 +1553,8 @@ class ShapEstimator(BaseEstimator):
             feature_order_str = ", ".join(
                 str(idx) for idx in feature_order_target.tolist()
             )
-            print(f"  Feature order for '{target_name}': [{feature_order_str}]")
-            print(f"  Target({target_name}) -> ", end="")
+            print(f"    > Feature order for '{target_name}': [{feature_order_str}]")
+            print(f"      Target({target_name}) -> ", end="")
             srcs = [src for src in feature_names if src != target_name]
             shap_mean_values_display = np.asarray(shap_mean_values_target)
             if shap_mean_values_display.ndim > 1:
@@ -1861,23 +1861,19 @@ class ShapEstimator(BaseEstimator):
             candidate_causes = utils.valid_candidates_from_prior(
                 self.feature_names, target, self.prior)
 
-
             # feature_names_wo_target = [
-            #     f for f in self.feature_names if f != target]
-            feature_names_wo_target = [
-                f for f in candidate_causes if f != target]
+            #     f for f in candidate_causes if f != target]
 
             # Debug output
             if self.verbose:
                 print(
-                    f"Selecting features for target {target}...")
-                print(f"  Candidate causes for target '{target}': {candidate_causes}")
-                print(f"  Feature names without target: {feature_names_wo_target}")
+                    f"> Selecting features for target {target}...")
+                print(f"  > Candidate causes for target '{target}': {candidate_causes}")
 
             # Select the features that are connected to the target
             self.connections[target] = select_features(
                 values=self.shap_values[target],
-                feature_names=feature_names_wo_target,
+                feature_names=candidate_causes, # feature_names_wo_target,
                 min_impact=self.min_impact,
                 exhaustive=self.exhaustive,
                 threshold=float(self.mean_shap_threshold),
