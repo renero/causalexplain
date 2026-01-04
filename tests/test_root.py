@@ -73,7 +73,7 @@ def test_parse_args_adaptive_shap_sampling(monkeypatch):
     argv = [
         "prog",
         "-d", "data.csv",
-        "--no-adaptive-shap-sampling",
+        "--no-shap-sampling",
     ]
     monkeypatch.setattr(sys, "argv", argv)
     args = main_mod.parse_args()

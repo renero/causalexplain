@@ -14,7 +14,6 @@
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 #
 
-import sentry_sdk
 import argparse
 import os
 import sys
@@ -47,22 +46,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Causal Graph Learning with ReX and other compared methods.",
     )
-    parser.add_argument(
-        '-a', '--adaptive-shap-sampling',
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help='Enable adaptive SHAP background sampling and stability checks. '
-             'Use --no-adaptive-shap-sampling to disable. Default is enabled.')
-    parser.add_argument(
-        '--max-shap-samples', '--max_shap_samples', type=int, required=False,
-        help='Max background samples for adaptive SHAP. '
-             f'Default is {DEFAULT_MAX_SAMPLES}.')
+    device_group = parser.add_mutually_exclusive_group()
     parser.add_argument(
         '-b', '--bootstrap', type=int, required=False,
         help='Bootstrap iterations. Default is 20.')
     parser.add_argument(
+        '-B', '--bootstrap-parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
+    parser.add_argument(
         '-c', '--combine', type=str, required=False, choices=['union', 'intersection'],
         help='Combine ReX DAGs using the specified operation: union or intersection.')
+    device_group.add_argument(
+        '-C', '--cuda', action='store_true', required=False,
+        help='Run on CUDA (requires a CUDA-enabled build).')
     parser.add_argument(
         '-d', '--dataset', type=str, required=False,
         help='Dataset name. Must be CSV file with headers and comma separated columns')
@@ -73,10 +69,17 @@ def parse_args() -> argparse.Namespace:
         '-l', '--load_model', type=str, required=False,
         help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
     parser.add_argument(
+        '-H', '--max-shap-samples', '--max_shap_samples', type=int, required=False,
+        help='Max background samples for adaptive SHAP. '
+             f'Default is {DEFAULT_MAX_SAMPLES}.')
+    parser.add_argument(
         '-m', '--method', type=str, required=False,
         choices=['rex', 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'],
         help="Method to used. If not specified, the method will be ReX.\n" +
         "Other options are: 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'.")
+    device_group.add_argument(
+        '-M', '--mps', action='store_true', required=False,
+        help='Run on Apple Silicon MPS (requires MPS support).')
     parser.add_argument(
         '-n', '--no-train', action='store_true', required=False,
         help='Do not train the model, just evaluate it. If not specified, the model will be trained.')
@@ -84,6 +87,9 @@ def parse_args() -> argparse.Namespace:
         '-o', '--output', type=str, required=False,
         help='Output file where saving the final DAG (dot format). If not specified, ' +
         'the final DAG will be printed to stdout.')
+    parser.add_argument(
+        '-P', '--parallel-jobs', type=int, required=False, default=0,
+        help='Number of parallel jobs for CPU training (0 = sequential).')
     parser.add_argument(
         '-p', '--prior', type=str, required=False,
         help='Prior file (JSON format) to use in the model')
@@ -96,6 +102,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '-S', '--seed', type=int, required=False, help='Random seed')
     parser.add_argument(
+        '-a', '--shap-sampling',
+        action=argparse.BooleanOptionalAction,
+        dest='adaptive_shap_sampling',
+        default=True,
+        help='Enable adaptive SHAP background sampling and stability checks. '
+             'Use --no-shap-sampling to disable. Default is enabled.')
+    parser.add_argument(
         '-T', '--threshold', type=float, required=False,
         help='Threshold (0 .. 1) to apply to the bootstrapped adjacency matrix. Default is 0.3')
     parser.add_argument(
@@ -103,19 +116,6 @@ def parse_args() -> argparse.Namespace:
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
         '-v', '--verbose', action='store_true', required=False, help='Verbose mode, instead of progress bar.')
-    parser.add_argument(
-        '--parallel-jobs', type=int, required=False, default=0,
-        help='Number of parallel jobs for CPU training (0 = sequential).')
-    parser.add_argument(
-        '--bootstrap-parallel-jobs', type=int, required=False, default=0,
-        help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
-    device_group = parser.add_mutually_exclusive_group()
-    device_group.add_argument(
-        '--cuda', action='store_true', required=False,
-        help='Run on CUDA (requires a CUDA-enabled build).')
-    device_group.add_argument(
-        '--mps', action='store_true', required=False,
-        help='Run on Apple Silicon MPS (requires MPS support).')
 
     args = parser.parse_args()
     return args
@@ -487,19 +487,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-
-    # sentry_sdk.init(
-    #     dsn="https://52bf4a5355c861af1eb5c6395c246d5d@o4510618140999680.ingest.de.sentry.io/4510623000166480",
-    #     # Tracing is not required for profiling to work
-    #     # but for the best experience we recommend enabling it
-    #     traces_sample_rate=1.0,
-    #     # Set profile_session_sample_rate to 1.0 to profile 100%
-    #     # of profile sessions.
-    #     profile_session_sample_rate=1.0
-    # )
-
-    # sentry_sdk.profiler.start_profiler()
-
     main()
-
-    # sentry_sdk.profiler.stop_profiler()

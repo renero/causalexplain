@@ -114,8 +114,8 @@ CLI example
 
 .. code-block:: bash
 
-   python -m causalexplain --adaptive-shap-sampling
-   python -m causalexplain --no-adaptive-shap-sampling
+   python -m causalexplain --shap-sampling
+   python -m causalexplain --no-shap-sampling
 
 Available SHAP backends are ``kernel``, ``gradient``, ``explainer``, and
 ``tree``. ReX defaults to ``tree`` when running the GBT regressor.

@@ -55,7 +55,7 @@ datasets, highlighting its robustness across different types of data.
 - Operating System: Linux or macOS
 - Environment Manager: PyEnv or Conda
 - Programming Language: Python 3.13.11 or higher
-- Hardware: CPU
+- Hardware: CPU (CUDA/MPS optional)
 
 ## Installation
 
@@ -64,6 +64,16 @@ The project can be installed using pip:
 ```bash
 $ pip install causalexplain
 ```
+
+## What's new in v0.8.0
+
+- Adaptive SHAP sampling with stability checks and new controls like
+  `max_shap_samples`; GBT defaults to `shap.TreeExplainer`.
+- Parallelization for DNN training and bootstrap runs, plus CLI flags for
+  parallel jobs.
+- CUDA/MPS device selection and float32 enforcement for PyTorch models.
+- Prior handling and diagnostics improvements across ReX, SHAP, and feature
+  selection.
 
 ## Data
 
@@ -79,18 +89,21 @@ the datasets in the `data` folder.
 To run `causalexplain` on your data, you can use the `causalexplain` command:
 
 ```
-$ python -m causalexplain
+$ python -m causalexplain --help
    ___                      _                 _       _
   / __\__ _ _   _ ___  __ _| | _____  ___ __ | | __ _(_)_ __
  / /  / _` | | | / __|/ _` | |/ _ \ \/ / '_ \| |/ _` | | '_ \
 / /__| (_| | |_| \__ \ (_| | |  __/>  <| |_) | | (_| | | | | |
 \____/\__,_|\__,_|___/\__,_|_|\___/_/\_\ .__/|_|\__,_|_|_| |_|
                                        |_|
-usage: causalexplain [-h] -d DATASET [-m {rex,pc,fci,ges,lingam,cam,notears}]
-                   [-t TRUE_DAG] [-l LOAD_MODEL] [-T THRESHOLD] [-c {union,intersect}]
-                   [-p PRIOR] [-i ITERATIONS] [-b BOOTSTRAP] [-S SEED]
-                   [-s [SAVE_MODEL]] [-n] [-v] [-q] [-o OUTPUT]
-```
+usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
+                     [-b BOOTSTRAP] [-B BOOTSTRAP_PARALLEL_JOBS]
+                     [-c {union,intersection}] [-C]
+                     [-d DATASET] [-H MAX_SHAP_SAMPLES] [-i ITERATIONS]
+                     [-l LOAD_MODEL] [-m {rex,pc,fci,ges,lingam,cam,notears}]
+                     [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR] [-q]
+                     [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD] [-t TRUE_DAG]
+                     [-v]```
 
 that will present you with a menu to choose the dataset you want to use, the
 method you want to use to infer the causal graph, and the hyperparameters you
@@ -162,8 +175,8 @@ res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=Fals
 CLI example (same executable shown above):
 
 ```bash
-python -m causalexplain --adaptive-shap-sampling
-python -m causalexplain --no-adaptive-shap-sampling
+python -m causalexplain --shap-sampling
+python -m causalexplain --no-shap-sampling
 ```
 
 Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
@@ -180,25 +193,16 @@ tool warns about potential non-termination (the threshold is conservative).
 ### Why adaptive sampling is mathematically reasonable
 
 Many SHAP explainers approximate an expectation over a background
-distribution; using `n` background points gives a Monte Carlo estimate. The
-standard error scales approximately as:
+distribution; using $n$ background points gives a Monte Carlo estimate. The
+standard error scales approximately as $SE \sim \frac{1}{\sqrt{n}}$. So,
+when sampling without replacement from a finite dataset of size $m$, the
+finite population correction factor applies: $\frac{1}{\sqrt{1 - (n/m)}}$.
 
-```
-SE ~ 1/sqrt(n)
-```
-
-When sampling without replacement from a finite dataset of size `m`, the
-finite population correction factor applies:
-
-```
-sqrt(1 - n/m)
-```
-
-This means increasing `n` yields diminishing returns, so capping the
-background around 200-250 is a pragmatic speed/accuracy tradeoff. Repeating
-the sampling (`K` runs) provides a stability diagnostic: compute a global
-importance vector per run as `mean(|SHAP|)` per feature, then check
-variability (CV) and rank stability (Spearman correlation) across runs.
+This means increasing $n$ yields diminishing returns, so capping the
+background around 250 is a pragmatic speed/accuracy tradeoff. Repeating
+the sampling ($K$ runs) provides a stability diagnostic: compute a global
+importance vector per run as $\overline{\mid \text{SHAP} \mid}$ per feature,
+then check variability (CV) and rank stability (Spearman correlation) across runs.
 
 Backend-aware note: Kernel SHAP is particularly sensitive and expensive, so
 caps like `max_explain_samples` matter most there. Gradient and generic
@@ -293,7 +297,7 @@ experiment.run(prior=prior, hpo_iterations=10, bootstrap_iterations=10)
 If you use **CausalExplain**, please cite the **software** and/or the **related publication** below.
 
 ### Software
-> Renero, J. (2025). *CausalExplain* (Version 0.7.0).
+> Renero, J. (2026). *CausalExplain* (Version 0.8.0).
 > Available at: [https://github.com/renero/causalexplain](https://github.com/renero/causalexplain)
 
 **BibTeX**
@@ -301,9 +305,9 @@ If you use **CausalExplain**, please cite the **software** and/or the **related 
 @software{causalexplain_software,
   author  = {Jesús Renero},
   title   = {CausalExplain},
-  version = {0.7.0},
+  version = {0.8.0},
   url     = {https://github.com/renero/causalexplain},
-  date    = {2025-09-23}
+  date    = {2026-01-04}
 }
 ```
 
