@@ -10,14 +10,14 @@ Main class for the REX estimator.
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
-from multiprocessing import get_context
-from functools import partial
 import multiprocessing
 import os
 import time
 import warnings
 from collections import defaultdict
 from copy import copy, deepcopy
+from functools import partial
+from multiprocessing import get_context
 from typing import List, Optional, Tuple, Union
 
 import networkx as nx
@@ -29,16 +29,14 @@ from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_random_state
 
-from ...common import (
-    utils, DEFAULT_HPO_TRIALS, DEFAULT_BOOTSTRAP_TRIALS,
-    DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_SAMPLING_SPLIT
-)
-from .knowledge import Knowledge
+from ...common import (DEFAULT_BOOTSTRAP_SAMPLING_SPLIT,
+                       DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_TRIALS,
+                       DEFAULT_HPO_TRIALS, utils)
 from ...explainability.regression_quality import RegQuality
 from ...explainability.shapley import ShapEstimator
 from ...metrics.compare_graphs import Metrics, evaluate_graph
 from ...models import GBTRegressor, NNRegressor
-
+from .knowledge import Knowledge
 
 np.set_printoptions(precision=4, linewidth=120)
 warnings.filterwarnings('ignore')
@@ -130,7 +128,7 @@ class Rex(BaseEstimator, ClassifierMixin):
                 "kernel", which uses the shap.KernelExplainer class, and "tree",
                 which uses the shap.TreeExplainer class.
             tune_model (bool): Whether to tune the model for HPO. Default is False.
-            correlation_th (float): The threshold for the correlation. Default is None.
+            correlation_th (float): Deprecated; retained for backward compatibility.
             corr_method (str): The method to use for the correlation.
                 Default is "spearman", but it can also be 'pearson', 'kendall or 'mic'.
             corr_alpha (float): The alpha value for the correlation. Default is 0.6.
@@ -419,7 +417,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             steps = [
                 ('shaps', ShapEstimator, {
                     'models': self.models,
-                    'parallel_jobs': self.parallel_jobs
+                    'parallel_jobs': self.parallel_jobs,
+                    'explainer': self.explainer,
+                    'prog_bar': self.prog_bar,
+                    'verbose': self.verbose
                 }),
                 ('G_final', 'bootstrap', {
                     'num_iterations': self.bootstrap_trials,
@@ -505,7 +506,7 @@ class Rex(BaseEstimator, ClassifierMixin):
                                random_state=iter * random_state)
         shaps_instance = ShapEstimator(
             models=models, explainer=explainer or "explainer",
-            parallel_jobs=0, prog_bar=False)
+            parallel_jobs=0, prog_bar=False, verbose=verbose)
         shaps_instance.fit(data_sample)
         dag = shaps_instance.predict(data_sample, prior=prior)
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
@@ -555,7 +556,7 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         if self.verbose:
             print(
-                f"Building iterative adjacency matrix with {num_iterations} "
+                f"  > Building iterative adjacency matrix with {num_iterations} "
                 f"iterations, {sampling_split:.2f} split.")
 
         iter_adjacency_matrix = np.zeros(
@@ -595,9 +596,9 @@ class Rex(BaseEstimator, ClassifierMixin):
             # Sequential processing
             for iter in range(num_iterations):
                 result = Rex._bootstrap_iteration(
-                    iter, X, self.models, sampling_split,
-                    self.feature_names, prior, random_state,
-                    explainer, self.verbose)
+                    iter, X=X, models=self.models, sampling_split=sampling_split,
+                    feature_names=self.feature_names, prior=prior, random_state=random_state,
+                    explainer=explainer, verbose=self.verbose)
                 results.append(result)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
@@ -662,7 +663,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             sampling_split = self._set_sampling_split()
 
         if self.verbose:
-            print(f"Iterative prediction with {num_iterations} iterations, and "
+            print(f"> Bootstrapped prediction with {num_iterations} iterations, and "
                   f"{sampling_split:.2f} sampling split.")
 
         iter_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(

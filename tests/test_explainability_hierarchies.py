@@ -29,7 +29,7 @@ def test_compute_correlation_matrix_branches(monkeypatch):
 def test_compute_correlated_features_and_are_connected():
     corr = pd.DataFrame([[1.0, 0.9], [0.9, 1.0]], columns=["x", "y"], index=["x", "y"])
     correlated = hmod.Hierarchies.compute_correlated_features(corr, 0.8, ["x", "y"])
-    assert correlated["x"] == ["y"]
+    assert correlated == {}
 
     linkage_mat = np.array([[0, 1, 0.25, 2]])
     clusters = hmod.Hierarchies()._clusters_from_linkage(linkage_mat, ["x", "y"])

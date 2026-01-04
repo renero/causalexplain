@@ -262,7 +262,7 @@ already know a rough ordering of variables (for example, temporal tiers).
 The prior is a JSON file with a single `prior` key whose value is a list of
 tiers; each tier is a list of column names. Variables in earlier tiers may
 cause variables in later tiers, but not vice versa. All names must match the
-dataset columns.
+dataset columns, but you can omit variables you have no prior knowledge about.
 
 Example JSON file:
 

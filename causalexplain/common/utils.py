@@ -11,12 +11,14 @@ Utility functions for causalexplain
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
 import glob
+import io
 import json
 import os
 import pickle
 import types
 from os.path import join
 from pathlib import Path
+from textwrap import indent
 from typing import Dict, List, Optional, Tuple, Union, cast
 
 import networkx as nx
@@ -25,6 +27,8 @@ import pandas as pd
 import pydot
 import pydotplus
 import torch
+from rich.console import Console
+from rich.pretty import Pretty
 
 AnyGraph = Union[nx.Graph, nx.DiGraph]
 
@@ -593,7 +597,7 @@ def digraph_from_connected_features(
 
     """
     if verbose:
-        print("-----\ndigraph_from_connected_features()")
+        print("-----\n> digraph_from_connected_features()")
     unoriented_graph = nx.Graph()
     for target in feature_names:
         for peer in connections[target]:
@@ -614,7 +618,7 @@ def digraph_from_connected_features(
     if X.shape[0] > max_anm_samples:
         X = X.sample(max_anm_samples)
         if verbose:
-            print(f"Reduced number of samples to {max_anm_samples}")
+            print(f"  > Reduced number of samples to {max_anm_samples}")
     for u, v in unoriented_graph.edges():
         # Set orientation to 0 ~ unknown
         orientation = 0
@@ -624,16 +628,16 @@ def digraph_from_connected_features(
             orientation = correct_edge_from_prior(dag, u, v, prior, verbose)
 
         if orientation == 0:
-            print(f"Checking edge {u} -> {v}...") if verbose else None
+            print(f"  > Checking edge {u} -> {v}...") if verbose else None
             # Import locally to avoid requiring heavy deps (hyppo/numba) unless needed
             from ..independence.edge_orientation import get_edge_orientation
             orientation = get_edge_orientation(
                 X, u, v, iters=anm_iterations, method="gpr", verbose=verbose)
             if orientation == +1:
-                print(f"  Edge {u} -> {v} added from ANM") if verbose else None
+                print(f"    > Edge {u} -> {v} added from ANM") if verbose else None
                 dag.add_edge(u, v)
             elif orientation == -1:
-                print(f"  Edge {v} -> {u} added from ANM") if verbose else None
+                print(f"    > Edge {v} -> {u} added from ANM") if verbose else None
                 dag.add_edge(v, u)
             else:
                 pass
@@ -701,7 +705,7 @@ def correct_edge_from_prior(dag, u, v, prior, verbose):
     if not any([u in p for p in prior]) or not any([v in p for p in prior]):
         return 0
 
-    print(f"Checking edge {u} -> {v}...") if verbose else None
+    print(f"  > Checking edge {u} -> {v}...") if verbose else None
     idx_u = [i for i, l in enumerate(prior) if u in l][0]
     idx_v = [i for i, l in enumerate(prior) if v in l][0]
     both_in_top_list = idx_u == 0 and idx_v == 0
@@ -709,24 +713,24 @@ def correct_edge_from_prior(dag, u, v, prior, verbose):
     v_is_before_u = idx_v - idx_u < 0
     if both_in_top_list:
         print(
-            f"Edge {u} -x- {v} removed: both top list") if verbose else None
+            f"    > Edge {u} -x- {v} removed: both top list") if verbose else None
         dag.remove_edge(u, v) if dag.has_edge(u, v) else None # Experimental XXX Beware of this line!
         return +1
     elif u_is_before_v:
         print(
-            f"Edge {u} -> {v} added: {u} before {v}") if verbose else None
+            f"    > Edge {u} -> {v} added: {u} before {v}") if verbose else None
         dag.add_edge(u, v) if not dag.has_edge(v, u) else None
         return +1
     elif v_is_before_u:
         print(
-            f"Edge {v} -> {u} added: {v} before {u}") if verbose else None
+            f"    > Edge {v} -> {u} added: {v} before {u}") if verbose else None
         dag.remove_edge(u, v) if dag.has_edge(u, v) else None
         return -1
     else:
         return 0
 
 
-def valid_candidates_from_prior(feature_names, effect, prior):
+def valid_candidates_from_prior(feature_names: list[str], effect: str, prior: list[list[str]]|None) -> list[str]:
     """
     This method returns the valid candidates for a given effect, based on the
     prior information. The prior information is a list of lists, where each list
@@ -750,11 +754,13 @@ def valid_candidates_from_prior(feature_names, effect, prior):
         return [c for c in feature_names if c != effect]
 
     # identify in what list is the effect, from the list of lists defined in prior
+    # If effect is not found in prior, raise an error.
     idx = [i for i, sublist in enumerate(prior) if effect in sublist]
     if not idx:
-        raise ValueError(f"Effect '{effect}' not found in prior")
+        return [c for c in feature_names if c != effect]
+        # raise ValueError(f"Effect '{effect}' not found in prior")
 
-    # candidates are elements in the list ' idx' and all the lists before it
+    # candidates are elements in the list 'idx' and all the lists before it
     candidates = [item for sublist in prior[:idx[0] + 1]
                   for item in sublist]
 
@@ -794,7 +800,7 @@ def break_cycles_using_prior(
     new_dag = original_dag.copy()
 
     if verbose:
-        print("Prior knowledge:", prior)
+        print("  > Prior knowledge:", prior)
     cycles = list(nx.simple_cycles(new_dag))
     while len(cycles) > 0:
         cycle = cycles.pop(0)
@@ -897,7 +903,7 @@ def break_cycles_if_present(
     - dag (nx.DiGraph): the DAG with cycles broken.
     """
     if verbose:
-        print("-----\nbreak_cycles_if_present()")
+        print("-----\n> break_cycles_if_present()")
 
     # If prior is set, then break cycles using the prior knowledge
     if prior:
@@ -912,7 +918,7 @@ def break_cycles_if_present(
     cycles.sort(key=len)
     if len(cycles) == 0:
         if verbose:
-            print("No cycles found")
+            print("  > No cycles found")
         return new_dag
 
     # Traverse all cycles, fixing them
@@ -943,9 +949,9 @@ def break_cycles_if_present(
             cycle, discrepancies, verbose)
         if len(potential_misoriented) > 0:
             if verbose:
-                print("Potential misoriented edges in the cycle:")
+                print("  > Potential misoriented edges in the cycle:")
                 for edge in potential_misoriented:
-                    print(f"  {edge[0]} --> {edge[1]} ({edge[2]:.3f})")
+                    print(f"    > {edge[0]} --> {edge[1]} ({edge[2]:.3f})")
             # Check if changing the orientation of the edge would break
             # the cycle
             test_dag = new_dag.copy()
@@ -959,7 +965,7 @@ def break_cycles_if_present(
             if len(test_cycles) == len(cycles):
                 if verbose:
                     print(
-                        f"Breaking cycle {cycle} by changing orientation of "
+                        f"    > Breaking cycle {cycle} by changing orientation of "
                         f"edge {min_edge}")
                 new_dag.remove_edge(*min_edge)
                 new_dag.add_edge(*potential_misoriented[0][1::-1])
@@ -969,7 +975,8 @@ def break_cycles_if_present(
         # the edge still exists
         if min_edge in new_dag.edges:
             if verbose:
-                print(f"Breaking cycle {cycle} by removing edge {min_edge}")
+                print(
+                    f"    > Breaking cycle {cycle} by removing edge {min_edge}")
             new_dag.remove_edge(*min_edge)
 
         # Recompute whether there're cycles in the DAG after this change
@@ -1361,3 +1368,23 @@ def read_json_file(file_path: str):
     except json.JSONDecodeError:
         print("Error: Invalid JSON format.")
         return []
+
+def pretty_print(obj: object, prefix:str="") -> str:
+    """
+    Return a pretty string representation of an object using pprint.
+
+    Parameters:
+    -----------
+    obj : object
+        The object to be pretty-printed.
+    prefix : str
+        A string to prefix each line of the output.
+
+    Returns:
+    --------
+    str
+        The pretty string representation of the object.
+    """
+    console = Console(record=True, width=100, file=io.StringIO())
+    console.print(Pretty(obj, expand_all=True))
+    return indent(console.export_text(styles=True), prefix)

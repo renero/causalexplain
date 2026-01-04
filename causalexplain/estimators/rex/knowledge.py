@@ -66,8 +66,6 @@ class Knowledge:
         self.root_causes = rex.root_causes
 
         self.correlation_th = rex.correlation_th
-        if self.correlation_th is not None:
-            self.correlated_features = self.hierarchies.correlated_features
 
     def info(self):
         """Returns a dataframe with the knowledge about each edge in the graph"""
@@ -78,16 +76,8 @@ class Knowledge:
                 if target == parent:
                     continue
 
-                if self.correlation_th is not None:
-                    if parent in self.correlated_features[target]:
-                        continue
-
-                if self.correlation_th is not None:
-                    all_features = [f for f in self.feature_names if (
-                        f != target) and (f not in self.correlated_features[target])]
-                else:
-                    all_features = [
-                        f for f in self.feature_names if f != target]
+                all_features = [
+                    f for f in self.feature_names if f != target]
                 feature_pos = all_features.index(parent)
 
                 sd = self.shaps.shap_discrepancies[target][parent]

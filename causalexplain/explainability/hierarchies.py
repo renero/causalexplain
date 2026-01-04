@@ -42,7 +42,7 @@ class Hierarchies:
     linkage_method : str, optional
         Method to use to compute the linkage. Default is 'complete'.
     correlation_th : float, optional
-        Threshold for the correlation. Default is None.
+        Deprecated; retained for backward compatibility. Not used for pruning.
     prog_bar : bool, optional
         Whether to show a progress bar during computation. Default is False.
     verbose : bool, optional
@@ -79,7 +79,7 @@ class Hierarchies:
         linkage_method : str, optional
             Method to use to compute the linkage. Default is 'complete'.
         correlation_th : float, optional
-            Threshold for the correlation. Default is None.
+            Deprecated; retained for backward compatibility.
         prog_bar : bool, optional
             Whether to show a progress bar during computation. Default is False.
         verbose : bool, optional
@@ -118,7 +118,7 @@ class Hierarchies:
         self.data = X.copy()
         self.feature_names = list(self.data.columns)
 
-        # Set the list of correlated features for each target
+        # Keep an empty correlated_features map for backward compatibility.
         self.correlations = self.compute_correlation_matrix(
             self.data, method=self.method, mic_alpha=self.alpha, mic_c=self.c,
             prog_bar=self.prog_bar)
@@ -174,14 +174,14 @@ class Hierarchies:
     @staticmethod
     def compute_correlated_features(correlations, correlation_th, feature_names, verbose=False):
         """
-        Compute the list of correlated features for each target.
+        Return an empty mapping (correlation pruning is deprecated).
 
         Parameters
         ----------
         correlations : pd.DataFrame
             The correlation matrix.
         correlation_th : float
-            Threshold for the correlation.
+            Deprecated; retained for backward compatibility.
         feature_names : List[str]
             The list of feature names.
         verbose : bool, optional
@@ -190,21 +190,9 @@ class Hierarchies:
         Returns
         -------
         correlated_features : defaultdict(list)
-            The list of correlated features for each target.
+            Empty mapping kept for backward compatibility.
         """
-        correlated_features = defaultdict(list)
-        if correlation_th:
-            for target_name in feature_names:
-                corr_features = list(
-                    correlations[(correlations[target_name] > correlation_th)
-                                 & (correlations[target_name] < 1.0)].index)
-                if len(corr_features) > 0:
-                    correlated_features[target_name] = corr_features
-                    if verbose:
-                        print(
-                            f"CORRELATED FEATS for {target_name}: {corr_features}")
-
-        return correlated_features
+        return defaultdict(list)
 
     def expand_clusters_perm_importance(self, pi, ground_truth=None):
         """

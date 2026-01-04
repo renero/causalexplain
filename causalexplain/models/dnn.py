@@ -3,7 +3,7 @@ A class to train DFF networks for all variables in data. Each network will be tr
 predict one of the variables in the data, using the rest as predictors plus one
 source of random noise.
 
-(C) 2022,2023,2024, J. Renero
+(C) 2022,2023,2024,2025 J. Renero
 """
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
@@ -17,7 +17,6 @@ source of random noise.
 import inspect
 import os
 import tempfile
-import types
 import warnings
 from typing import Dict, List, Tuple, Union, Any
 
@@ -31,7 +30,6 @@ from torch.utils.data import DataLoader
 from mlforge.progbar import ProgBar   # type: ignore
 
 from ..common import DEFAULT_HPO_TRIALS,  utils
-from ..explainability.hierarchies import Hierarchies
 from ._columnar import ColumnsDataset
 from ._models import MLPModel
 
@@ -232,19 +230,7 @@ class NNRegressor(BaseEstimator):
         except Exception:                                # pylint: disable=broad-except
             caller_name = "unknown"
 
-        if self.correlation_th:
-            self.corr_matrix = Hierarchies.compute_correlation_matrix(X)
-            self.correlated_features = Hierarchies.compute_correlated_features(
-                self.corr_matrix, self.correlation_th, self.feature_names,
-                verbose=self.verbose)
-            X_original = X
-            drop_cols_by_target = {
-                target: self.correlated_features.get(target, [])
-                for target in self.feature_names
-            }
-        else:
-            X_original = X
-            drop_cols_by_target = {}
+        X_original = X
 
         loss_fn_by_target = {}
         for target_name in self.feature_names:
@@ -264,13 +250,7 @@ class NNRegressor(BaseEstimator):
             pbar = None
 
         def _fit_target(target_name: str) -> Tuple[str, MLPModel]:
-            drop_cols = drop_cols_by_target.get(target_name, [])
-            if drop_cols:
-                X_target = X_original.drop(drop_cols, axis=1)
-                if self.verbose:
-                    print("REMOVED CORRELATED FEATURES: ", drop_cols)
-            else:
-                X_target = X_original
+            X_target = X_original
 
             model = MLPModel(
                 target=target_name,
@@ -341,24 +321,16 @@ class NNRegressor(BaseEstimator):
             raise ValueError("This Rex instance is not fitted yet. \
                 Call 'fit' with appropriate arguments before using this estimator.")
 
-        if self.correlation_th is not None:
-            X_original = X.copy()
-            loaders = None
-        else:
-            loaders = {
-                target: DataLoader(
-                    ColumnsDataset(target, X),
-                    batch_size=self.batch_size,
-                    shuffle=False)
-                for target in self.feature_names
-            }
+        loaders = {
+            target: DataLoader(
+                ColumnsDataset(target, X),
+                batch_size=self.batch_size,
+                shuffle=False)
+            for target in self.feature_names
+        }
 
         prediction = pd.DataFrame(columns=self.feature_names)
         for target in self.feature_names:
-            # Remove those features from the loader that are highly correlated to target
-            if self.correlation_th is not None:
-                X = X_original.drop(self.correlated_features[target], axis=1)
-
             # Creat a data loader for the target variable. The ColumnsDataset will
             # return the target variable as the second element of the tuple, and
             # will drop the target from the features.
@@ -444,25 +416,27 @@ class NNRegressor(BaseEstimator):
         Returns:
             str: A formatted summary of non-callable attributes.
         """
-        forbidden_attrs = [
-            'fit', 'predict', 'score', 'get_params', 'set_params']
-        ret = f"REX object attributes\n"
-        ret += f"{'-'*80}\n"
-        for attr in dir(self):
-            if attr.startswith('_') or \
-                attr in forbidden_attrs or \
-                    type(getattr(self, attr)) == types.MethodType:
-                continue
-            elif attr == "X" or attr == "y":
-                if isinstance(getattr(self, attr), pd.DataFrame):
-                    ret += f"{attr:25} {getattr(self, attr).shape}\n"
-                    continue
-            elif isinstance(getattr(self, attr), pd.DataFrame):
-                ret += f"{attr:25} DataFrame {getattr(self, attr).shape}\n"
-            else:
-                ret += f"{attr:25} {getattr(self, attr)}\n"
+        return utils.pretty_print(self)
 
-        return ret
+        # forbidden_attrs = [
+        #     'fit', 'predict', 'score', 'get_params', 'set_params']
+        # ret = f"REX object attributes\n"
+        # ret += f"{'-'*80}\n"
+        # for attr in dir(self):
+        #     if attr.startswith('_') or \
+        #         attr in forbidden_attrs or \
+        #             type(getattr(self, attr)) == types.MethodType:
+        #         continue
+        #     elif attr == "X" or attr == "y":
+        #         if isinstance(getattr(self, attr), pd.DataFrame):
+        #             ret += f"{attr:25} {getattr(self, attr).shape}\n"
+        #             continue
+        #     elif isinstance(getattr(self, attr), pd.DataFrame):
+        #         ret += f"{attr:25} DataFrame {getattr(self, attr).shape}\n"
+        #     else:
+        #         ret += f"{attr:25} {getattr(self, attr)}\n"
+
+        # return ret
 
     def tune(
             self,
@@ -681,9 +655,10 @@ class NNRegressor(BaseEstimator):
         self.min_tunned_loss = best_trials[0].values[0]
 
         if self.verbose and not self.silent:
-            print(f"Best params (min loss:{self.min_tunned_loss:.6f}):")
+            print(
+                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
             for k, v in self.best_params.items():
-                print(f"\t{k:<15s}: {v}")
+                print(f"            > {k:<15s}: {v}")
 
         regressor_args = {
             'hidden_dim': [self.best_params[f'n_units_l{i}']
@@ -719,9 +694,10 @@ class NNRegressor(BaseEstimator):
             load_if_exists=hpo_load_if_exists)
 
         if self.verbose and not self.silent:
-            print(f"Best params (min loss:{self.min_tunned_loss:.6f}):")
+            print(
+                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
             for k, v in regressor_args.items():
-                print(f"\t{k:<15s}: {v}")
+                print(f"            > {k:<15s}: {v}")
 
         # Set the object parameters to the best parameters found.
         for k, v in regressor_args.items():

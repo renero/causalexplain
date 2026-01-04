@@ -26,28 +26,30 @@ def _patch_progbar(monkeypatch):
     monkeypatch.setattr(pimod, "ProgBar", lambda *a, **k: DummyProgBar())
 
 
-def test_fit_sklearn_inserts_zero_for_correlated(monkeypatch):
+def test_fit_sklearn_ignores_correlation_threshold(monkeypatch):
     _patch_progbar(monkeypatch)
-    monkeypatch.setattr(
-        pimod.Hierarchies, "compute_correlation_matrix", staticmethod(lambda X: pd.DataFrame(np.eye(X.shape[1]), columns=X.columns, index=X.columns)),
-    )
-    monkeypatch.setattr(
-        pimod.Hierarchies, "compute_correlated_features", staticmethod(lambda corr, th, names, verbose=False: {"a": ["b"], "b": ["a"]}),
-    )
-    monkeypatch.setattr(
-        pimod,
-        "permutation_importance",
-        lambda estimator, X, y, n_repeats, random_state: {"importances_mean": np.array([]), "importances_std": np.array([])},
-    )
+    calls = []
+
+    def fake_perm_importance(estimator, X, y, n_repeats, random_state):
+        calls.append(list(X.columns))
+        return {
+            "importances_mean": np.ones(X.shape[1]),
+            "importances_std": np.zeros(X.shape[1]),
+        }
+
+    monkeypatch.setattr(pimod, "permutation_importance", fake_perm_importance)
 
     models = DummyModels()
-    df = pd.DataFrame({"a": [1.0, 2.0, 3.0], "b": [0.5, 0.4, 0.3]})
-    pi = pimod.PermutationImportance(models, correlation_th=0.8, mean_pi_percentile=0.5, prog_bar=False, verbose=False)
+    df = pd.DataFrame(
+        {"a": [1.0, 2.0, 3.0], "b": [1.0, 2.0, 3.0], "c": [0.5, 0.4, 0.3]}
+    )
+    pi = pimod.PermutationImportance(
+        models, correlation_th=0.8, mean_pi_percentile=0.5, prog_bar=False, verbose=False
+    )
     pi.fit(df)
 
     assert pi.is_fitted_
-    assert pi.pi["a"]["importances_mean"][0] == 0.0  # zero inserted for correlated 'b'
-    assert pi.pi["b"]["importances_mean"][0] == 0.0  # zero inserted for correlated 'a'
+    assert all(len(cols) == len(df.columns) - 1 for cols in calls)
     assert pi.mean_pi_threshold >= 0.0
 
 
@@ -59,8 +61,6 @@ def test_predict_sklearn_builds_graph(monkeypatch):
         "permutation_importance",
         lambda estimator, X, y, n_repeats, random_state: {"importances_mean": np.array([0.2]), "importances_std": np.array([0.05])},
     )
-    monkeypatch.setattr(pimod.Hierarchies, "compute_correlation_matrix", staticmethod(lambda X: pd.DataFrame(np.eye(X.shape[1]), columns=X.columns, index=X.columns)))
-    monkeypatch.setattr(pimod.Hierarchies, "compute_correlated_features", staticmethod(lambda corr, th, names, verbose=False: {}))
     monkeypatch.setattr(pimod, "select_features", lambda values, feature_names, **kwargs: feature_names[:1])
 
     def fake_digraph(X, feature_names, models, connections, root_causes, reciprocity=True, anm_iterations=10, verbose=False):

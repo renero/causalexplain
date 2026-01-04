@@ -101,7 +101,7 @@ def test_hierarchies_expand_clusters_and_connect_verbose(monkeypatch):
 def test_hierarchies_correlated_features_verbose():
     corr = pd.DataFrame([[1.0, 0.5], [0.5, 1.0]], columns=["a", "b"], index=["a", "b"])
     correlated = hmod.Hierarchies.compute_correlated_features(corr, 0.4, ["a", "b"], verbose=True)
-    assert correlated["a"] == ["b"]
+    assert correlated == {}
 
 
 def test_hierarchies_correlated_features_no_threshold():
@@ -167,13 +167,6 @@ def test_permutation_importance_sklearn_flow(monkeypatch):
         }
     )
     models = _build_simple_models(df)
-    original_add_zeroes = pimod.PermutationImportance._add_zeroes
-
-    def fake_add_zeroes(self, target, correlated_features):
-        # track that we hit correlation branch
-        self._zeroed = (target, tuple(correlated_features))
-        return original_add_zeroes(self, target, correlated_features)
-
     # Avoid building DAGs via utils; only return edges passed in.
     def fake_digraph(X, feature_names, models_arg, connections, root_causes, reciprocity=True, anm_iterations=10, verbose=False):
         g = nx.DiGraph()
@@ -183,7 +176,6 @@ def test_permutation_importance_sklearn_flow(monkeypatch):
         return g
 
     monkeypatch.setattr(pimod.utils, "digraph_from_connected_features", fake_digraph)
-    monkeypatch.setattr(pimod.PermutationImportance, "_add_zeroes", fake_add_zeroes, raising=False)
 
     pi = pimod.PermutationImportance(
         models=models,
@@ -197,7 +189,6 @@ def test_permutation_importance_sklearn_flow(monkeypatch):
     graph = pi.predict(df)
     assert isinstance(graph, nx.DiGraph)
     assert pi.mean_pi_threshold >= 0.0
-    assert hasattr(pi, "_zeroed")
 
     # Plot uses computed metrics and should not crash
     fig, ax = plt.subplots(1, 1, figsize=(3, 2))
@@ -251,7 +242,7 @@ def test_compute_perm_imp_repeats(monkeypatch):
     assert mean.shape[0] == 2
 
 
-def test_permutation_importance_corr_branch_plot(monkeypatch):
+def test_permutation_importance_plot(monkeypatch):
     df = pd.DataFrame({"x": [1.0, 2.0, 3.0], "y": [1.1, 2.1, 3.1], "z": [0.5, 0.6, 0.7]})
     models = _build_simple_models(df)
     monkeypatch.setitem(pimod.plt.rcParams, "text.usetex", False)
@@ -262,8 +253,6 @@ def test_permutation_importance_corr_branch_plot(monkeypatch):
         models=models, correlation_th=0.5, n_repeats=1, prog_bar=False, verbose=True
     )
     pi._fit_sklearn(df)
-    # Ensure correlation branches set correlated_features
-    assert any(len(v) >= 0 for v in pi.correlated_features.values())
     pi.connections = {name: ["dummy"] for name in pi.feature_names}
     assert pi.plot(figsize=(2, 2)) == "stubbed"
 
@@ -273,7 +262,7 @@ def test_permutation_importance_obtain_corr_info():
     models = _build_simple_models(df)
     pi = pimod.PermutationImportance(models=models, correlation_th=0.5, prog_bar=False, verbose=False)
     pi._obtain_correlation_info(df)
-    assert pi.corr_matrix is not None
+    assert pi.corr_matrix is None
 
 
 def test_permutation_importance_no_corr_branch():
@@ -281,14 +270,6 @@ def test_permutation_importance_no_corr_branch():
     models = _build_simple_models(df)
     pi = pimod.PermutationImportance(models=models, correlation_th=None, prog_bar=False, verbose=False)
     pi.fit(df)
-
-
-def test_permutation_importance_add_zeroes_branch(monkeypatch):
-    pi = pimod.PermutationImportance(models=SimpleNamespace(regressor={"x": None, "y": None}), prog_bar=False, verbose=False)
-    pi.feature_names = ["x", "y"]
-    pi.pi = {"x": {"importances_mean": np.array([0.1]), "importances_std": np.array([0.01])}}
-    pi._add_zeroes("x", ["y"])
-    assert pi.pi["x"]["importances_mean"].shape[0] == 2
 
 
 def test_permutation_importance_pytorch_path(monkeypatch):
@@ -512,18 +493,12 @@ def test_shap_explainer_variants(monkeypatch):
         sh._run_selected_shap_explainer("t", DummyModel(), X_train, X_test)
 
 
-def test_shap_threshold_and_zero_injection():
+def test_shap_threshold_compute():
     sh = smod.ShapEstimator(models=None, prog_bar=False, verbose=False)
     sh.mean_shap_percentile = None
     sh.all_mean_shap_values = np.array([1.0, 2.0])
     sh._compute_scaled_shap_threshold()
     assert sh.mean_shap_threshold == 0.0
-
-    sh.feature_names = ["a", "b", "c"]
-    sh.all_mean_shap_values = [np.array([0.2, 0.3])]
-    sh._add_zeroes("a", ["b"])
-    assert len(sh.all_mean_shap_values[-1]) == 3
-
 
 def test_shap_verbose_debug_and_tolerance(monkeypatch):
     sh = smod.ShapEstimator(models=None, prog_bar=False, verbose=True)

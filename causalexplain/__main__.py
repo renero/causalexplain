@@ -226,15 +226,17 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
-    if args.max_shap_samples is None or args.max_shap_samples <= 0:
+    max_shap_samples = getattr(args, "max_shap_samples", None)
+    if max_shap_samples is None or max_shap_samples <= 0:
         run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
     else:
-        run_values['max_shap_samples'] = args.max_shap_samples
-    run_values['parallel_jobs'] = args.parallel_jobs
-    run_values['bootstrap_parallel_jobs'] = args.bootstrap_parallel_jobs
-    if args.cuda:
+        run_values['max_shap_samples'] = max_shap_samples
+    run_values['parallel_jobs'] = getattr(args, "parallel_jobs", 0)
+    run_values['bootstrap_parallel_jobs'] = getattr(
+        args, "bootstrap_parallel_jobs", 0)
+    if getattr(args, "cuda", False):
         requested_device = "cuda"
-    elif args.mps:
+    elif getattr(args, "mps", False):
         requested_device = "mps"
     else:
         requested_device = "cpu"
@@ -469,18 +471,19 @@ def main() -> None:
 
 
 # TODO
-# [ ] Ensure that the prior is used in all methods that support it and it works correctly
-# [ ] Get rid of the mlforge pipeline dependency in causalexplain
-# [ ] Get rid of the ProgBar dependency in causalexplain
-# [X] Fix the length of the messages printed by the tqdm progress bars
-# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
-# [X] Analyze whether to move to GPU the DNN training for ReX
 # [ ] Add options to run the 'generators' from the CLI
-# [ ] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
-# [X] Cast everything to 'float32' where possible to reduce memory consumption
-# [X] Study how to use GPU acceleration for SHAP computations
+# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
+# [ ] Add option to save the regressors' errors to a CSV file
 # [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
 # [ ] Add option to save the SHAP values to a CSV file
+# [ ] Get rid of the mlforge pipeline dependency in causalexplain
+# [ ] Get rid of the ProgBar dependency in causalexplain
+# [X] Ensure that the prior is used in all methods that support it and it works correctly
+# [X] Fix the length of the messages printed by the tqdm progress bars
+# [X] Analyze whether to move to GPU the DNN training for ReX
+# [X] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
+# [X] Cast everything to 'float32' where possible to reduce memory consumption
+# [X] Study how to use GPU acceleration for SHAP computations
 
 
 if __name__ == "__main__":
