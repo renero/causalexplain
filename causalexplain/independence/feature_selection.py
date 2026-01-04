@@ -28,7 +28,7 @@ def select_features(
         return_shaps=False,
         min_impact: float = 1e-06,
         exhaustive=False,
-        threshold: float = None,
+        threshold: float|None = None,
         verbose=False) -> List[str]:
     """
     Sort the values and select those before (strict) the point of max. curvature,
@@ -82,7 +82,7 @@ def select_features(
                 feature_names, np.abs(values))]))
         print(
             f"  Feature_order......: "
-            f"{','.join([f'{feature_names[i]}' for i in feature_order])}\n"
+            f"{','.join([f'{feature_names[i]}' for i in feature_order if i < len(feature_names)])}\n"
             f"  sorted_mean_values.: "
             f"{','.join([f'{x:.6f}' for x in sorted_shap_values])}\n"
             f"  threshold..........: {threshold:.6f}")
@@ -97,8 +97,20 @@ def select_features(
             break
 
         limit_idx = find_cluster_change_point(sorted_impact_values, verbose=verbose)
+
+        if verbose:
+            print("  Clustering iteration Details:")
+            print(
+                f"     Iteration..........: {iteration}\n"
+                f"     Limit_idx..........: {limit_idx}\n"
+                f"     feature_names......: {feature_names}\n"
+                f"     feature_order......: "
+                f"{','.join([str(i) for i in feature_order])}\n"
+                f"     Sorted_impact_vals.: "
+                f"{','.join([f'{x:.6f}' for x in sorted_impact_values])}")
+
         selected_features = list(reversed(
-            [feature_names[i] for i in feature_order[limit_idx:]]))
+            [feature_names[i] for i in feature_order[limit_idx:] if i < len(feature_names)]))
 
         if not exhaustive:
             break

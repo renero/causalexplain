@@ -478,7 +478,7 @@ def main() -> None:
 # [ ] Make a single progress bar for the entire training process, instead of one per model and stage
 # [X] Analyze whether to move to GPU the DNN training for ReX
 # [ ] Add options to run the 'generators' from the CLI
-# [ ] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
+# [X] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
 # [X] Cast everything to 'float32' where possible to reduce memory consumption
 # [X] Study how to use GPU acceleration for SHAP computations
 # [ ] Add option to save the bootstrapped adjacency matrix to a CSV file

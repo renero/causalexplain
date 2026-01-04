@@ -726,7 +726,7 @@ def correct_edge_from_prior(dag, u, v, prior, verbose):
         return 0
 
 
-def valid_candidates_from_prior(feature_names, effect, prior):
+def valid_candidates_from_prior(feature_names: list[str], effect: str, prior: list[list[str]]|None) -> list[str]:
     """
     This method returns the valid candidates for a given effect, based on the
     prior information. The prior information is a list of lists, where each list
@@ -750,11 +750,13 @@ def valid_candidates_from_prior(feature_names, effect, prior):
         return [c for c in feature_names if c != effect]
 
     # identify in what list is the effect, from the list of lists defined in prior
+    # If effect is not found in prior, return all features except effect
     idx = [i for i, sublist in enumerate(prior) if effect in sublist]
     if not idx:
-        raise ValueError(f"Effect '{effect}' not found in prior")
+        return [c for c in feature_names if c != effect]
+        #raise ValueError(f"Effect '{effect}' not found in prior")
 
-    # candidates are elements in the list ' idx' and all the lists before it
+    # candidates are elements in the list 'idx' and all the lists before it
     candidates = [item for sublist in prior[:idx[0] + 1]
                   for item in sublist]
 

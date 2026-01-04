@@ -1550,11 +1550,21 @@ class ShapEstimator(BaseEstimator):
 
         # Optionally, print verbose output
         if verbose:
-            print(f"  Feature order for '{target_name}' {feature_order_target}")
+            feature_order_str = ", ".join(
+                str(idx) for idx in feature_order_target.tolist()
+            )
+            print(f"  Feature order for '{target_name}': [{feature_order_str}]")
             print(f"  Target({target_name}) -> ", end="")
             srcs = [src for src in feature_names if src != target_name]
-            for i in range(len(shap_mean_values_target)):
-                print(f"{srcs[i]}:{shap_mean_values_target[i]:.3f};", end="")
+            shap_mean_values_display = np.asarray(shap_mean_values_target)
+            if shap_mean_values_display.ndim > 1:
+                # Reduce any extra axes so each feature prints a single scalar.
+                shap_mean_values_display = shap_mean_values_display.mean(
+                    axis=tuple(range(1, shap_mean_values_display.ndim))
+                )
+            for i in range(len(shap_mean_values_display)):
+                value = float(shap_mean_values_display[i])
+                print(f"{srcs[i]}:{value:.3f};", end="")
             print()
 
         # Return results
@@ -1778,8 +1788,8 @@ class ShapEstimator(BaseEstimator):
     def predict(
             self,
             X: pd.DataFrame,
-            root_causes: Optional[List[str]] = None,
-            prior: Optional[List[List[str]]] = None) -> nx.DiGraph:
+            root_causes: list[str]|None = None,
+            prior: list[list[str]]|None = None) -> nx.DiGraph:
         """
         Builds a causal graph from the shap values using a selection mechanism based
         on clustering, knee or abrupt methods.
@@ -1851,11 +1861,18 @@ class ShapEstimator(BaseEstimator):
             candidate_causes = utils.valid_candidates_from_prior(
                 self.feature_names, target, self.prior)
 
-            print(
-                f"Selecting features for target {target}...") if self.verbose else None
 
+            # feature_names_wo_target = [
+            #     f for f in self.feature_names if f != target]
             feature_names_wo_target = [
-                f for f in self.feature_names if f != target]
+                f for f in candidate_causes if f != target]
+
+            # Debug output
+            if self.verbose:
+                print(
+                    f"Selecting features for target {target}...")
+                print(f"  Candidate causes for target '{target}': {candidate_causes}")
+                print(f"  Feature names without target: {feature_names_wo_target}")
 
             # Select the features that are connected to the target
             self.connections[target] = select_features(

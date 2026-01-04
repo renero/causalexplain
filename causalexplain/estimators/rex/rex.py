@@ -419,7 +419,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             steps = [
                 ('shaps', ShapEstimator, {
                     'models': self.models,
-                    'parallel_jobs': self.parallel_jobs
+                    'parallel_jobs': self.parallel_jobs,
+                    'explainer': self.explainer,
+                    'prog_bar': self.prog_bar,
+                    'verbose': self.verbose
                 }),
                 ('G_final', 'bootstrap', {
                     'num_iterations': self.bootstrap_trials,
@@ -505,7 +508,7 @@ class Rex(BaseEstimator, ClassifierMixin):
                                random_state=iter * random_state)
         shaps_instance = ShapEstimator(
             models=models, explainer=explainer or "explainer",
-            parallel_jobs=0, prog_bar=False)
+            parallel_jobs=0, prog_bar=False, verbose=verbose)
         shaps_instance.fit(data_sample)
         dag = shaps_instance.predict(data_sample, prior=prior)
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
@@ -595,9 +598,9 @@ class Rex(BaseEstimator, ClassifierMixin):
             # Sequential processing
             for iter in range(num_iterations):
                 result = Rex._bootstrap_iteration(
-                    iter, X, self.models, sampling_split,
-                    self.feature_names, prior, random_state,
-                    explainer, self.verbose)
+                    iter=iter, X=X, models=self.models, sampling_split=sampling_split,
+                    feature_names=self.feature_names, prior=prior, random_state=random_state,
+                    explainer=explainer, verbose=self.verbose)
                 results.append(result)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
