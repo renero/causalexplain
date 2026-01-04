@@ -471,18 +471,19 @@ def main() -> None:
 
 
 # TODO
-# [ ] Ensure that the prior is used in all methods that support it and it works correctly
+# [ ] Add options to run the 'generators' from the CLI
+# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
+# [ ] Add option to save the regressors' errors to a CSV file
+# [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
+# [ ] Add option to save the SHAP values to a CSV file
 # [ ] Get rid of the mlforge pipeline dependency in causalexplain
 # [ ] Get rid of the ProgBar dependency in causalexplain
+# [X] Ensure that the prior is used in all methods that support it and it works correctly
 # [X] Fix the length of the messages printed by the tqdm progress bars
-# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
 # [X] Analyze whether to move to GPU the DNN training for ReX
-# [ ] Add options to run the 'generators' from the CLI
 # [X] Remove the logic for 'correlation' cases all over the codebase (it doesn't work)
 # [X] Cast everything to 'float32' where possible to reduce memory consumption
 # [X] Study how to use GPU acceleration for SHAP computations
-# [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
-# [ ] Add option to save the SHAP values to a CSV file
 
 
 if __name__ == "__main__":
