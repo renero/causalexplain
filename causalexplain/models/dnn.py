@@ -416,7 +416,32 @@ class NNRegressor(BaseEstimator):
         Returns:
             str: A formatted summary of non-callable attributes.
         """
-        return utils.pretty_print(self)
+        attrs = [
+            "hidden_dim",
+            "activation",
+            "learning_rate",
+            "dropout",
+            "batch_size",
+            "num_epochs",
+            "loss_fn",
+            "device",
+            "test_size",
+            "early_stop",
+            "patience",
+            "min_delta",
+            "correlation_th",
+            "random_state",
+            "verbose",
+            "prog_bar",
+            "silent",
+            "optuna_prog_bar",
+            "parallel_jobs",
+        ]
+        parts = []
+        for attr in attrs:
+            if hasattr(self, attr):
+                parts.append(f"{attr}={getattr(self, attr)!r}")
+        return f"{self.__class__.__name__}({', '.join(parts)})"
 
         # forbidden_attrs = [
         #     'fit', 'predict', 'score', 'get_params', 'set_params']
