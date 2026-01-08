@@ -88,3 +88,5 @@ requirements.txt_with_versions
 # Ignore all local history of files
 **/.history
 .vscode/launch.json
+.gui_uploads/*
+.nicegui/*
