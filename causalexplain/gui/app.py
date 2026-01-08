@@ -8,6 +8,9 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+import matplotlib
+matplotlib.use("Agg")
+from matplotlib import pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -97,7 +100,10 @@ def _normalize_graph(graph: nx.Graph) -> nx.DiGraph:
     cleaned = nx.DiGraph()
     for node in graph.nodes:
         cleaned.add_node(_clean_node_name(node))
-    for src, dst in graph.edges:
+    for edge in graph.edges:
+        if not isinstance(edge, (tuple, list)) or len(edge) < 2:
+            continue
+        src, dst = edge[0], edge[1]
         cleaned.add_edge(_clean_node_name(src), _clean_node_name(dst))
     if cleaned.has_node("\\n"):
         cleaned.remove_node("\\n")
@@ -128,6 +134,36 @@ def _graph_to_svg(graph: Optional[nx.Graph], title: Optional[str] = None) -> str
             "<div class='empty-panel'>Graph render failed: "
             f"{str(exc)}</div>"
         )
+
+
+def _plot_svg(
+    discoverer: GraphDiscovery,
+    title: Optional[str] = None,
+    use_reference: bool = True,
+    reference_graph: Optional[nx.Graph] = None,
+) -> str:
+    model = discoverer.model
+    original_ref = getattr(model, "ref_graph", None)
+    if reference_graph is not None:
+        model.ref_graph = reference_graph
+    elif not use_reference:
+        model.ref_graph = None
+    try:
+        fig = plt.figure(figsize=(6, 4), dpi=96)
+        ax = fig.add_subplot(1, 1, 1)
+        discoverer.plot(show_metrics=False, title=title or "", ax=ax)
+        buffer = io.BytesIO()
+        fig.tight_layout()
+        fig.savefig(buffer, format="svg", bbox_inches="tight")
+        plt.close(fig)
+        return buffer.getvalue().decode("utf-8")
+    except Exception as exc:  # pragma: no cover - best effort rendering
+        return (
+            "<div class='empty-panel'>Graph render failed: "
+            f"{str(exc)}</div>"
+        )
+    finally:
+        model.ref_graph = original_ref
 
 
 def _overlay_svg(
@@ -326,14 +362,14 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
         .content-scroll {
           flex: 1;
           overflow-y: auto;
-          padding: 16px 24px 24px 24px;
+          padding: 0 24px 24px 24px;
         }
 
         .content {
           width: 100%;
           max-width: 1280px;
           margin: 0;
-          padding: 16px 0 32px;
+          padding: 0 0 32px;
           display: flex;
           flex-direction: column;
           gap: 18px;
@@ -698,20 +734,31 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             table.rows = _metrics_rows(metrics)
                             table.update()
 
-                        def update_dag_view(html_el: Any, graph: Optional[nx.Graph]) -> None:
+                        def update_dag_view(
+                            html_el: Any,
+                            graph: Optional[nx.Graph],
+                            svg: Optional[str] = None,
+                        ) -> None:
                             if html_el is None:
                                 return
-                            html_el.content = _graph_to_svg(graph)
+                            if svg:
+                                html_el.content = svg
+                            else:
+                                html_el.content = _graph_to_svg(graph)
                             html_el.update()
 
                         def update_overlay_view(
                             html_el: Any,
                             pred_graph: Optional[nx.Graph],
                             ref_graph: Optional[nx.Graph],
+                            svg: Optional[str] = None,
                         ) -> None:
                             if html_el is None:
                                 return
-                            html_el.content = _overlay_svg(pred_graph, ref_graph)
+                            if svg:
+                                html_el.content = svg
+                            else:
+                                html_el.content = _overlay_svg(pred_graph, ref_graph)
                             html_el.update()
 
                         async def run_training() -> None:
@@ -781,6 +828,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                             ),
                                             "bootstrap_sampling_split": split,
                                         }
+                                    start_time = time.time()
                                     discoverer.run(
                                         hpo_iterations=int(settings["hpo_iterations"]),
                                         bootstrap_iterations=int(
@@ -793,9 +841,31 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         combine_op=settings.get("combine_op", "union"),
                                         **extra_kwargs,
                                     )
+                                    elapsed_seconds = time.time() - start_time
+                                    ref_graph = None
+                                    if true_dag_path:
+                                        ref_graph = _graph_from_dot(true_dag_path)
+                                    discoverer.ref_graph = ref_graph
+                                    discoverer.model.ref_graph = ref_graph
+                                    num_variables = 0
+                                    if discoverer.data_columns:
+                                        num_variables = len(discoverer.data_columns)
                                     output["dag"] = discoverer.dag
+                                    output["dag_plot_svg"] = _plot_svg(
+                                        discoverer, use_reference=False
+                                    )
+                                    output["overlay_plot_svg"] = None
+                                    if ref_graph is not None:
+                                        output["overlay_plot_svg"] = _plot_svg(
+                                            discoverer,
+                                            title="Overlay vs True DAG",
+                                            use_reference=True,
+                                            reference_graph=ref_graph,
+                                        )
                                     output["metrics"] = discoverer.metrics
-                                    output["ref_graph"] = discoverer.ref_graph
+                                    output["ref_graph"] = ref_graph
+                                    output["elapsed_seconds"] = elapsed_seconds
+                                    output["num_variables"] = num_variables
                                     output["dataset_name"] = dataset_name
                                     output["method"] = settings["method"]
                                     model_path = settings.get("save_model_path") or ""
@@ -817,7 +887,10 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             if cancel_button is not None:
                                 cancel_button.enable()
                             if train_log is not None:
+                                train_log.clear()
                                 train_log.push("Starting training...")
+                            if train_overlay_html is not None:
+                                update_overlay_view(train_overlay_html, None, None, "")
                             if train_progress is not None:
                                 train_progress.props("indeterminate")
                                 train_progress.update()
@@ -859,13 +932,33 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     for line in log_text.splitlines():
                                         train_log.push(line)
                             dag = result.get("dag")
+                            overlay_plot_svg = result.get("overlay_plot_svg")
                             metrics = result.get("metrics")
                             ref_graph = result.get("ref_graph")
-                            update_metrics_table(train_metrics_table, metrics)
-                            update_dag_view(train_dag_html, dag)
-                            update_overlay_view(train_overlay_html, dag, ref_graph)
+                            update_overlay_view(
+                                train_overlay_html,
+                                dag,
+                                ref_graph,
+                                overlay_plot_svg,
+                            )
                             if train_log is not None:
-                                train_log.push("Training completed.")
+                                num_variables = int(result.get("num_variables") or 0)
+                                elapsed_seconds = float(
+                                    result.get("elapsed_seconds") or 0.0
+                                )
+                                elapsed_minutes = elapsed_seconds / 60.0
+                                train_log.push(
+                                    "Training completed for "
+                                    f"{num_variables} variables, in "
+                                    f"{elapsed_minutes:.2f} minutes."
+                                )
+                                if metrics is not None:
+                                    train_log.push("")
+                                    metrics_buffer = io.StringIO()
+                                    with contextlib.redirect_stdout(metrics_buffer):
+                                        print(metrics)
+                                    for line in metrics_buffer.getvalue().splitlines():
+                                        train_log.push(line)
 
                         def start_training_task() -> None:
                             if train_state.get("task") and not train_state["task"].done():
@@ -902,8 +995,22 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     metrics = evaluate_graph(
                                         ref_graph, dag, data_cols
                                     )
+                                discoverer.ref_graph = ref_graph
+                                discoverer.model.ref_graph = ref_graph
+                                overlay_plot_svg = None
+                                if ref_graph is not None:
+                                    overlay_plot_svg = _plot_svg(
+                                        discoverer,
+                                        title="Overlay vs True DAG",
+                                        use_reference=True,
+                                        reference_graph=ref_graph,
+                                    )
                                 return {
                                     "dag": dag,
+                                    "dag_plot_svg": _plot_svg(
+                                        discoverer, use_reference=False
+                                    ),
+                                    "overlay_plot_svg": overlay_plot_svg,
                                     "metrics": metrics,
                                     "ref_graph": ref_graph,
                                     "model_name": os.path.basename(model_path),
@@ -918,11 +1025,16 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                 return
 
                             update_metrics_table(load_metrics_table, result.get("metrics"))
-                            update_dag_view(load_dag_html, result.get("dag"))
+                            update_dag_view(
+                                load_dag_html,
+                                result.get("dag"),
+                                result.get("dag_plot_svg"),
+                            )
                             update_overlay_view(
                                 load_overlay_html,
                                 result.get("dag"),
                                 result.get("ref_graph"),
+                                result.get("overlay_plot_svg"),
                             )
 
                         async def run_generate() -> None:
@@ -985,9 +1097,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         "section-card span-full"
                                     ):
                                         ui.label("Inputs + Prior").classes("section-title")
-                                        ui.label(
-                                            "Provide the dataset, true DAG, and prior."
-                                        ).classes("subtle")
+                                        # ui.label(
+                                        #     "Provide the dataset, true DAG, and prior."
+                                        # ).classes("subtle")
 
                                         with ui.element("div").classes("file-row"):
                                             ui.label("Dataset CSV").classes("file-label")
@@ -1381,34 +1493,13 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                             )
 
                                     with ui.element("div").classes("section-card"):
-                                        ui.label("Results").classes("section-title")
-                                        train_metrics_table = ui.table(
-                                            columns=[
-                                                {
-                                                    "name": "metric",
-                                                    "label": "Metric",
-                                                    "field": "metric",
-                                                },
-                                                {
-                                                    "name": "value",
-                                                    "label": "Value",
-                                                    "field": "value",
-                                                },
-                                            ],
-                                            rows=[],
-                                            row_key="metric",
-                                        ).classes("w-full")
-                                        update_metrics_table(train_metrics_table, None)
-                                        ui.label("Predicted DAG").classes("subtle")
-                                        train_dag_html = ui.html(
-                                            "", sanitize=False
-                                        ).classes("dag-frame")
-                                        update_dag_view(train_dag_html, None)
                                         ui.label("Overlay vs True DAG").classes("subtle")
                                         train_overlay_html = ui.html(
                                             "", sanitize=False
                                         ).classes("dag-frame")
-                                        update_overlay_view(train_overlay_html, None, None)
+                                        update_overlay_view(
+                                            train_overlay_html, None, None, ""
+                                        )
 
                                     with ui.element("div").classes("section-card"):
                                         ui.label("Outputs").classes("section-title")
