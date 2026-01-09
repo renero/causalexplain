@@ -308,11 +308,13 @@ def _cytoscape_init_script(
     spec: Dict[str, Any],
     position_endpoint: Optional[str],
     click_endpoint: Optional[str],
+    edge_click_endpoint: Optional[str],
 ) -> str:
     payload = json.dumps(spec)
     container_id_json = json.dumps(container_id)
     position_endpoint_json = json.dumps(position_endpoint or "")
     click_endpoint_json = json.dumps(click_endpoint or "")
+    edge_click_endpoint_json = json.dumps(edge_click_endpoint or "")
     return f"""
     (() => {{
       const container = document.getElementById({container_id_json});
@@ -376,6 +378,20 @@ def _cytoscape_init_script(
               method: "POST",
               headers: {{ "Content-Type": "application/json" }},
               body: JSON.stringify({{ node_id: evt.target.id() }})
+            }});
+          }});
+        }}
+        const edgeClickEndpoint = {edge_click_endpoint_json};
+        if ({str(bool(edge_click_endpoint)).lower()}) {{
+          cy.on("tap", "edge", (evt) => {{
+            const classes = evt.target.classes();
+            fetch(edgeClickEndpoint, {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{
+                edge_id: evt.target.id(),
+                classes: classes,
+              }})
             }});
           }});
         }}
@@ -1322,6 +1338,7 @@ class GraphDiscovery:
         height: str = "500px",
         persist_positions: bool = True,
         on_node_click: Optional[Callable[[str], None]] = None,
+        on_edge_click: Optional[Callable[[str, List[str]], None]] = None,
         root_causes: Optional[List[str]] = None,
         **kwargs: Any
     ) -> Dict[str, Dict[str, float]]:
@@ -1344,6 +1361,7 @@ class GraphDiscovery:
             height (str, optional): CSS height of the graph container.
             persist_positions (bool, optional): Persist node positions on drag.
             on_node_click (Callable, optional): Callback receiving the node id.
+            on_edge_click (Callable, optional): Callback receiving edge id and classes.
             root_causes (Optional[List[str]]): Nodes to emphasize with a thicker border.
             **kwargs: Reserved for future styling options.
 
@@ -1383,6 +1401,7 @@ class GraphDiscovery:
 
         position_endpoint = None
         click_endpoint = None
+        edge_click_endpoint = None
 
         if persist_positions:
             position_endpoint = f"/_cytoscape/{graph_id}/positions"
@@ -1424,13 +1443,33 @@ class GraphDiscovery:
                 )
                 _CY_REGISTERED_ROUTES.add(click_endpoint)
 
+        if on_edge_click is not None:
+            edge_click_endpoint = f"/_cytoscape/{graph_id}/edge"
+
+            async def _handle_edge_click(payload: Dict[str, Any]) -> Dict[str, str]:
+                edge_id = payload.get("edge_id")
+                classes = payload.get("classes")
+                if edge_id is not None:
+                    if isinstance(classes, list):
+                        class_list = [str(item) for item in classes]
+                    else:
+                        class_list = []
+                    on_edge_click(str(edge_id), class_list)
+                return {"status": "ok"}
+
+            if edge_click_endpoint not in _CY_REGISTERED_ROUTES:
+                app.add_api_route(
+                    edge_click_endpoint, _handle_edge_click, methods=["POST"]
+                )
+                _CY_REGISTERED_ROUTES.add(edge_click_endpoint)
+
         container_id = f"cytoscape-{graph_id}"
         container_html = (
             f'<div id="{container_id}" '
             f'style="width: {width}; height: {height};"></div>'
         )
         script = _cytoscape_init_script(
-            container_id, spec, position_endpoint, click_endpoint
+            container_id, spec, position_endpoint, click_endpoint, edge_click_endpoint
         )
 
         if ui_parent is None or ui_parent is ui:

@@ -714,6 +714,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                         train_metrics_table = None
                         train_dag_html = None
                         train_overlay_container = None
+                        train_overlay_status = None
                         train_log = None
                         train_progress = None
                         run_button = None
@@ -883,6 +884,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                 train_log.push("Starting training...")
                             if train_overlay_container is not None:
                                 train_overlay_container.clear()
+                                if train_overlay_status is not None:
+                                    train_overlay_status.text = ""
+                                    train_overlay_status.update()
                             if train_progress is not None:
                                 train_progress.props("indeterminate")
                                 train_progress.update()
@@ -930,6 +934,21 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             if train_overlay_container is not None:
                                 train_overlay_container.clear()
                                 if discoverer is not None:
+                                    def handle_edge_click(edge_id: str, classes: List[str]) -> None:
+                                        if train_overlay_status is None:
+                                            return
+                                        message = "Edge selected"
+                                        if "edge_true" in classes:
+                                            message = "Correctly predicted edge"
+                                        elif "edge_false_positive" in classes:
+                                            message = "Incorrect prediction"
+                                        elif "edge_reversed" in classes:
+                                            message = "Predicted edge, but direction is reversed"
+                                        elif "edge_false_negative" in classes:
+                                            message = "Edge is missing from the predictions"
+                                        train_overlay_status.text = message
+                                        train_overlay_status.update()
+
                                     try:
                                         discoverer.plot_interactive(
                                             train_overlay_container,
@@ -939,6 +958,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                             width="100%",
                                             height="420px",
                                             persist_positions=True,
+                                            on_edge_click=handle_edge_click,
                                         )
                                     except Exception as exc:
                                         overlay_error = exc
@@ -1502,6 +1522,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         train_overlay_container = ui.element(
                                             "div"
                                         ).classes("dag-frame")
+                                        train_overlay_status = ui.label("").classes("subtle")
 
                                     with ui.element("div").classes("section-card"):
                                         ui.label("Outputs").classes("section-title")
