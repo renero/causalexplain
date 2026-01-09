@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import pydot
 
-from causalexplain.causalexplainer import GraphDiscovery
+from causalexplain.causalexplainer import GraphDiscovery, ensure_cytoscape_assets
 from causalexplain.generators.generators import AcyclicGraphGenerator
 from causalexplain.common import (
     DEFAULT_BOOTSTRAP_TOLERANCE,
@@ -546,6 +546,8 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
         shared=True,
     )
 
+    ensure_cytoscape_assets()
+
     @ui.page("/")
     def main_page() -> None:
         storage = app.storage.user
@@ -711,7 +713,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
 
                         train_metrics_table = None
                         train_dag_html = None
-                        train_overlay_html = None
+                        train_overlay_container = None
                         train_log = None
                         train_progress = None
                         run_button = None
@@ -851,17 +853,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     if discoverer.data_columns:
                                         num_variables = len(discoverer.data_columns)
                                     output["dag"] = discoverer.dag
-                                    output["dag_plot_svg"] = _plot_svg(
-                                        discoverer, use_reference=False
-                                    )
-                                    output["overlay_plot_svg"] = None
-                                    if ref_graph is not None:
-                                        output["overlay_plot_svg"] = _plot_svg(
-                                            discoverer,
-                                            title="Overlay vs True DAG",
-                                            use_reference=True,
-                                            reference_graph=ref_graph,
-                                        )
+                                    output["discoverer"] = discoverer
                                     output["metrics"] = discoverer.metrics
                                     output["ref_graph"] = ref_graph
                                     output["elapsed_seconds"] = elapsed_seconds
@@ -889,8 +881,8 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             if train_log is not None:
                                 train_log.clear()
                                 train_log.push("Starting training...")
-                            if train_overlay_html is not None:
-                                update_overlay_view(train_overlay_html, None, None, "")
+                            if train_overlay_container is not None:
+                                train_overlay_container.clear()
                             if train_progress is not None:
                                 train_progress.props("indeterminate")
                                 train_progress.update()
@@ -931,16 +923,25 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                 if log_text:
                                     for line in log_text.splitlines():
                                         train_log.push(line)
-                            dag = result.get("dag")
-                            overlay_plot_svg = result.get("overlay_plot_svg")
+                            discoverer = result.get("discoverer")
                             metrics = result.get("metrics")
                             ref_graph = result.get("ref_graph")
-                            update_overlay_view(
-                                train_overlay_html,
-                                dag,
-                                ref_graph,
-                                overlay_plot_svg,
-                            )
+                            overlay_error = None
+                            if train_overlay_container is not None:
+                                train_overlay_container.clear()
+                                if discoverer is not None:
+                                    try:
+                                        discoverer.plot_interactive(
+                                            train_overlay_container,
+                                            title=None,
+                                            layout="dagre",
+                                            rank_dir="TB",
+                                            width="100%",
+                                            height="420px",
+                                            persist_positions=True,
+                                        )
+                                    except Exception as exc:
+                                        overlay_error = exc
                             if train_log is not None:
                                 num_variables = int(result.get("num_variables") or 0)
                                 elapsed_seconds = float(
@@ -952,8 +953,12 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     f"{num_variables} variables, in "
                                     f"{elapsed_minutes:.2f} minutes."
                                 )
+                                if overlay_error is not None:
+                                    train_log.push(
+                                        f"Overlay render failed: {str(overlay_error)}"
+                                    )
                                 if metrics is not None:
-                                    train_log.push("")
+                                    train_log.push("\n\nEvaluation Metrics:")
                                     metrics_buffer = io.StringIO()
                                     with contextlib.redirect_stdout(metrics_buffer):
                                         print(metrics)
@@ -1494,12 +1499,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
 
                                     with ui.element("div").classes("section-card"):
                                         ui.label("Overlay vs True DAG").classes("subtle")
-                                        train_overlay_html = ui.html(
-                                            "", sanitize=False
+                                        train_overlay_container = ui.element(
+                                            "div"
                                         ).classes("dag-frame")
-                                        update_overlay_view(
-                                            train_overlay_html, None, None, ""
-                                        )
 
                                     with ui.element("div").classes("section-card"):
                                         ui.label("Outputs").classes("section-title")
