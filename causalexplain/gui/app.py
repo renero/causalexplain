@@ -16,7 +16,8 @@ import numpy as np
 import pandas as pd
 import pydot
 
-from causalexplain.causalexplainer import GraphDiscovery, ensure_cytoscape_assets
+from causalexplain.causalexplainer import GraphDiscovery
+from causalexplain.gui.cytoscape import ensure_cytoscape_assets
 from causalexplain.generators.generators import AcyclicGraphGenerator
 from causalexplain.common import (
     DEFAULT_BOOTSTRAP_TOLERANCE,
@@ -399,6 +400,12 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
         .field-row {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+          gap: 10px;
+        }
+
+        .pair-row {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
           gap: 10px;
         }
 
@@ -894,16 +901,6 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     output["num_variables"] = num_variables
                                     output["dataset_name"] = dataset_name
                                     output["method"] = settings["method"]
-                                    model_path = settings.get("save_model_path") or ""
-                                    if model_path:
-                                        ensure_output_dir(model_path)
-                                        discoverer.save_model(model_path)
-                                        output["model_path"] = model_path
-                                    dag_path = settings.get("output_dag_path") or ""
-                                    if dag_path:
-                                        ensure_output_dir(dag_path)
-                                        utils.graph_to_dot_file(discoverer.dag, dag_path)
-                                        output["dag_path"] = dag_path
                                 output["log"] = buffer.getvalue()
                                 return output
 
@@ -1327,19 +1324,6 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                                     "seed", DEFAULT_SEED
                                                 ),
                                             ).props("dense")
-                                            hpo_input = ui.number(
-                                                "HPO iterations",
-                                                value=train_settings.get(
-                                                    "hpo_iterations", DEFAULT_HPO_TRIALS
-                                                ),
-                                            ).props("dense")
-                                            bootstrap_input = ui.number(
-                                                "Bootstrap iterations",
-                                                value=train_settings.get(
-                                                    "bootstrap_iterations",
-                                                    DEFAULT_BOOTSTRAP_TRIALS,
-                                                ),
-                                            ).props("dense")
                                             tolerance_input = ui.number(
                                                 "Bootstrap tolerance",
                                                 value=train_settings.get(
@@ -1354,6 +1338,20 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                                 ),
                                                 label="Combine DAGs",
                                             )
+                                        with ui.element("div").classes("pair-row w-full"):
+                                            hpo_input = ui.number(
+                                                "HPO iterations",
+                                                value=train_settings.get(
+                                                    "hpo_iterations", DEFAULT_HPO_TRIALS
+                                                ),
+                                            ).props("dense").classes("w-full")
+                                            bootstrap_input = ui.number(
+                                                "Bootstrap iterations",
+                                                value=train_settings.get(
+                                                    "bootstrap_iterations",
+                                                    DEFAULT_BOOTSTRAP_TRIALS,
+                                                ),
+                                            ).props("dense").classes("w-full")
 
                                         bind_setting(
                                             method_select,
@@ -1407,9 +1405,10 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         ).props("instant-feedback")
                                         train_log = ui.log(max_lines=200).classes("w-full")
 
-                                    rex_section = ui.element("div").classes("section-card")
+                                    rex_section = ui.expansion(
+                                        "ReX Options", value=False
+                                    ).classes("section-card")
                                     with rex_section:
-                                        ui.label("ReX Options").classes("section-title")
                                         with ui.element("div").classes("field-row"):
                                             device_select = ui.select(
                                                 ["cpu", "cuda", "mps"],
@@ -1869,6 +1868,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                 def update_rex_visibility() -> None:
                     is_rex = train_settings.get("method") == "rex"
                     rex_section.visible = is_rex
+                    if is_rex:
+                        rex_section.value = False
+                    rex_section.update()
 
                 update_rex_visibility()
                 method_select.on("change", lambda _: update_rex_visibility())
