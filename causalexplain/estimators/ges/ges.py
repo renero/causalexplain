@@ -315,7 +315,7 @@ class GES(object):
         A0 = np.zeros((score_class.p, score_class.p)) if A0 is None else A0
         # GES procedure
         total_score = 0
-        A, score_change = A0, np.Inf
+        A, score_change = A0, np.inf
         # Run each phase
         while True:
             last_total_score = total_score

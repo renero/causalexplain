@@ -3,7 +3,7 @@
 (C) Original Code from R implementation of the Causal Additive Model (CAM)
 
 @article{buhlmann2014cam,
-  title={CAM: Causal additive models, high-dimensional order search and 
+  title={CAM: Causal additive models, high-dimensional order search and
           penalized regression},
   author={B{\"u}hlmann, Peter and Peters, Jonas and Ernest, Jan},
   journal={The Annals of Statistics},
@@ -19,16 +19,16 @@
 are defined in separate Python files in the same directory.
 - **Function Definition**: Translated the R function `CAM` to Python.
 - **Variable Initialization**: Initialized variables and handled default values.
-- **Variable Selection**: Used `numpy` and `multiprocessing` for parallel 
+- **Variable Selection**: Used `numpy` and `multiprocessing` for parallel
     processing.
 - **Edge Inclusion**: Translated the logic for including edges and updating the
 score matrix.
 - **Pruning**: Translated the pruning step.
 - **Output and Return**: Collected and printed the results.
 
-Make sure the corresponding Python files (`computeScoreMat.py`, 
+Make sure the corresponding Python files (`computeScoreMat.py`,
     `updateScoreMat.py`,
-`pruning.py`, `selGamBoost.py`, `selGam.py`) are present in the same directory 
+`pruning.py`, `selGamBoost.py`, `selGam.py`) are present in the same directory
 and contain the necessary functions.
 """
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init
@@ -199,7 +199,7 @@ class CAM:
                             f"{computeScoreMatTmp['scoreMat'][i, j]:+.4f} ", end="")
                 print("")
 
-            print("Pre-WHILE condition: ", np.sum(computeScoreMatTmp['scoreMat'] != -np.Inf))
+            print("Pre-WHILE condition: ", np.sum(computeScoreMatTmp['scoreMat'] != -np.inf))
 
         while np.sum(computeScoreMatTmp['scoreMat'] != -np.inf) > 0:
             start_time = time.time()

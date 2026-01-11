@@ -433,6 +433,13 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
           align-items: center;
         }
 
+        .output-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) 140px;
+          gap: 10px;
+          align-items: center;
+        }
+
         .file-label {
           font-size: 12px;
           color: var(--text-secondary);
@@ -497,6 +504,10 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
           }
 
           .file-row {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .output-row {
             grid-template-columns: minmax(0, 1fr);
           }
         }
@@ -649,6 +660,26 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
             if output_dir and not os.path.exists(output_dir):
                 os.makedirs(output_dir, exist_ok=True)
 
+        def normalize_output_path(
+            input_el: Any,
+            settings_key: str,
+            settings_ref: Dict[str, Any],
+            field: str,
+            required_ext: str,
+        ) -> Optional[str]:
+            raw = (getattr(input_el, "value", "") or "").strip()
+            if not raw:
+                return None
+            _, ext = os.path.splitext(raw)
+            if not ext:
+                normalized = f"{raw}{required_ext}"
+                set_input_value(input_el, normalized)
+                update_settings(settings_key, settings_ref, field, normalized)
+                return normalized
+            if ext.lower() != required_ext:
+                return ""
+            return raw
+
         with ui.element("div").classes("app-root"):
             with ui.element("div").classes("sidebar material"):
                 ui.label("CausalExplain").classes("sidebar-header")
@@ -729,6 +760,8 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                         train_state: Dict[str, Any] = {
                             "task": None,
                             "running": False,
+                            "discoverer": None,
+                            "dag": None,
                         }
 
                         def update_metrics_table(table: Any, metrics: Any) -> None:
@@ -928,6 +961,8 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     for line in log_text.splitlines():
                                         train_log.push(line)
                             discoverer = result.get("discoverer")
+                            train_state["discoverer"] = discoverer
+                            train_state["dag"] = result.get("dag")
                             metrics = result.get("metrics")
                             ref_graph = result.get("ref_graph")
                             overlay_error = None
@@ -996,6 +1031,72 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                 task.cancel()
                                 if train_log is not None:
                                     train_log.push("Cancel requested.")
+
+                        async def save_trained_model() -> None:
+                            model_path = normalize_output_path(
+                                model_output_input,
+                                "train_settings",
+                                train_settings,
+                                "save_model_path",
+                                ".pickle",
+                            )
+                            if model_path is None:
+                                ui.notify("Model pickle path is required.", type="warning")
+                                return
+                            if not model_path:
+                                ui.notify(
+                                    "Expected a .pickle file path.",
+                                    type="negative",
+                                )
+                                return
+                            discoverer = train_state.get("discoverer")
+                            if discoverer is None:
+                                ui.notify("Train a model before saving.", type="warning")
+                                return
+
+                            def _save() -> None:
+                                ensure_output_dir(model_path)
+                                discoverer.save_model(model_path)
+
+                            try:
+                                await run.io_bound(_save)
+                            except Exception as exc:
+                                ui.notify(f"Save failed: {str(exc)}", type="negative")
+                                return
+                            ui.notify(f"Saved model to {model_path}", type="positive")
+
+                        async def save_trained_dag() -> None:
+                            dag_path = normalize_output_path(
+                                dag_output_input,
+                                "train_settings",
+                                train_settings,
+                                "output_dag_path",
+                                ".dot",
+                            )
+                            if dag_path is None:
+                                ui.notify("Output DAG path is required.", type="warning")
+                                return
+                            if not dag_path:
+                                ui.notify(
+                                    "Expected a .dot file path.",
+                                    type="negative",
+                                )
+                                return
+                            dag = train_state.get("dag")
+                            if dag is None:
+                                ui.notify("Train a model before saving.", type="warning")
+                                return
+
+                            def _save() -> None:
+                                ensure_output_dir(dag_path)
+                                utils.graph_to_dot_file(dag, dag_path)
+
+                            try:
+                                await run.io_bound(_save)
+                            except Exception as exc:
+                                ui.notify(f"Save failed: {str(exc)}", type="negative")
+                                return
+                            ui.notify(f"Saved DAG to {dag_path}", type="positive")
 
                         async def run_load() -> None:
 
@@ -1517,28 +1618,41 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                                 "bootstrap_sampling_split",
                                             )
 
-                                    with ui.element("div").classes("section-card"):
+                                    with ui.element("div").classes(
+                                        "section-card span-full"
+                                    ):
                                         ui.label("Overlay vs True DAG").classes("subtle")
                                         train_overlay_container = ui.element(
                                             "div"
                                         ).classes("dag-frame")
                                         train_overlay_status = ui.label("").classes("subtle")
 
-                                    with ui.element("div").classes("section-card"):
+                                    with ui.element("div").classes(
+                                        "section-card span-full"
+                                    ):
                                         ui.label("Outputs").classes("section-title")
-                                        with ui.element("div").classes("field-row"):
+                                        with ui.element("div").classes("output-row"):
                                             model_output_input = ui.input(
                                                 "Model pickle path",
                                                 value=train_settings.get(
                                                     "save_model_path", ""
                                                 ),
-                                            ).props("dense")
+                                            ).props("dense").classes("w-full")
+                                            ui.button(
+                                                "Save model",
+                                                on_click=save_trained_model,
+                                            ).classes("mini-button")
+                                        with ui.element("div").classes("output-row"):
                                             dag_output_input = ui.input(
                                                 "Output DAG (.dot) path",
                                                 value=train_settings.get(
                                                     "output_dag_path", ""
                                                 ),
-                                            ).props("dense")
+                                            ).props("dense").classes("w-full")
+                                            ui.button(
+                                                "Save DAG",
+                                                on_click=save_trained_dag,
+                                            ).classes("mini-button")
 
                                         bind_setting(
                                             model_output_input,

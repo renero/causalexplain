@@ -90,3 +90,4 @@ requirements.txt_with_versions
 .vscode/launch.json
 .gui_uploads/*
 .nicegui/*
+*.dot
