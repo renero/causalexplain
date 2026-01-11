@@ -416,6 +416,13 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
           align-items: stretch;
         }
 
+        .load-grid {
+          display: grid;
+          grid-template-columns: minmax(240px, 40%) minmax(0, 1fr);
+          gap: 16px;
+          align-items: start;
+        }
+
         .span-full {
           grid-column: 1 / -1;
         }
@@ -517,6 +524,10 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
           .output-row {
             grid-template-columns: minmax(0, 1fr);
           }
+
+          .load-grid {
+            grid-template-columns: minmax(0, 1fr);
+          }
         }
 
         .action-row {
@@ -557,6 +568,12 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
 
         .nicegui-log {
           background: var(--surface);
+        }
+
+        .train-log {
+          min-height: 140px;
+          max-height: 220px;
+          overflow-y: auto;
         }
 
         </style>
@@ -757,9 +774,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                         train_progress = None
                         run_button = None
                         cancel_button = None
-                        load_metrics_table = None
-                        load_dag_html = None
-                        load_overlay_html = None
+                        load_metrics_log = None
+                        load_overlay_container = None
+                        load_overlay_status = None
                         generate_preview_table = None
                         generate_dag_html = None
                         generate_log = None
@@ -771,11 +788,22 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             "dag": None,
                         }
 
-                        def update_metrics_table(table: Any, metrics: Any) -> None:
-                            if table is None:
+                        def update_metrics_log(log_el: Any, metrics: Any) -> None:
+                            if log_el is None:
                                 return
-                            table.rows = _metrics_rows(metrics)
-                            table.update()
+                            log_el.clear()
+                            if metrics is None:
+                                log_el.push("No metrics available.")
+                                return
+                            buffer = io.StringIO()
+                            with contextlib.redirect_stdout(buffer):
+                                print(metrics)
+                            output = buffer.getvalue().strip()
+                            if not output:
+                                log_el.push("No metrics available.")
+                                return
+                            for line in output.splitlines():
+                                log_el.push(line)
 
                         def update_dag_view(
                             html_el: Any,
@@ -803,6 +831,69 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             else:
                                 html_el.content = _overlay_svg(pred_graph, ref_graph)
                             html_el.update()
+
+                        def overlay_status_message(classes: List[str]) -> str:
+                            message = "Edge selected"
+                            if "edge_true" in classes:
+                                message = "Correctly predicted edge"
+                            elif "edge_false_positive" in classes:
+                                message = "Incorrect prediction"
+                            elif "edge_reversed" in classes:
+                                message = "Predicted edge, but direction is reversed"
+                            elif "edge_false_negative" in classes:
+                                message = "Edge is missing from the predictions"
+                            return message
+
+                        def render_cytoscape_overlay(
+                            container: Any,
+                            status_label: Optional[Any],
+                            discoverer: Optional[GraphDiscovery],
+                            ref_graph: Optional[nx.Graph],
+                            *,
+                            persist_positions: bool,
+                            height: str = "420px",
+                        ) -> Optional[Exception]:
+                            if container is None:
+                                return None
+                            container.clear()
+                            if status_label is not None:
+                                status_label.text = ""
+                                status_label.update()
+                            if discoverer is None:
+                                with container:
+                                    ui.label("No graph available.").classes("empty-panel")
+                                return None
+
+                            original_ref = discoverer.model.ref_graph
+
+                            def handle_edge_click(edge_id: str, classes: List[str]) -> None:
+                                _ = edge_id
+                                if status_label is None:
+                                    return
+                                status_label.text = overlay_status_message(classes)
+                                status_label.update()
+
+                            try:
+                                discoverer.model.ref_graph = ref_graph
+                                discoverer.plot_interactive(
+                                    container,
+                                    title=None,
+                                    layout="dagre",
+                                    rank_dir="TB",
+                                    width="100%",
+                                    height=height,
+                                    persist_positions=persist_positions,
+                                    on_edge_click=handle_edge_click,
+                                )
+                            except Exception as exc:
+                                with container:
+                                    ui.label(
+                                        f"Overlay render failed: {str(exc)}"
+                                    ).classes("empty-panel")
+                                return exc
+                            finally:
+                                discoverer.model.ref_graph = original_ref
+                            return None
 
                         async def run_training() -> None:
                             if train_state["running"]:
@@ -962,38 +1053,13 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             train_state["dag"] = result.get("dag")
                             metrics = result.get("metrics")
                             ref_graph = result.get("ref_graph")
-                            overlay_error = None
-                            if train_overlay_container is not None:
-                                train_overlay_container.clear()
-                                if discoverer is not None:
-                                    def handle_edge_click(edge_id: str, classes: List[str]) -> None:
-                                        if train_overlay_status is None:
-                                            return
-                                        message = "Edge selected"
-                                        if "edge_true" in classes:
-                                            message = "Correctly predicted edge"
-                                        elif "edge_false_positive" in classes:
-                                            message = "Incorrect prediction"
-                                        elif "edge_reversed" in classes:
-                                            message = "Predicted edge, but direction is reversed"
-                                        elif "edge_false_negative" in classes:
-                                            message = "Edge is missing from the predictions"
-                                        train_overlay_status.text = message
-                                        train_overlay_status.update()
-
-                                    try:
-                                        discoverer.plot_interactive(
-                                            train_overlay_container,
-                                            title=None,
-                                            layout="dagre",
-                                            rank_dir="TB",
-                                            width="100%",
-                                            height="420px",
-                                            persist_positions=True,
-                                            on_edge_click=handle_edge_click,
-                                        )
-                                    except Exception as exc:
-                                        overlay_error = exc
+                            overlay_error = render_cytoscape_overlay(
+                                train_overlay_container,
+                                train_overlay_status,
+                                discoverer,
+                                ref_graph,
+                                persist_positions=True,
+                            )
                             if train_log is not None:
                                 num_variables = int(result.get("num_variables") or 0)
                                 elapsed_seconds = float(
@@ -1120,23 +1186,12 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     )
                                 discoverer.ref_graph = ref_graph
                                 discoverer.model.ref_graph = ref_graph
-                                overlay_plot_svg = None
-                                if ref_graph is not None:
-                                    overlay_plot_svg = _plot_svg(
-                                        discoverer,
-                                        title="Overlay vs True DAG",
-                                        use_reference=True,
-                                        reference_graph=ref_graph,
-                                    )
                                 return {
                                     "dag": dag,
-                                    "dag_plot_svg": _plot_svg(
-                                        discoverer, use_reference=False
-                                    ),
-                                    "overlay_plot_svg": overlay_plot_svg,
                                     "metrics": metrics,
                                     "ref_graph": ref_graph,
                                     "model_name": os.path.basename(model_path),
+                                    "discoverer": discoverer,
                                 }
 
                             try:
@@ -1147,17 +1202,18 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                 ui.notify(str(exc), type="negative")
                                 return
 
-                            update_metrics_table(load_metrics_table, result.get("metrics"))
-                            update_dag_view(
-                                load_dag_html,
-                                result.get("dag"),
-                                result.get("dag_plot_svg"),
+                            update_metrics_log(
+                                load_metrics_log, result.get("metrics")
                             )
-                            update_overlay_view(
-                                load_overlay_html,
-                                result.get("dag"),
-                                result.get("ref_graph"),
-                                result.get("overlay_plot_svg"),
+
+                            discoverer = result.get("discoverer")
+                            ref_graph = result.get("ref_graph")
+                            render_cytoscape_overlay(
+                                load_overlay_container,
+                                load_overlay_status,
+                                discoverer,
+                                ref_graph,
+                                persist_positions=False,
                             )
 
                         async def run_generate() -> None:
@@ -1318,19 +1374,6 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                                 ),
                                                 label="Method",
                                             )
-                                            seed_input = ui.number(
-                                                "Seed",
-                                                value=train_settings.get(
-                                                    "seed", DEFAULT_SEED
-                                                ),
-                                            ).props("dense")
-                                            tolerance_input = ui.number(
-                                                "Bootstrap tolerance",
-                                                value=train_settings.get(
-                                                    "bootstrap_tolerance",
-                                                    DEFAULT_BOOTSTRAP_TOLERANCE,
-                                                ),
-                                            ).props("dense")
                                             combine_select = ui.select(
                                                 ["union", "intersection"],
                                                 value=train_settings.get(
@@ -1338,6 +1381,20 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                                 ),
                                                 label="Combine DAGs",
                                             )
+                                        with ui.element("div").classes("pair-row w-full"):
+                                            seed_input = ui.number(
+                                                "Seed",
+                                                value=train_settings.get(
+                                                    "seed", DEFAULT_SEED
+                                                ),
+                                            ).props("dense").classes("w-full")
+                                            tolerance_input = ui.number(
+                                                "Bootstrap tolerance",
+                                                value=train_settings.get(
+                                                    "bootstrap_tolerance",
+                                                    DEFAULT_BOOTSTRAP_TOLERANCE,
+                                                ),
+                                            ).props("dense").classes("w-full")
                                         with ui.element("div").classes("pair-row w-full"):
                                             hpo_input = ui.number(
                                                 "HPO iterations",
@@ -1390,6 +1447,218 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                             "combine_op",
                                         )
 
+                                        rex_section = ui.expansion(
+                                            "ReX Options", value=False
+                                        ).classes("w-full")
+                                        with rex_section:
+                                            with ui.element("div").classes("field-row"):
+                                                device_select = ui.select(
+                                                    ["cpu", "cuda", "mps"],
+                                                    value=train_settings.get(
+                                                        "device", "cpu"
+                                                    ),
+                                                    label="Device",
+                                                )
+                                                parallel_jobs_input = ui.number(
+                                                    "Parallel jobs",
+                                                    value=train_settings.get(
+                                                        "parallel_jobs", 0
+                                                    ),
+                                                ).props("dense")
+                                                bootstrap_jobs_input = ui.number(
+                                                    "Bootstrap parallel jobs",
+                                                    value=train_settings.get(
+                                                        "bootstrap_parallel_jobs", 0
+                                                    ),
+                                                ).props("dense")
+                                                adaptive_switch = ui.switch(
+                                                    "Adaptive SHAP sampling",
+                                                    value=train_settings.get(
+                                                        "adaptive_shap_sampling", True
+                                                    ),
+                                                )
+                                                max_shap_input = ui.number(
+                                                    "Max SHAP samples",
+                                                    value=train_settings.get(
+                                                        "max_shap_samples",
+                                                        DEFAULT_MAX_SAMPLES,
+                                                    ),
+                                                ).props("dense")
+                                                regressors_input = ui.select(
+                                                    ["nn", "gbt"],
+                                                    value=train_settings.get(
+                                                        "regressors", DEFAULT_REGRESSORS
+                                                    ),
+                                                    label="Regressors",
+                                                    multiple=True,
+                                                )
+
+                                            bind_setting(
+                                                device_select,
+                                                "train_settings",
+                                                train_settings,
+                                                "device",
+                                            )
+                                            bind_setting(
+                                                parallel_jobs_input,
+                                                "train_settings",
+                                                train_settings,
+                                                "parallel_jobs",
+                                            )
+                                            bind_setting(
+                                                bootstrap_jobs_input,
+                                                "train_settings",
+                                                train_settings,
+                                                "bootstrap_parallel_jobs",
+                                            )
+                                            bind_setting(
+                                                adaptive_switch,
+                                                "train_settings",
+                                                train_settings,
+                                                "adaptive_shap_sampling",
+                                            )
+                                            bind_setting(
+                                                max_shap_input,
+                                                "train_settings",
+                                                train_settings,
+                                                "max_shap_samples",
+                                            )
+                                            bind_setting(
+                                                regressors_input,
+                                                "train_settings",
+                                                train_settings,
+                                                "regressors",
+                                            )
+
+                                            with ui.expansion(
+                                                "Advanced ReX settings", value=False
+                                            ):
+                                                with ui.element("div").classes("field-row"):
+                                                    explainer_input = ui.select(
+                                                        [
+                                                            "gradient",
+                                                            "explainer",
+                                                            "kernel",
+                                                            "tree",
+                                                        ],
+                                                        value=train_settings.get(
+                                                            "explainer", "gradient"
+                                                        ),
+                                                        label="SHAP explainer backend",
+                                                    )
+                                                    corr_method_input = ui.select(
+                                                        [
+                                                            "spearman",
+                                                            "pearson",
+                                                            "kendall",
+                                                            "mic",
+                                                        ],
+                                                        value=train_settings.get(
+                                                            "corr_method", "spearman"
+                                                        ),
+                                                        label="Correlation method",
+                                                    )
+                                                    corr_alpha_input = ui.number(
+                                                        "Correlation alpha",
+                                                        value=train_settings.get(
+                                                            "corr_alpha", 0.6
+                                                        ),
+                                                    )
+                                                    corr_clusters_input = ui.number(
+                                                        "Correlation clusters",
+                                                        value=train_settings.get(
+                                                            "corr_clusters", 15
+                                                        ),
+                                                    )
+                                                    condlen_input = ui.number(
+                                                        "Condlen",
+                                                        value=train_settings.get(
+                                                            "condlen", 1
+                                                        ),
+                                                    )
+                                                    condsize_input = ui.number(
+                                                        "Condsize",
+                                                        value=train_settings.get(
+                                                            "condsize", 0
+                                                        ),
+                                                    )
+                                                    mean_pi_input = ui.number(
+                                                        "Mean PI percentile",
+                                                        value=train_settings.get(
+                                                            "mean_pi_percentile",
+                                                            0.8,
+                                                        ),
+                                                    )
+                                                    discrepancy_input = ui.number(
+                                                        "Discrepancy threshold",
+                                                        value=train_settings.get(
+                                                            "discrepancy_threshold",
+                                                            0.99,
+                                                        ),
+                                                    )
+                                                    sampling_input = ui.input(
+                                                        "Bootstrap sampling split",
+                                                        value=train_settings.get(
+                                                            "bootstrap_sampling_split",
+                                                            "auto",
+                                                        ),
+                                                    ).props("dense")
+
+                                                bind_setting(
+                                                    explainer_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "explainer",
+                                                )
+                                                bind_setting(
+                                                    corr_method_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "corr_method",
+                                                )
+                                                bind_setting(
+                                                    corr_alpha_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "corr_alpha",
+                                                )
+                                                bind_setting(
+                                                    corr_clusters_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "corr_clusters",
+                                                )
+                                                bind_setting(
+                                                    condlen_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "condlen",
+                                                )
+                                                bind_setting(
+                                                    condsize_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "condsize",
+                                                )
+                                                bind_setting(
+                                                    mean_pi_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "mean_pi_percentile",
+                                                )
+                                                bind_setting(
+                                                    discrepancy_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "discrepancy_threshold",
+                                                )
+                                                bind_setting(
+                                                    sampling_input,
+                                                    "train_settings",
+                                                    train_settings,
+                                                    "bootstrap_sampling_split",
+                                                )
+
                                     with ui.element("div").classes("section-card"):
                                         ui.label("Run").classes("section-title")
                                         with ui.element("div").classes("action-row"):
@@ -1403,219 +1672,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         train_progress = ui.linear_progress(
                                             value=0
                                         ).props("instant-feedback")
-                                        train_log = ui.log(max_lines=200).classes("w-full")
-
-                                    rex_section = ui.expansion(
-                                        "ReX Options", value=False
-                                    ).classes("section-card")
-                                    with rex_section:
-                                        with ui.element("div").classes("field-row"):
-                                            device_select = ui.select(
-                                                ["cpu", "cuda", "mps"],
-                                                value=train_settings.get(
-                                                    "device", "cpu"
-                                                ),
-                                                label="Device",
-                                            )
-                                            parallel_jobs_input = ui.number(
-                                                "Parallel jobs",
-                                                value=train_settings.get(
-                                                    "parallel_jobs", 0
-                                                ),
-                                            ).props("dense")
-                                            bootstrap_jobs_input = ui.number(
-                                                "Bootstrap parallel jobs",
-                                                value=train_settings.get(
-                                                    "bootstrap_parallel_jobs", 0
-                                                ),
-                                            ).props("dense")
-                                            adaptive_switch = ui.switch(
-                                                "Adaptive SHAP sampling",
-                                                value=train_settings.get(
-                                                    "adaptive_shap_sampling", True
-                                                ),
-                                            )
-                                            max_shap_input = ui.number(
-                                                "Max SHAP samples",
-                                                value=train_settings.get(
-                                                    "max_shap_samples",
-                                                    DEFAULT_MAX_SAMPLES,
-                                                ),
-                                            ).props("dense")
-                                            regressors_input = ui.select(
-                                                ["nn", "gbt"],
-                                                value=train_settings.get(
-                                                    "regressors", DEFAULT_REGRESSORS
-                                                ),
-                                                label="Regressors",
-                                                multiple=True,
-                                            )
-
-                                        bind_setting(
-                                            device_select,
-                                            "train_settings",
-                                            train_settings,
-                                            "device",
+                                        train_log = ui.log(max_lines=200).classes(
+                                            "w-full train-log"
                                         )
-                                        bind_setting(
-                                            parallel_jobs_input,
-                                            "train_settings",
-                                            train_settings,
-                                            "parallel_jobs",
-                                        )
-                                        bind_setting(
-                                            bootstrap_jobs_input,
-                                            "train_settings",
-                                            train_settings,
-                                            "bootstrap_parallel_jobs",
-                                        )
-                                        bind_setting(
-                                            adaptive_switch,
-                                            "train_settings",
-                                            train_settings,
-                                            "adaptive_shap_sampling",
-                                        )
-                                        bind_setting(
-                                            max_shap_input,
-                                            "train_settings",
-                                            train_settings,
-                                            "max_shap_samples",
-                                        )
-                                        bind_setting(
-                                            regressors_input,
-                                            "train_settings",
-                                            train_settings,
-                                            "regressors",
-                                        )
-
-                                        with ui.expansion(
-                                            "Advanced ReX settings", value=False
-                                        ):
-                                            with ui.element("div").classes("field-row"):
-                                                explainer_input = ui.select(
-                                                    [
-                                                        "gradient",
-                                                        "explainer",
-                                                        "kernel",
-                                                        "tree",
-                                                    ],
-                                                    value=train_settings.get(
-                                                        "explainer", "gradient"
-                                                    ),
-                                                    label="SHAP explainer backend",
-                                                )
-                                                corr_method_input = ui.select(
-                                                    [
-                                                        "spearman",
-                                                        "pearson",
-                                                        "kendall",
-                                                        "mic",
-                                                    ],
-                                                    value=train_settings.get(
-                                                        "corr_method", "spearman"
-                                                    ),
-                                                    label="Correlation method",
-                                                )
-                                                corr_alpha_input = ui.number(
-                                                    "Correlation alpha",
-                                                    value=train_settings.get(
-                                                        "corr_alpha", 0.6
-                                                    ),
-                                                )
-                                                corr_clusters_input = ui.number(
-                                                    "Correlation clusters",
-                                                    value=train_settings.get(
-                                                        "corr_clusters", 15
-                                                    ),
-                                                )
-                                                condlen_input = ui.number(
-                                                    "Condlen",
-                                                    value=train_settings.get(
-                                                        "condlen", 1
-                                                    ),
-                                                )
-                                                condsize_input = ui.number(
-                                                    "Condsize",
-                                                    value=train_settings.get(
-                                                        "condsize", 0
-                                                    ),
-                                                )
-                                                mean_pi_input = ui.number(
-                                                    "Mean PI percentile",
-                                                    value=train_settings.get(
-                                                        "mean_pi_percentile",
-                                                        0.8,
-                                                    ),
-                                                )
-                                                discrepancy_input = ui.number(
-                                                    "Discrepancy threshold",
-                                                    value=train_settings.get(
-                                                        "discrepancy_threshold",
-                                                        0.99,
-                                                    ),
-                                                )
-                                                sampling_input = ui.input(
-                                                    "Bootstrap sampling split",
-                                                    value=train_settings.get(
-                                                        "bootstrap_sampling_split",
-                                                        "auto",
-                                                    ),
-                                                ).props("dense")
-
-                                            bind_setting(
-                                                explainer_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "explainer",
-                                            )
-                                            bind_setting(
-                                                corr_method_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "corr_method",
-                                            )
-                                            bind_setting(
-                                                corr_alpha_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "corr_alpha",
-                                            )
-                                            bind_setting(
-                                                corr_clusters_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "corr_clusters",
-                                            )
-                                            bind_setting(
-                                                condlen_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "condlen",
-                                            )
-                                            bind_setting(
-                                                condsize_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "condsize",
-                                            )
-                                            bind_setting(
-                                                mean_pi_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "mean_pi_percentile",
-                                            )
-                                            bind_setting(
-                                                discrepancy_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "discrepancy_threshold",
-                                            )
-                                            bind_setting(
-                                                sampling_input,
-                                                "train_settings",
-                                                train_settings,
-                                                "bootstrap_sampling_split",
-                                            )
 
                                     with ui.element("div").classes(
                                         "section-card span-full"
@@ -1667,7 +1726,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         )
 
                             with ui.tab_panel(tab_load):
-                                with ui.element("div").classes("section-card"):
+                                with ui.element("div").classes(
+                                    "section-card w-full"
+                                ):
                                     ui.label("Load Model").classes("section-title")
                                     with ui.element("div").classes("file-row"):
                                         ui.label("Model pickle").classes("file-label")
@@ -1721,47 +1782,21 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         on_click=lambda: asyncio.create_task(run_load()),
                                     )
 
-                                with ui.element("div").classes("section-card"):
-                                    ui.label("Metrics").classes("section-title")
-                                    load_metrics_table = ui.table(
-                                        columns=[
-                                            {
-                                                "name": "metric",
-                                                "label": "Metric",
-                                                "field": "metric",
-                                            },
-                                            {
-                                                "name": "value",
-                                                "label": "Value",
-                                                "field": "value",
-                                            },
-                                        ],
-                                        rows=[],
-                                        row_key="metric",
-                                    ).classes("w-full")
-                                    update_metrics_table(load_metrics_table, None)
+                                with ui.element("div").classes("load-grid w-full"):
+                                    with ui.element("div").classes("section-card"):
+                                        ui.label("Metrics").classes("section-title")
+                                        load_metrics_log = ui.log(
+                                            max_lines=120
+                                        ).classes("w-full train-log")
+                                        update_metrics_log(load_metrics_log, None)
 
-                                with ui.element("div").classes("section-card"):
-                                    ui.label("Graphs").classes("section-title")
-                                    ui.label("Predicted DAG").classes("subtle")
-                                    load_dag_html = ui.html(
-                                        "", sanitize=False
-                                    ).classes("dag-frame")
-                                    update_dag_view(load_dag_html, None)
-                                    ui.label("Overlay vs True DAG").classes("subtle")
-                                    load_overlay_html = ui.html(
-                                        "", sanitize=False
-                                    ).classes("dag-frame")
-                                    update_overlay_view(load_overlay_html, None, None)
-
-                                with ui.element("div").classes("section-card"):
-                                    ui.label("Future Visualizations").classes("section-title")
-                                    ui.label(
-                                        "SHAP diagnostics and discrepancy matrices will appear here."
-                                    ).classes("subtle")
-                                    ui.label(
-                                        "Reserved space for upcoming visualizations."
-                                    ).classes("empty-panel")
+                                    with ui.element("div").classes("section-card"):
+                                        ui.label("Graphs").classes("section-title")
+                                        ui.label("Overlay vs True DAG").classes("subtle")
+                                        load_overlay_container = ui.element(
+                                            "div"
+                                        ).classes("dag-frame")
+                                        load_overlay_status = ui.label("").classes("subtle")
 
                             with ui.tab_panel(tab_generate):
                                 with ui.element("div").classes("section-card"):
