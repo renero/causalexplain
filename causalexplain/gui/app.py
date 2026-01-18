@@ -6,6 +6,7 @@ import contextlib
 import io
 import os
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
 import matplotlib
@@ -17,6 +18,7 @@ import pandas as pd
 import pydot
 
 from causalexplain.causalexplainer import GraphDiscovery
+from causalexplain.gui import cytoscape as cygui
 from causalexplain.gui.cytoscape import ensure_cytoscape_assets
 from causalexplain.generators.generators import AcyclicGraphGenerator
 from causalexplain.common import (
@@ -29,6 +31,7 @@ from causalexplain.common import (
     SUPPORTED_METHODS,
     utils,
 )
+from causalexplain.common.plot import dag2dot
 from causalexplain.metrics.compare_graphs import evaluate_graph
 
 
@@ -78,7 +81,12 @@ def _default_generate_settings() -> Dict[str, Any]:
         "max_parents": 3,
         "seed": DEFAULT_SEED,
         "rescale": True,
-        "output_base": "",
+        "timeout_s": 30,
+        "max_retries": 50,
+        "min_edges": 0,
+        "max_edges": 30,
+        "output_dir": "",
+        "output_name": "generated_dataset",
     }
 
 
@@ -109,6 +117,19 @@ def _normalize_graph(graph: nx.Graph) -> nx.DiGraph:
     if cleaned.has_node("\\n"):
         cleaned.remove_node("\\n")
     return cleaned
+
+
+def _dag_is_valid(
+    graph: Optional[nx.DiGraph], min_edges: int, max_edges: int
+) -> bool:
+    if graph is None:
+        return False
+    if not nx.is_directed_acyclic_graph(graph):
+        return False
+    edge_count = graph.number_of_edges()
+    if edge_count < min_edges or edge_count > max_edges:
+        return False
+    return all(degree > 0 for _, degree in graph.degree())
 
 
 def _graph_from_dot(path: str) -> Optional[nx.DiGraph]:
@@ -433,6 +454,41 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
           gap: 16px;
         }
 
+        .generate-grid {
+          display: grid;
+          grid-template-columns: minmax(0, 0.35fr) minmax(0, 0.65fr);
+          gap: 16px;
+          align-items: start;
+        }
+
+        .nested-panel {
+          border-radius: 12px;
+          border: 1px solid var(--separator);
+          background: var(--surface);
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .generate-actions {
+          display: grid;
+          grid-template-columns: minmax(0, 0.35fr) minmax(0, 0.65fr);
+          gap: 16px;
+          align-items: center;
+        }
+
+        .generate-spacer {
+          min-height: 1px;
+        }
+
+        .save-row {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 120px;
+          gap: 10px;
+          align-items: center;
+        }
+
         .form-col {
           display: flex;
           flex-direction: column;
@@ -517,6 +573,15 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
             grid-template-columns: minmax(0, 1fr);
           }
 
+          .generate-grid,
+          .generate-actions {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
+          .save-row {
+            grid-template-columns: minmax(0, 1fr);
+          }
+
           .file-row {
             grid-template-columns: minmax(0, 1fr);
           }
@@ -597,6 +662,7 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
             storage.get("generate_settings"), _default_generate_settings()
         )
         selected_panel = "train"
+        notify_anchor: Optional[Any] = None
 
         def update_settings(
             settings_key: str, target: Dict[str, Any], key: str, value: Any
@@ -626,6 +692,12 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                         getattr(e, "value", getattr(el, "value", None)),
                     ),
                 )
+
+        def notify_user(message: str, level: Optional[str] = None) -> None:
+            if notify_anchor is None:
+                return
+            with notify_anchor:
+                ui.notify(message, type=level)
 
         async def save_upload(file_upload: Any, suffix: Optional[str] = None) -> str:
             filename = getattr(file_upload, "name", "upload")
@@ -760,7 +832,9 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
 
             with ui.element("div").classes("main-panel"):
                 with ui.element("div").classes("content-scroll"):
-                    with ui.element("div").classes("content"):
+                    content_container = ui.element("div").classes("content")
+                    notify_anchor = content_container
+                    with content_container:
                         tabs = ui.tabs().classes("text-sm")
                         tab_train = ui.tab("Train Model")
                         tab_load = ui.tab("Load + Evaluate")
@@ -777,9 +851,13 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                         load_metrics_log = None
                         load_overlay_container = None
                         load_overlay_status = None
-                        generate_preview_table = None
-                        generate_dag_html = None
-                        generate_log = None
+                        generate_dag_container = None
+                        save_button = None
+                        generate_state: Dict[str, Any] = {
+                            "graph": None,
+                            "data": None,
+                            "adjacency": None,
+                        }
 
                         train_state: Dict[str, Any] = {
                             "task": None,
@@ -894,6 +972,47 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                             finally:
                                 discoverer.model.ref_graph = original_ref
                             return None
+
+                        def render_cytoscape_graph(
+                            container: Any,
+                            graph: Optional[nx.Graph],
+                            *,
+                            height: str = "420px",
+                        ) -> None:
+                            if container is None:
+                                return
+                            container.clear()
+                            if graph is None or len(graph.nodes) == 0:
+                                with container:
+                                    ui.label("No graph available.").classes("empty-panel")
+                                return
+                            cygui._ensure_cytoscape_assets()
+                            graph_id = uuid.uuid4().hex
+                            elements, _ = cygui._build_cytoscape_elements(
+                                graph, None, show_node_fill=False
+                            )
+                            layout_config = cygui._cytoscape_layout_config(
+                                "dagre", "TB", False
+                            )
+                            spec: Dict[str, Any] = {
+                                "elements": elements,
+                                "style": cygui._cytoscape_stylesheet(),
+                                "layout": layout_config,
+                                "width": "100%",
+                                "height": height,
+                                "asset_base": cygui._CY_ASSET_BASE_URL or "",
+                            }
+                            container_id = f"cytoscape-{graph_id}"
+                            container_html = (
+                                f'<div id="{container_id}" '
+                                f'style="width: 100%; height: {height};"></div>'
+                            )
+                            script = cygui._cytoscape_init_script(
+                                container_id, spec, None, None, None
+                            )
+                            with container:
+                                ui.html(container_html, sanitize=False)
+                                ui.run_javascript(script)
 
                         async def run_training() -> None:
                             if train_state["running"]:
@@ -1219,55 +1338,129 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                         async def run_generate() -> None:
 
                             def _generate_job(settings: Dict[str, Any]) -> Dict[str, Any]:
-                                output_base = settings.get("output_base") or ""
-                                if not output_base:
-                                    raise ValueError("Output base path is required.")
-                                output_dir = os.path.dirname(output_base)
-                                if output_dir and not os.path.exists(output_dir):
-                                    os.makedirs(output_dir, exist_ok=True)
                                 np.random.seed(int(settings.get("seed", DEFAULT_SEED)))
-                                generator = AcyclicGraphGenerator(
-                                    settings["mechanism"],
-                                    points=int(settings["samples"]),
-                                    nodes=int(settings["nodes"]),
-                                    parents_max=int(settings["max_parents"]),
-                                    verbose=False,
+                                timeout_s = max(
+                                    0.0, float(settings.get("timeout_s", 30))
                                 )
-                                graph, data = generator.generate(
-                                    rescale=bool(settings["rescale"])
+                                max_retries = int(settings.get("max_retries", 50))
+                                min_edges = int(settings.get("min_edges", 0))
+                                max_edges = int(settings.get("max_edges", 0))
+                                if min_edges > max_edges:
+                                    raise ValueError(
+                                        "min_edges must be less than or equal to max_edges."
+                                    )
+                                if max_retries < 0:
+                                    max_retries = 0
+                                max_attempts = max_retries + 1
+                                start_time = time.monotonic()
+                                attempt = 0
+                                while attempt < max_attempts:
+                                    if (time.monotonic() - start_time) >= timeout_s:
+                                        break
+                                    attempt += 1
+                                    generator = AcyclicGraphGenerator(
+                                        settings["mechanism"],
+                                        points=int(settings["samples"]),
+                                        nodes=int(settings["nodes"]),
+                                        parents_max=int(settings["max_parents"]),
+                                        verbose=False,
+                                    )
+                                    graph, data = generator.generate(
+                                        rescale=bool(settings["rescale"])
+                                    )
+                                    if not _dag_is_valid(graph, min_edges, max_edges):
+                                        continue
+                                    return {
+                                        "graph": graph,
+                                        "data": data,
+                                        "adjacency": generator.adjacency_matrix,
+                                    }
+                                elapsed = time.monotonic() - start_time
+                                if elapsed >= timeout_s:
+                                    raise TimeoutError(
+                                        "Timeout reached before a valid DAG was found."
+                                    )
+                                raise ValueError(
+                                    "No valid DAG found within the retry limit."
                                 )
-                                generator.to_csv(output_base, index=False)
-                                return {
-                                    "graph": graph,
-                                    "data": data,
-                                    "output_base": output_base,
-                                }
 
-                            if generate_log is not None:
-                                generate_log.push("Generating dataset...")
                             try:
                                 result = await run.io_bound(
                                     _generate_job, generate_settings
                                 )
                             except Exception as exc:
-                                if generate_log is not None:
-                                    generate_log.push(f"Error: {str(exc)}")
+                                notify_user(f"Error: {str(exc)}", "negative")
+                                if (
+                                    save_button is not None
+                                    and generate_state.get("graph") is None
+                                ):
+                                    save_button.disable()
                                 return
 
-                            data = result.get("data")
-                            if isinstance(data, pd.DataFrame):
-                                preview = data.head(8)
-                                generate_preview_table.columns = [
-                                    {"name": col, "label": col, "field": col}
-                                    for col in preview.columns
-                                ]
-                                generate_preview_table.rows = preview.to_dict(
-                                    orient="records"
+                            generate_state.update(
+                                {
+                                    "graph": result.get("graph"),
+                                    "data": result.get("data"),
+                                    "adjacency": result.get("adjacency"),
+                                }
+                            )
+                            render_cytoscape_graph(
+                                generate_dag_container, generate_state["graph"]
+                            )
+                            if save_button is not None:
+                                save_button.enable()
+                            notify_user("Generation completed.", "positive")
+
+                        async def run_save_generated() -> None:
+
+                            def _save_job(
+                                payload: Dict[str, Any],
+                                output_dir: str,
+                                output_name: str,
+                            ) -> None:
+                                graph = payload.get("graph")
+                                data = payload.get("data")
+                                adjacency = payload.get("adjacency")
+                                if graph is None or data is None or adjacency is None:
+                                    raise ValueError("Generate a dataset first.")
+                                output_dir = output_dir.strip()
+                                output_name = output_name.strip()
+                                if not output_dir:
+                                    raise ValueError("Output directory is required.")
+                                if not output_name:
+                                    raise ValueError("Dataset name is required.")
+                                for ext in (".csv", ".dot"):
+                                    if output_name.lower().endswith(ext):
+                                        output_name = output_name[: -len(ext)]
+                                        output_name = output_name.strip()
+                                if not output_name:
+                                    raise ValueError("Dataset name is required.")
+                                os.makedirs(output_dir, exist_ok=True)
+                                output_base = os.path.join(output_dir, output_name)
+                                data.to_csv(f"{output_base}.csv", index=False)
+                                dot_obj = dag2dot(graph)
+                                if dot_obj is None:
+                                    raise ValueError(
+                                        "Unable to save a DAG with no edges."
+                                    )
+                                graph_dot_format = dot_obj.to_string()
+                                graph_dot_format = (
+                                    f"strict {graph_dot_format[:-9]}\n}}"
                                 )
-                                generate_preview_table.update()
-                            update_dag_view(generate_dag_html, result.get("graph"))
-                            if generate_log is not None:
-                                generate_log.push("Generation completed.")
+                                with open(f"{output_base}.dot", "w") as handle:
+                                    handle.write(graph_dot_format)
+
+                            try:
+                                await run.io_bound(
+                                    _save_job,
+                                    generate_state,
+                                    generate_settings.get("output_dir", ""),
+                                    generate_settings.get("output_name", ""),
+                                )
+                            except Exception as exc:
+                                notify_user(f"Error: {str(exc)}", "negative")
+                                return
+                            notify_user("Dataset saved.", "positive")
 
                         with ui.tab_panels(tabs, value=tab_train).classes("w-full"):
                             with ui.tab_panel(tab_train):
@@ -1799,51 +1992,141 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         load_overlay_status = ui.label("").classes("subtle")
 
                             with ui.tab_panel(tab_generate):
-                                with ui.element("div").classes("section-card"):
+                                with ui.element("div").classes("section-card w-full"):
                                     ui.label("Generate Dataset").classes("section-title")
-                                    with ui.element("div").classes("field-row"):
-                                        mechanism_select = ui.select(
-                                            [
-                                                "linear",
-                                                "polynomial",
-                                                "sigmoid_add",
-                                                "sigmoid_mix",
-                                                "gp_add",
-                                                "gp_mix",
-                                            ],
-                                            value=generate_settings.get("mechanism", "linear"),
-                                            label="Mechanism",
-                                        )
-                                        nodes_input = ui.number(
-                                            "Variables",
-                                            value=generate_settings.get("nodes", 10),
-                                        ).props("dense")
-                                        samples_input = ui.number(
-                                            "Samples",
-                                            value=generate_settings.get("samples", 500),
-                                        ).props("dense")
-                                        parents_input = ui.number(
-                                            "Max parents",
-                                            value=generate_settings.get("max_parents", 3),
-                                        ).props("dense")
-                                        gen_seed_input = ui.number(
-                                            "Seed",
-                                            value=generate_settings.get("seed", DEFAULT_SEED),
-                                        ).props("dense")
-                                        rescale_switch = ui.switch(
-                                            "Rescale",
-                                            value=generate_settings.get("rescale", True),
-                                        )
-                                        output_base_input = ui.input(
-                                            "Output base path",
-                                            value=generate_settings.get("output_base", ""),
-                                        ).props("dense")
+                                    with ui.element("div").classes(
+                                        "generate-grid w-full"
+                                    ):
+                                        with ui.element("div").classes("nested-panel"):
+                                            ui.label("Generation controls").classes(
+                                                "subtle"
+                                            )
+                                            timeout_input = ui.number(
+                                                "t (seconds)",
+                                                value=generate_settings.get("timeout_s", 30),
+                                            ).props("dense").classes("w-full")
+                                            retries_input = ui.number(
+                                                "R (max retries)",
+                                                value=generate_settings.get(
+                                                    "max_retries", 50
+                                                ),
+                                            ).props("dense").classes("w-full")
+                                            min_edges_input = ui.number(
+                                                "Min edges",
+                                                value=generate_settings.get("min_edges", 0),
+                                            ).props("dense").classes("w-full")
+                                            max_edges_input = ui.number(
+                                                "Max edges",
+                                                value=generate_settings.get("max_edges", 30),
+                                            ).props("dense").classes("w-full")
+
+                                        with ui.element("div").classes("nested-panel"):
+                                            ui.label("Dataset parameters").classes(
+                                                "subtle"
+                                            )
+                                            mechanism_select = ui.select(
+                                                [
+                                                    "linear",
+                                                    "polynomial",
+                                                    "sigmoid_add",
+                                                    "sigmoid_mix",
+                                                    "gp_add",
+                                                    "gp_mix",
+                                                ],
+                                                value=generate_settings.get(
+                                                    "mechanism", "linear"
+                                                ),
+                                                label="Mechanism",
+                                            ).classes("w-full")
+                                            nodes_input = ui.number(
+                                                "Variables",
+                                                value=generate_settings.get("nodes", 10),
+                                            ).props("dense").classes("w-full")
+                                            samples_input = ui.number(
+                                                "Samples",
+                                                value=generate_settings.get("samples", 500),
+                                            ).props("dense").classes("w-full")
+                                            parents_input = ui.number(
+                                                "Max parents",
+                                                value=generate_settings.get(
+                                                    "max_parents", 3
+                                                ),
+                                            ).props("dense").classes("w-full")
+                                            gen_seed_input = ui.number(
+                                                "Seed",
+                                                value=generate_settings.get(
+                                                    "seed", DEFAULT_SEED
+                                                ),
+                                            ).props("dense").classes("w-full")
+                                            rescale_switch = ui.switch(
+                                                "Rescale",
+                                                value=generate_settings.get(
+                                                    "rescale", True
+                                                ),
+                                            )
+
+                                    with ui.element("div").classes(
+                                        "generate-actions w-full"
+                                    ):
+                                        ui.element("div").classes("generate-spacer")
+                                        ui.button(
+                                            "Generate",
+                                            on_click=lambda: asyncio.create_task(run_generate()),
+                                        ).classes("w-full")
+
+                                    generate_dag_container = ui.element(
+                                        "div"
+                                    ).classes("dag-frame w-full")
+                                    render_cytoscape_graph(generate_dag_container, None)
+
+                                    with ui.element("div").classes("save-row w-full"):
+                                        output_dir_input = ui.input(
+                                            "Output directory",
+                                            value=generate_settings.get("output_dir", ""),
+                                        ).props("dense").classes("w-full")
+                                        output_name_input = ui.input(
+                                            "Dataset name",
+                                            value=generate_settings.get(
+                                                "output_name", "generated_dataset"
+                                            ),
+                                        ).props("dense").classes("w-full")
+                                        save_button = ui.button(
+                                            "SAVE",
+                                            on_click=lambda: asyncio.create_task(
+                                                run_save_generated()
+                                            ),
+                                        ).classes("w-full")
+                                        save_button.disable()
 
                                     bind_setting(
                                         mechanism_select,
                                         "generate_settings",
                                         generate_settings,
                                         "mechanism",
+                                    )
+                                    bind_setting(
+                                        timeout_input,
+                                        "generate_settings",
+                                        generate_settings,
+                                        "timeout_s",
+                                    )
+                                    bind_setting(
+                                        retries_input,
+                                        "generate_settings",
+                                        generate_settings,
+                                        "max_retries",
+                                    )
+                                    bind_setting(
+                                        min_edges_input,
+                                        "generate_settings",
+                                        generate_settings,
+                                        "min_edges",
+                                    )
+                                    bind_setting(
+                                        max_edges_input,
+                                        "generate_settings",
+                                        generate_settings,
+                                        "max_edges",
                                     )
                                     bind_setting(
                                         nodes_input,
@@ -1876,29 +2159,17 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                         "rescale",
                                     )
                                     bind_setting(
-                                        output_base_input,
+                                        output_dir_input,
                                         "generate_settings",
                                         generate_settings,
-                                        "output_base",
+                                        "output_dir",
                                     )
-
-                                    ui.button(
-                                        "Generate",
-                                        on_click=lambda: asyncio.create_task(run_generate()),
+                                    bind_setting(
+                                        output_name_input,
+                                        "generate_settings",
+                                        generate_settings,
+                                        "output_name",
                                     )
-                                    generate_log = ui.log(max_lines=120).classes("w-full")
-
-                                with ui.element("div").classes("section-card"):
-                                    ui.label("Preview").classes("section-title")
-                                    generate_preview_table = ui.table(
-                                        columns=[],
-                                        rows=[],
-                                    ).classes("w-full")
-                                    ui.label("Generated DAG").classes("subtle")
-                                    generate_dag_html = ui.html(
-                                        "", sanitize=False
-                                    ).classes("dag-frame")
-                                    update_dag_view(generate_dag_html, None)
 
                 def update_rex_visibility() -> None:
                     is_rex = train_settings.get("method") == "rex"
