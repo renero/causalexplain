@@ -163,9 +163,10 @@ body, .nicegui-app {
 
 .train-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(0, 2fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
   gap: 18px;
   align-items: stretch;
+  width: 100%;
 }
 
 .load-grid {
