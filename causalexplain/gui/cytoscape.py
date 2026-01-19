@@ -14,14 +14,17 @@ _CY_ASSET_BASE_URL: Optional[str] = None
 
 
 def _hex_from_rgb(r: int, g: int, b: int) -> str:
+    """Convert RGB channel values to a hex color string."""
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
 def _lerp_channel(start: int, end: int, t: float) -> int:
+    """Linearly interpolate a color channel at t in [0, 1]."""
     return int(round(start + (end - start) * t))
 
 
 def _score_to_color(score: float, max_score: float) -> str:
+    """Map a score to a green-yellow-red color scale."""
     if max_score <= 0:
         return "#ffffff"
     ratio = max(0.0, min(score / max_score, 1.0))
@@ -42,6 +45,7 @@ def _score_to_color(score: float, max_score: float) -> str:
 
 
 def _luminance_from_hex(hex_color: str) -> float:
+    """Compute approximate luminance for a hex color."""
     hex_color = hex_color.lstrip("#")
     if len(hex_color) != 6:
         return 0.0
@@ -58,6 +62,7 @@ def _build_cytoscape_elements(
     root_causes: Optional[List[str]] = None,
     positions: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Tuple[List[Dict[str, Any]], bool]:
+    """Build Cytoscape elements from prediction and reference graphs."""
     elements: List[Dict[str, Any]] = []
     reference_provided = reference is not None
     ref_graph = reference if reference is not None else nx.DiGraph()
@@ -94,6 +99,7 @@ def _build_cytoscape_elements(
     ref_edges = set(ref_graph.edges())
 
     def edge_id(prefix: str, src: Any, dst: Any) -> str:
+        """Build a stable edge id for Cytoscape elements."""
         return f"{prefix}:{src}->{dst}"
 
     for src, dst in sorted(pred_edges):
@@ -135,6 +141,7 @@ def _build_cytoscape_elements(
 
 
 def _cytoscape_stylesheet() -> List[Dict[str, Any]]:
+    """Return the default Cytoscape stylesheet."""
     return [
         {
             "selector": "node",
@@ -224,6 +231,7 @@ def _cytoscape_layout_config(
     rank_dir: str,
     use_preset: bool,
 ) -> Dict[str, Any]:
+    """Return a Cytoscape layout configuration dictionary."""
     if use_preset:
         return {"name": "preset"}
     if engine == "elk":
@@ -253,6 +261,7 @@ def _cytoscape_layout_config(
 
 
 def _ensure_cytoscape_assets() -> None:
+    """Register Cytoscape JS assets with NiceGUI."""
     global _CY_ASSETS_LOADED, _CY_ASSET_BASE_URL
     if _CY_ASSETS_LOADED:
         return
@@ -295,6 +304,7 @@ def _cytoscape_init_script(
     click_endpoint: Optional[str],
     edge_click_endpoint: Optional[str],
 ) -> str:
+    """Generate the Cytoscape initialization script."""
     payload = json.dumps(spec)
     container_id_json = json.dumps(container_id)
     position_endpoint_json = json.dumps(position_endpoint or "")
@@ -423,6 +433,7 @@ def _cytoscape_init_script(
 
 
 def _cytoscape_sanity_check() -> Dict[str, int]:
+    """Run a basic sanity check of edge classification."""
     predicted = nx.DiGraph()
     predicted.add_edges_from([("A", "B"), ("B", "C"), ("C", "A")])
     reference = nx.DiGraph()
