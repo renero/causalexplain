@@ -25,19 +25,7 @@ from .base import _BaseLiNGAM
 
 
 class DirectLiNGAM(_BaseLiNGAM):
-    """Implementation of DirectLiNGAM Algorithm [1]_ [2]_
-
-    References
-    ----------
-    .. [1] S. Shimizu, T. Inazumi, Y. Sogawa, A. Hyvärinen, Y. Kawahara, T. Washio,
-           P. O. Hoyer and K. Bollen.
-       DirectLiNGAM: A direct method for learning a linear non-Gaussian structural
-                     equation model.
-       Journal of Machine Learning Research, 12(Apr): 1225--1248, 2011.
-    .. [2] A. Hyvärinen and S. M. Smith. Pairwise likelihood ratios for estimation
-           of non-Gaussian structural eauation models.
-       Journal of Machine Learning Research 14:111-152, 2013.
-    """
+    """DirectLiNGAM estimator."""
 
     is_fitted_ = False
     metrics = None
@@ -56,28 +44,7 @@ class DirectLiNGAM(_BaseLiNGAM):
             absolute_values=False,
             verbose=False
     ):
-        """Construct a DirectLiNGAM model.
-
-        Parameters
-        ----------
-        random_state : int, optional (default=None)
-            ``random_state`` is the seed used by the random number generator.
-        prior_knowledge : array-like, shape (n_features, n_features),
-                          optional (default=None)
-            Prior knowledge used for causal discovery, where ``n_features`` is the
-            number of features.
-
-            The elements of prior knowledge matrix are defined as follows [1]_:
-
-            * ``0`` : :math:`x_i` does not have a directed path to :math:`x_j`
-            * ``1`` : :math:`x_i` has a directed path to :math:`x_j`
-            * ``-1`` : No prior knowledge is available to know if either of the two
-                       cases above (0 or 1) is true.
-        apply_prior_knowledge_softly : boolean, optional (default=False)
-            If True, apply prior knowledge softly.
-        measure : {'pwling', 'kernel'}, optional (default='pwling')
-            Measure to evaluate independence: 'pwling' [2]_ or 'kernel' [1]_.
-        """
+        """Construct a DirectLiNGAM model."""
         super().__init__(random_state)
         self.name = name
         self._Aknw = prior_knowledge

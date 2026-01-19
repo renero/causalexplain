@@ -66,12 +66,3 @@ Submodules
    :undoc-members:
    :show-inheritance:
    :private-members:
-
-Module contents
----------------
-
-.. automodule:: causalexplain.independence
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :private-members:

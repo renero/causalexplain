@@ -36,36 +36,7 @@
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
 
-"""The main module, containing the implementation of GES, including
-the logic for the insert, delete and turn operators. The
-implementation is directly based on two papers:
-
-  1. The 2002 GES paper by Chickering, "Optimal Structure
-  Identification With Greedy Search" -
-  https://www.jmlr.org/papers/volume3/chickering02b/chickering02b.pdf
-
-  2. For the turn operator, the 2012 GIES paper by Hauser & Bühlmann,
-  "Characterization and Greedy Learning of Interventional Markov
-  Equivalence Classes of Directed Acyclic Graphs" -
-  https://www.jmlr.org/papers/volume13/hauser12a/hauser12a.pdf
-
-Further credit is given where due.
-
-Additional modules / packages:
-
-  - ges.utils contains auxiliary functions and the logic to transform
-    a PDAG into a CPDAG, used after each application of an operator.
-  - ges.scores contains the modules with the score classes:
-      - ges.scores.decomposable_score contains the base class for
-        decomposable score classes (see that module for more details).
-      - ges.scores.gauss_obs_l0_pen contains a cached implementation
-        of the gaussian likelihood BIC score used in the original GES
-        paper.
-   - ges.test contains the modules with the unit tests and tests
-     comparing against the algorithm's implementation in the R package
-     'pcalg'.
-
-"""
+"""Greedy Equivalence Search (GES) implementation."""
 
 import numpy as np
 import pandas as pd
@@ -80,59 +51,7 @@ from ...metrics.compare_graphs import evaluate_graph
 
 
 class GES(object):
-    """
-    The GES (Greedy Equivalence Search) algorithm for learning causal
-    graphs from observational data.
-
-    Parameters
-    ----------
-    phases : list, optional
-        Which phases of the GES procedure are run, and in which order.
-        Defaults to `['forward', 'backward', 'turning']`.
-    iterate : bool, default=False
-        Indicates whether the given phases should be iterated more than once.
-    debug : int, optional
-        Debug level for printing traces. Higher values correspond to increased
-        verbosity.
-
-    Attributes
-    ----------
-    dag : numpy.ndarray
-        The adjacency matrix of the estimated CPDAG (completed partially
-        directed acyclic graph).
-    ges_adjmat : numpy.ndarray
-        The adjacency matrix of the estimated PDAG (partially directed acyclic
-        graph) before completion.
-    ges_score : float
-        The score of the estimated CPDAG.
-    phases : list
-        The phases of the GES procedure that are run, and in which order.
-    iterate : bool
-        Indicates whether the given phases should be iterated more than once.
-
-    Methods
-    -------
-    fit(data, labels=None, A0=None)
-        Fit the GES algorithm to the given data.
-    fit_bic(data, A0=None, iterate=False, debug=0)
-        Run GES on the given data using the Gaussian BIC score.
-    forward_step(A, cache, debug=0)
-        Score and apply the highest scoring insert operator.
-    backward_step(A, cache, debug=0)
-        Score and apply the highest scoring delete operator.
-
-    Examples
-    --------
-    >>> import numpy as np  # doctest: +SKIP
-    >>> from causalexplain.estimators.ges import GES  # doctest: +SKIP
-    >>> data = np.array([[3.23125779, 3.24950062, 13.430682, 24.67939513],  # doctest: +SKIP
-    ...                  [1.90913354, -0.06843781, 6.93957057, 16.10164608],# doctest: +SKIP
-    ...                  [2.68547149, 1.88351553, 8.78711076, 17.18557716], # doctest: +SKIP
-    ...                  [0.16850822, 1.48067393, 5.35871419, 11.82895779], # doctest: +SKIP
-    ...                  [0.07355872, 1.06857039, 2.05006096, 3.07611922]]) # doctest: +SKIP
-    >>> ges = GES() # doctest: +SKIP
-    >>> ges.fit(data)   # doctest: +SKIP
-    """
+    """Greedy Equivalence Search (GES) estimator."""
 
     dag = None
     ges_adjmat = None
@@ -315,7 +234,7 @@ class GES(object):
         A0 = np.zeros((score_class.p, score_class.p)) if A0 is None else A0
         # GES procedure
         total_score = 0
-        A, score_change = A0, np.Inf
+        A, score_change = A0, np.inf
         # Run each phase
         while True:
             last_total_score = total_score
@@ -647,33 +566,7 @@ class GES(object):
         #    1. definition in function delete
         #    2. enumeration logic (to enumerate and score only valid
         #    operators) function in valid_delete_operators
-        """
-        Applies the delete operator:
-        1) deletes the edge x -> y or x - y
-        2) for every node h in H
-            * orients the edge y -> h
-            * if the edge with x is undirected, orients it as x -> h
-
-        Note that H must be a subset of the neighbors of y which are
-        adjacent to x. A ValueError exception is thrown otherwise.
-
-        Parameters
-        ----------
-        x : int
-            the "origin" node (i.e. x -> y or x - y)
-        y : int
-            the "target" node
-        H : iterable of ints
-            a subset of the neighbors of y which are adjacent to x
-        A : np.array
-            the current adjacency matrix
-
-        Returns
-        -------
-        new_A : np.array
-            the adjacency matrix resulting from applying the operator
-
-        """
+        """Apply the delete operator for edge (x, y) with conditioning set H."""
         H = set(H)
         # Check inputs
         if A[x, y] == 0:

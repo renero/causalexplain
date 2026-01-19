@@ -24,12 +24,3 @@ Submodules
    :undoc-members:
    :show-inheritance:
    :private-members:
-
-Module contents
----------------
-
-.. automodule:: causalexplain.common
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :private-members:

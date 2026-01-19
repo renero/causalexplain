@@ -662,44 +662,7 @@ def digraph_from_connected_features(
 
 
 def correct_edge_from_prior(dag, u, v, prior, verbose):
-    """
-    Correct an edge in the graph according to the prior knowledge.
-    This function corrects the orientation of an edge in a directed acyclic graph
-    (DAG) based on prior knowledge. The prior knowledge is a list of lists of node
-    names, ordered according to a temporal structure. The assumption is that nodes
-    from the first layer of temporal structure cannot receive any incoming edge.
-
-    The function checks the relative positions of the two nodes in the prior
-    knowledge and:
-    - If both nodes are in the top list, it removes the edge, based on the assumption.
-    - If one node is before the other, it adds a new edge in the correct direction.
-    - If the nodes are not in a clear order, it leaves the edge unchanged.
-    - If the edge reflects a backward connection between nodes from different
-      temporal layers, it removes the edge.
-
-    The orientation of the edge, -1 if the edge is reversed, +1 if the edge
-        is removed or kept, and 0 if the edge orientation is not clear.
-
-    Parameters
-    ----------
-    dag : nx.DiGraph
-        The graph to be corrected.
-    u : str
-        The first node of the edge.
-    v : str
-        The second node of the edge.
-    prior : List[List[str]]
-        The prior knowledge, a list of lists of node names, ordered according to
-        a temporal structure.
-    verbose : bool
-        If True, print debug messages.
-
-    Returns
-    -------
-    orientation : int
-        The orientation of the edge, -1 if the edge is reversed, +1 if the edge
-        is removed or kept, and 0 if the edge orientation is not clear.
-    """
+    """Orient an edge using prior temporal knowledge."""
     # Check either 'u' or 'v' are NOT in the prior list. Remember that 'prior' is a
     # list of lists of node names, ordered according to a temporal structure.
     if not any([u in p for p in prior]) or not any([v in p for p in prior]):
@@ -882,25 +845,7 @@ def break_cycles_if_present(
         discrepancies: Dict,
         prior: Optional[List[List[str]]] = None,
         verbose: bool = False) -> nx.DiGraph:
-    """
-    Breaks cycles in a directed acyclic graph (DAG) by removing the edge with
-    the lowest goodness of fit (R2). If there are multiple cycles, they are
-    all traversed and fixed. If prior is set, then the cycles are broken
-    using the prior knowledge.
-
-    Parameters:
-    - dag (nx.DiGraph): the DAG to break cycles in.
-    - knowledge (pd.DataFrame): a DataFrame containing the permutation importances
-        for each edge in the DAG.
-    - prior (List[List[str]]): a list of lists containing the prior knowledge
-        about the edges in the DAG. The lists define a hierarchy of edges that
-        represent a temporal relation in cause and effect. If a node is in the first
-        list, then it is a root cause. If a node is in the second list, then it is
-        caused by the nodes in the first list or the second list, and so on.
-
-    Returns:
-    - dag (nx.DiGraph): the DAG with cycles broken.
-    """
+    """Break cycles in a DAG using discrepancies and optional priors."""
     if verbose:
         print("-----\n> break_cycles_if_present()")
 
@@ -1342,19 +1287,7 @@ def list_files(input_pattern: str, where: str) -> list:
     return sorted(list(set(input_files)))
 
 def read_json_file(file_path: str):
-    """
-    Read a JSON file and return its content as a dictionary.
-    Each inner list is a tier (earlier tiers can cause later tiers, not vice versa).
-    Each inner list should not contain duplicate names, and names should match your dataset columns.
-
-    Example:
-    {
-        "prior": [
-            ["A", "B"],
-            ["C", "D"]
-        ]
-    }
-    """
+    """Read a JSON file and return the ``prior`` list, if present."""
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
             data = json.load(file)

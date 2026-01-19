@@ -14,7 +14,6 @@ Subpackages
    causalexplain.independence
    causalexplain.metrics
    causalexplain.models
-   causalexplain.tests
 
 Submodules
 ----------

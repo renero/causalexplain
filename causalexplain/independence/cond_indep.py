@@ -29,23 +29,7 @@ def _d_separated(graph, x, y, z):
 
 
 class ConditionalIndependencies:
-    """
-    A class to store conditional independencies in a graph.
-
-    Attributes
-    ----------
-    _cache : dict
-        A dictionary representing the conditional independencies.
-
-    Methods
-    -------
-    add(x, y, z)
-        Adds a new conditional independence to the cache.
-    __str__()
-        Returns a string representation of the conditional independencies.
-    __repr__()
-        Returns a string representation of the conditional independencies.
-    """
+    """Container for conditional independencies."""
 
     def __init__(self):
         self._cache = {}
@@ -93,27 +77,7 @@ class ConditionalIndependencies:
 
 
 class SufficientSets:
-    """
-    A class to represent the sufficient sets of a conditional independence test.
-
-    Attributes
-    ----------
-    _cache : list
-        A list of tuples representing the sufficient sets.
-
-    Methods
-    -------
-    add(suff_set)
-        Adds a new sufficient set to the cache.
-
-        Parameters
-        ----------
-        suff_set : list
-            A list of tuples representing the new sufficient set to be added.
-
-    __str__()
-        Returns a string representation of the sufficient sets.
-    """
+    """Container for sufficient sets of conditional independencies."""
 
     def __init__(self):
         self._cache = []

@@ -6,6 +6,7 @@ import scipy.linalg as slin
 class TraceExpm(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input):
+        """Compute the trace of the matrix exponential."""
         # detach so we can cast to NumPy
         E = slin.expm(input.detach().numpy())
         f = np.trace(E)
@@ -15,6 +16,7 @@ class TraceExpm(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
+        """Compute gradients for the trace-expm operation."""
         E, = ctx.saved_tensors
         grad_input = grad_output * E.t()
         return grad_input

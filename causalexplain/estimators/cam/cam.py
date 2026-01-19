@@ -1,35 +1,15 @@
 """
+Causal Additive Model (CAM) estimator.
 
-(C) Original Code from R implementation of the Causal Additive Model (CAM)
+This module provides a Python translation of the original CAM implementation:
 
-@article{buhlmann2014cam,
-  title={CAM: Causal additive models, high-dimensional order search and 
-          penalized regression},
-  author={B{\"u}hlmann, Peter and Peters, Jonas and Ernest, Jan},
-  journal={The Annals of Statistics},
-  volume={42},
-  number={6},
-  pages={2526--2556},
-  year={2014},
-  publisher={Institute of Mathematical Statistics}
-}
+    Buhlmann, Peter and Peters, Jonas and Ernest, Jan (2014).
+    CAM: Causal additive models, high-dimensional order search and
+    penalized regression. The Annals of Statistics, 42(6), 2526--2556.
 
-- **Imports**: Imported necessary modules and functions. Assumed that
-`computeScoreMat`, `updateScoreMat`, `pruning`, `selGamBoost`, and `selGam`
-are defined in separate Python files in the same directory.
-- **Function Definition**: Translated the R function `CAM` to Python.
-- **Variable Initialization**: Initialized variables and handled default values.
-- **Variable Selection**: Used `numpy` and `multiprocessing` for parallel 
-    processing.
-- **Edge Inclusion**: Translated the logic for including edges and updating the
-score matrix.
-- **Pruning**: Translated the pruning step.
-- **Output and Return**: Collected and printed the results.
-
-Make sure the corresponding Python files (`computeScoreMat.py`, 
-    `updateScoreMat.py`,
-`pruning.py`, `selGamBoost.py`, `selGam.py`) are present in the same directory 
-and contain the necessary functions.
+The implementation depends on helper modules in this package such as
+``computeScoreMat``, ``updateScoreMat``, ``pruning``, ``selGamBoost``, and
+``selGam``.
 """
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init
 # pylint: disable=C0103:invalid-name, W0221:arguments-differ
@@ -56,6 +36,7 @@ from ...metrics.compare_graphs import evaluate_graph
 
 
 class CAM:
+    """Causal Additive Model (CAM) estimator."""
     def __init__(
             self,
             name:str,
@@ -199,7 +180,7 @@ class CAM:
                             f"{computeScoreMatTmp['scoreMat'][i, j]:+.4f} ", end="")
                 print("")
 
-            print("Pre-WHILE condition: ", np.sum(computeScoreMatTmp['scoreMat'] != -np.Inf))
+            print("Pre-WHILE condition: ", np.sum(computeScoreMatTmp['scoreMat'] != -np.inf))
 
         while np.sum(computeScoreMatTmp['scoreMat'] != -np.inf) > 0:
             start_time = time.time()

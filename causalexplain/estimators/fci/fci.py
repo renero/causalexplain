@@ -80,37 +80,7 @@ class FCI:
                     X: pd.DataFrame,
                     X_test: pd.DataFrame = None,
                     ref_graph: nx.DiGraph = None):
-        """
-        Fits the model to the data and returns predictions.
-
-        Parameters
-        ----------
-        X (pd.DataFrame): The input data to fit the model on.
-        X_test (pd.DataFrame): The input data to fit the model on.
-        ref_graph (nx.DiGraph): The reference graph, or ground truth.
-        causes_only: bool, if True, only causes are returned
-            (default: True), by filtering the CPDAG and considering only
-            the edges indicating a causal relationship.
-
-        Returns
-        -------
-        graph : a GeneralGraph object, where graph.graph[j,i]=1 and 
-            graph.graph[i,j]=-1 indicates  i --> j ,
-            graph.graph[i,j] = graph.graph[j,i] = -1 indicates i --- j,
-            graph.graph[i,j] = graph.graph[j,i] = 1 indicates i <-> j,
-            graph.graph[j,i]=1 and graph.graph[i,j]=2 indicates  i o-> j.
-        edges : list
-            Contains graph's edges properties.
-            If edge.properties have the Property 'nl', then there is no latent 
-                confounder. Otherwise, there are possibly latent confounders.
-            If edge.properties have the Property 'dd', then it is definitely 
-                direct. Otherwise, it is possibly direct.
-            If edge.properties have the Property 'pl', then there are 
-                possibly latent confounders. Otherwise, there is no 
-                latent confounder.
-            If edge.properties have the Property 'pd', then it is 
-            possibly direct. Otherwise, it is definitely direct.
-        """
+        """Fit the model and return the estimated graph."""
         graph, edges = fci(
             X.values,
             indep_test_method=self.independence_test_method,

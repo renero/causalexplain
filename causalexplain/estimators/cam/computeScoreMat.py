@@ -1,16 +1,4 @@
-"""
-- **Function Definition**: Translated the R function `computeScoreMat` to Python as
-`compute_score_mat`.
-- **Combinations**: Used `itertools.combinations` to generate parent combinations.
-- **DataFrame**: Used `pandas.DataFrame` to create the grid of indices.
-- **Parallel Processing**: Used `multiprocessing.Pool` for parallel processing.
-- **Variance Calculation**: Used `numpy.var` to calculate variance and adjusted the
-score matrix accordingly.
-
-Make sure the `compute_score_mat_parallel` function is correctly defined in
-`computeScoreMatParallel.py`. If you need further assistance with that function,
-please provide its R code.
-"""
+"""Compute the CAM score matrix for candidate parent sets."""
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
 # pylint: disable=C0103:invalid-name, W0221:arguments-differ
@@ -40,22 +28,7 @@ def computeScoreMat(
         pars_score,
         interv_mat,
         interv_data):
-    """_summary_
-
-    Args:
-        X (_type_): _description_
-        score_name (_type_): _description_
-        num_parents (_type_): _description_
-        output (_type_): _description_
-        num_cores (_type_): _description_
-        sel_mat (_type_): _description_
-        pars_score (_type_): _description_
-        interv_mat (_type_): _description_
-        interv_data (_type_): _description_
-
-    Returns:
-        _type_: _description_
-    """
+    """Calculate score entries for all parent combinations."""
 
     p = X.shape[1]
     n = X.shape[0]

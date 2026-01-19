@@ -5,36 +5,10 @@ from warnings import warn
 
 
 class PDAG(nx.DiGraph):
-    """
-    Class for representing PDAGs (also known as CPDAG). PDAGs are the equivance classes of
-    DAGs and contain both directed and undirected edges.
-
-    **Note: In this class, undirected edges are represented using two edges in both direction i.e.
-    an undirected edge between X - Y is represented using X -> Y and X <- Y.
-    """
+    """Partially directed acyclic graph (PDAG) representation."""
 
     def __init__(self, directed_ebunch=[], undirected_ebunch=[], latents=[]):
-        """
-        Initializes a PDAG class.
-
-        Parameters
-        ----------
-        directed_ebunch: list, array-like of 2-tuples
-            List of directed edges in the PDAG.
-
-        undirected_ebunch: list, array-like of 2-tuples
-            List of undirected edges in the PDAG.
-
-        latents: list, array-like
-            List of nodes which are latent variables.
-
-        Returns
-        -------
-        An instance of the PDAG object.
-
-        Examples
-        --------
-        """
+        """Initialize a PDAG from directed and undirected edge lists."""
         super(PDAG, self).__init__(
             directed_ebunch
             + undirected_ebunch

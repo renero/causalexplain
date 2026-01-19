@@ -22,10 +22,10 @@ extensions = [
     'sphinx.ext.intersphinx',
     'sphinx.ext.todo',
     'sphinx.ext.coverage',
+    'sphinx.ext.doctest',
     'sphinx.ext.mathjax',
     'sphinx.ext.ifconfig',
     'sphinx.ext.autosummary',
-    'sphinx.ext.autodoc.typehints',
     'myst_parser',
     'numpydoc',
     'sphinx_copybutton',
@@ -39,7 +39,11 @@ autodoc_default_options = {
     'special-members': '__init__',
     'undoc-members': True,
     'private-members': False,
-    'exclude-members': '__weakref__'
+    'exclude-members': (
+        '__weakref__,get_metadata_routing,set_output,set_fit_request,'
+        'set_predict_request,set_transform_request,set_score_request,'
+        'set_metadata_routing'
+    ),
 }
 
 # Autodoc type hints settings
@@ -50,6 +54,10 @@ autodoc_type_aliases = {}
 # Autosummary settings
 autosummary_generate = True
 add_module_names = False
+
+# Numpydoc settings
+numpydoc_show_class_members = False
+numpydoc_class_members_toctree = False
 
 # Napoleon settings
 napoleon_google_docstring = True
@@ -88,7 +96,6 @@ html_theme_options = {
     "navigation_depth": 4,
     "show_nav_level": 1,
     "collapse_navigation": False,
-    "search_bar_position": "navbar",  # or "sidebar"
     "icon_links": [
         {
             "name": "GitHub",

@@ -23,13 +23,7 @@ class AcyclicGraphGenerator(object):
     def __init__(self, causal_mechanism,
                  initial_variable_generator=gmm_cause,
                  points=500, nodes=20, timesteps=0, parents_max=5, verbose=False):
-        """
-        :params:
-        @param:initial_variable_generator(points): init variables of the graph
-        @param:causal_mechanism(causes): generating causes in the graph to
-            choose between: ['linear', 'polynomial', 'sigmoid_add',
-            'sigmoid_mix', 'gp_add', 'gp_mix']
-        """
+        """Initialize a synthetic acyclic graph generator."""
         super(AcyclicGraphGenerator, self).__init__()
         self.mechanism = {'linear': LinearMechanism,
                           'polynomial': Polynomial_Mechanism,

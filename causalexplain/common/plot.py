@@ -517,17 +517,16 @@ def dag2dot(
 
 
 def values_distribution(values, threshold=None, **kwargs):
-    """
-    Plot the probability density and cumulative density of a given set of values.
+    """Plot density and cumulative density for a set of values.
 
-    Parameters:
+    Parameters
     ----------
-        values (array-like): The values to be plotted.
-        **kwargs: Additional keyword arguments for customizing the plot.
-
-    Returns:
-    -------
-        None
+    values : array-like
+        Values to plot.
+    threshold : float, optional
+        Optional threshold marker for the ECDF plot.
+    **kwargs
+        Additional keyword arguments for customizing the plot.
     """
     figsize = kwargs.get('figsize', (7, 5))
     _, ax = plt.subplots(1, 2, figsize=figsize)
@@ -551,37 +550,20 @@ def correlation_matrix(
         threshold: float = 0.5,
         ax: axes.Axes = None,
         **kwargs) -> None:
-    """
-    Plot the correlation matrix of the data.
+    """Plot a thresholded correlation matrix.
 
     Parameters
     ----------
-        - corrs (pd.DataFrame)
-            Correlation matrix.
-        - sorted_colnames (List[str])
-            List of sorted column names. If the dataframe contains the names of
-                columns already sorted, then no need to pass this argument.
-        - threshold (float)
-            Threshold for the correlation. Values below this threshold will
-                not be displayed
-        - ax (matplotlib.axes.Axes)
-            Axes to plot the correlation matrix, in case this is a plot to be
-                embedded in a subplot. Otherwise, a new figure will be created and
-                this argument is not necessary.
-        - **kwargs
-            Keyword arguments to be passed to the plot_dendogram function.
-            - title (str)
-                Title of the plot.
-            - fontsize (int)
-                Font size for the labels.
-            - fontname (str)
-                Font name for the labels.
-            - xrot (int)
-                Rotation of the labels.
-
-    Returns
-    -------
-        None
+    corr_matrix : pandas.DataFrame
+        Correlation matrix.
+    sorted_colnames : list[str], optional
+        Column ordering for the plot.
+    threshold : float, optional
+        Minimum absolute correlation to display.
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw into.
+    **kwargs
+        Plot customization options (title, fontsize, fontname, xrot).
     """
     if sorted_colnames is None:
         sorted_colnames = corr_matrix.columns
@@ -640,25 +622,7 @@ def correlation_matrix(
 
 
 def hierarchies(hierarchies, threshold=0.5, **kwargs):
-    """
-    Plot the hierarchical clustering and correlation matrix of the data.
-
-    https://www.kaggle.com/code/sgalella/correlation-heatmaps-with-hierarchical-clustering/notebook
-
-    Parameters
-    ----------
-        - hierarchies (HierarchicalClustering)
-            Hierarchical clustering object.
-        - threshold (float)
-            Threshold for the correlation.
-        - **kwargs
-            Additional keyword arguments to be passed to the correlation_matrix
-                function.
-
-    Returns
-    -------
-        None
-    """
+    """Plot hierarchical clustering and its correlation matrix."""
     f_size = kwargs.get('figsize', (9, 4))
     _, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=f_size)
     dendrogram(hierarchies.linkage_mat, labels=hierarchies.data.columns,
@@ -1189,25 +1153,7 @@ def deprecated_dags(
 #
 
 def score_by_method(metrics, metric, methods, **kwargs):
-    """
-    Plots the score by method.
-
-    Parameters:
-    - metrics: DataFrame containing the metrics data.
-    - metric: The metric to be plotted.
-    - methods: List of methods to be included in the plot.
-    - **kwargs: Additional keyword arguments for customization, like
-        - figsize: The size of the figure. Default is (4, 3).
-        - dpi: The resolution of the figure in dots per inch. Default is 300.
-        - title: The title of the plot. Default is None.
-        - pdf_filename: The filename to save the plot to. If None, the plot
-            will be displayed on screen, otherwise it will be saved to the
-        - method_column: The name of the column containing the method names.
-            Default is 'method'.
-
-    Returns:
-    None
-    """
+    """Plot a metric distribution grouped by method."""
     assert metric in list(score_titles.keys()), \
         ValueError(f"Metric '{metric}' not recognized.")
     figsize_ = kwargs.get('figsize', (4, 3))
@@ -1350,48 +1296,7 @@ def score_by_subtype(
         methods=None,
         pdf_filename=None,
         **kwargs):
-    """
-    Plots the score by subtype.
-
-    Parameters:
-    - metrics (pandas DataFrame): The metrics for all the experiments. This dataframe
-    contains the following columns:
-        - method (str): The name of the method used.
-        - data_type (str): The type of data used.
-        - f1 (float): The F1 score.
-        - precision (float): The precision score.
-        - recall (float): The recall score.
-        - aupr (float): The area under the precision-recall curve.
-        - Tp (int): The number of true positives.
-        - Tn (int): The number of true negatives.
-        - Fp (int): The number of false positives.
-        - Fn (int): The number of false negatives.
-        - shd (int): The structural Hamming distance.
-        - sid (int): The structural intervention distance.
-        - n_edges (int): The number of edges in the graph.
-        - ref_n_edges (int): The number of edges in the reference graph.
-        - diff_edges (int): The difference between the number of edges in the graph
-        and the reference graph.
-        - name (str): The name of the experiment.
-    and stores one experiment per row.
-    - score_name (str): The name of the score to plot. Valid names are 'f1',
-    'precision', 'recall', 'aupr', 'shd', 'sid', 'n_edges', 'ref_n_edges' and
-    'diff_edges'.
-    - methods (list, optional): The list of methods to plot. If None, all the methods
-    will be plotted. The methods included are: 'rex_intersection', 'rex_union',
-    'pc', 'fci', 'ges', 'lingam'
-    - pdf_filename (str, optional): The filename to save the plot to. If None, the plot
-    will be displayed on screen, otherwise it will be saved to the specified filename.
-
-    Optional parameters:
-    - figsize (tuple, optional): The size of the figure. Default is (2, 1).
-    - dpi (int, optional): The resolution of the figure in dots per inch. Default is 300.
-    - method_column (str, optional): The name of the column in the metrics dataframe
-        that contains the method name. Default is 'method'.
-
-    Returns:
-    None
-    """
+    """Plot score distributions across data subtypes."""
     figsize_ = kwargs.get('figsize', (9, 5))
     dpi_ = kwargs.get('dpi', 300)
     method_column = kwargs.get('method_column', 'method')

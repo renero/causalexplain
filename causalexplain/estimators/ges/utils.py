@@ -87,22 +87,7 @@ def neighbors(i, A):
 
 
 def adj(i, A):
-    """The adjacent nodes of i in A, i.e. all nodes connected by a
-    directed or undirected edge.
-    Parameters
-    ----------
-    i : int
-        the node's index
-    A : np.array
-        the adjacency matrix of the graph, where A[i,j] != 0 => i -> j
-        and A[i,j] != 0 & A[j,i] != 0 => i - j.
-
-    Returns
-    -------
-    nodes : set of ints
-        the adjacent nodes
-
-    """
+    """Return nodes adjacent to node i in adjacency matrix A."""
     return set(np.where(np.logical_or(A[i, :] != 0, A[:, i] != 0))[0])
 
 

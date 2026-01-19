@@ -25,32 +25,7 @@ def pairwise_mic(
         est="mic_approx",
         prog_bar=True,
         silent=False):
-    """
-    From a dataframe, compute the MIC for each pair of features. See
-    https://github.com/minepy/minepy and https://github.com/minepy/mictools for
-    more details.
-
-    - [Reshef2016]	Yakir A. Reshef, David N. Reshef, Hilary K. Finucane and Pardis C.
-    Sabeti and Michael Mitzenmacher. Measuring Dependence Powerfully and Equitably.
-    Journal of Machine Learning Research, 2016.
-    - [Matejka2017]	J. Matejka and G. Fitzmaurice. Same Stats, Different Graphs:
-    Generating Datasets with Varied Appearance and Identical Statistics through
-    Simulated Annealing. ACM SIGCHI Conference on Human Factors in Computing
-    Systems, 2017.
-
-    Arguments:
-        data (DataFrame): A DF with continuous numerical values
-        alpha (float): MINE MIC value for alpha
-        c (int): MINE MIC value for c
-        to_return (str): Either 'mic' or 'tic'.
-        est (str): MINE MIC value for est. Default is est=”mic_approx” where the
-            original MINE statistics will be computed, with est=”mic_e” the
-            equicharacteristic matrix is is evaluated and MIC_e and TIC_e are returned.
-        prog_bar (bool): whether to print the prog_bar or not.
-
-    Returns:
-        A dataframe with the MIC values between pairs.
-    """
+    """Compute the MIC/TIC for each pair of features in a dataframe."""
     assert est in ["mic_approx",
                    "mic_e"], "est must be either mic_approx or mic_e"
 
