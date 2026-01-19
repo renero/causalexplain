@@ -88,3 +88,7 @@ requirements.txt_with_versions
 # Ignore all local history of files
 **/.history
 .vscode/launch.json
+# GUI runtime artifacts
+.gui_uploads/
+.nicegui/
+toy_dataset.dot
