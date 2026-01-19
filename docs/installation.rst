@@ -8,7 +8,7 @@ You can install CausalExplain using pip:
    pip install causalexplain
 
 Requirements
------------
+-------------
 
 CausalExplain requires Python 3.10 or later. The main dependencies are:
 
@@ -52,4 +52,3 @@ these lines, you can install PyGraphViz using the following command:
 .. code-block:: bash
 
    pip install pygraphviz
-

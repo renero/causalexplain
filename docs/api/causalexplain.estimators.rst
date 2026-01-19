@@ -14,12 +14,3 @@ Subpackages
    causalexplain.estimators.notears
    causalexplain.estimators.pc
    causalexplain.estimators.rex
-
-Module contents
----------------
-
-.. automodule:: causalexplain.estimators
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :private-members:

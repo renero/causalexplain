@@ -31,12 +31,3 @@ Submodules
    :undoc-members:
    :show-inheritance:
    :private-members:
-
-Module contents
----------------
-
-.. automodule:: causalexplain.estimators.ges
-   :members:
-   :undoc-members:
-   :show-inheritance:
-   :private-members:

@@ -4,7 +4,7 @@ Quickstart
 This guide will help you get started with CausalExplain.
 
 Basic Usage
-----------
+-----------
 
 Here's a simple example of how to get CausalExplain help from the command line:
 
@@ -58,7 +58,7 @@ and generate synthetic datasets.
 
 
 Input Arguments Information
---------------------------
+---------------------------
 
 The basic arguments are:
 
@@ -76,12 +76,12 @@ Regarding the output of the ``causalexplain`` command, the following information
 provided:
 
 - The plausible causal graph, which is the causal graph that is inferred by
-the method without taking into account the true DAG.
+  the method without taking into account the true DAG.
 - The metrics obtained from the evaluation of the causal graph against the true
-DAG.
+  DAG.
 
 In those cases where training or running a method takes a long time, ``causalexplain``
-allows you to save the model (``-s`` or ```--save_model```) trained in a file and
+allows you to save the model (``-s`` or ``--save_model``) trained in a file and
 load it later. To load the model, use the ``-l`` or ``--load_model`` option.
 
 ReX can also use prior knowledge to constrain edge directions. The prior is a

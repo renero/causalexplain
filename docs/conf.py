@@ -22,6 +22,7 @@ extensions = [
     'sphinx.ext.intersphinx',
     'sphinx.ext.todo',
     'sphinx.ext.coverage',
+    'sphinx.ext.doctest',
     'sphinx.ext.mathjax',
     'sphinx.ext.ifconfig',
     'sphinx.ext.autosummary',
@@ -38,7 +39,11 @@ autodoc_default_options = {
     'special-members': '__init__',
     'undoc-members': True,
     'private-members': False,
-    'exclude-members': '__weakref__'
+    'exclude-members': (
+        '__weakref__,get_metadata_routing,set_output,set_fit_request,'
+        'set_predict_request,set_transform_request,set_score_request,'
+        'set_metadata_routing'
+    ),
 }
 
 # Autodoc type hints settings
@@ -52,6 +57,7 @@ add_module_names = False
 
 # Numpydoc settings
 numpydoc_show_class_members = False
+numpydoc_class_members_toctree = False
 
 # Napoleon settings
 napoleon_google_docstring = True
