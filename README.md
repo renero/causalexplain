@@ -65,15 +65,12 @@ The project can be installed using pip:
 $ pip install causalexplain
 ```
 
-## What's new in v0.8.0
+## What's new in v0.9.1
 
-- Adaptive SHAP sampling with stability checks and new controls like
-  `max_shap_samples`; GBT defaults to `shap.TreeExplainer`.
-- Parallelization for DNN training and bootstrap runs, plus CLI flags for
-  parallel jobs.
-- CUDA/MPS device selection and float32 enforcement for PyTorch models.
-- Prior handling and diagnostics improvements across ReX, SHAP, and feature
-  selection.
+- GUI refactor: split the NiceGUI app into tab modules with shared helpers.
+- GUI styling: extracted CSS into static assets and smoothed Train tab resizing.
+- GUI tests: added coverage for helper utilities and Cytoscape layouts.
+- Packaging: include GUI CSS assets in package data.
 
 ## Data
 
@@ -105,6 +102,7 @@ usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
                      [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
                      [-q] [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD]
                      [-t TRUE_DAG] [-v]```
+```
 
 that will present you with a menu to choose the dataset you want to use, the
 method you want to use to infer the causal graph, and the hyperparameters you
@@ -315,7 +313,7 @@ experiment.run(prior=prior, hpo_iterations=10, bootstrap_iterations=10)
 If you use **CausalExplain**, please cite the **software** and/or the **related publication** below.
 
 ### Software
-> Renero, J. (2026). *CausalExplain* (Version 0.8.0).
+> Renero, J. (2026). *CausalExplain* (Version 0.9.1).
 > Available at: [https://github.com/renero/causalexplain](https://github.com/renero/causalexplain)
 
 **BibTeX**
@@ -323,7 +321,7 @@ If you use **CausalExplain**, please cite the **software** and/or the **related 
 @software{causalexplain_software,
   author  = {Jesús Renero},
   title   = {CausalExplain},
-  version = {0.8.0},
+  version = {0.9.1},
   url     = {https://github.com/renero/causalexplain},
   date    = {2026-01-04}
 }
