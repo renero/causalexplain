@@ -64,26 +64,7 @@ class DAG(nx.DiGraph):
         super(DAG, self).add_node(node, weight=weight)
 
     def add_nodes_from(self, nodes, weights=None, latent=False):
-        """
-        Add multiple nodes to the Graph.
-
-        **The behviour of adding weights is different than in networkx.
-
-        Parameters
-        ----------
-        nodes: iterable container
-            A container of nodes (list, dict, set, or any hashable python
-            object).
-
-        weights: list, tuple (default=None)
-            A container of weights (int, float). The weight value at index i
-            is associated with the variable at index i.
-
-        latent: list, tuple (default=False)
-            A container of boolean. The value at index i tells whether the
-            node at index i is latent or not.
-
-        """
+        """Add multiple nodes to the graph."""
         nodes = list(nodes)
 
         if isinstance(latent, bool):
@@ -121,26 +102,7 @@ class DAG(nx.DiGraph):
         super(DAG, self).add_edge(u, v, weight=weight)
 
     def add_edges_from(self, ebunch, weights=None):
-        """
-        Add all the edges in ebunch.
-
-        If nodes referred in the ebunch are not already present, they
-        will be automatically added. Node names can be any hashable python
-        object.
-
-        **The behavior of adding weights is different than networkx.
-
-        Parameters
-        ----------
-        ebunch : container of edges
-            Each edge given in the container will be added to the graph.
-            The edges must be given as 2-tuples (u, v).
-
-        weights: list, tuple (default=None)
-            A container of weights (int, float). The weight value at index i
-            is associated with the edge at index i.
-
-        """
+        """Add multiple edges to the graph."""
         ebunch = list(ebunch)
 
         if weights:

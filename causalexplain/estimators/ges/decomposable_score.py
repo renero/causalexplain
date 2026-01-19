@@ -28,18 +28,7 @@
 # ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
-"""Module containing the DecomposableScore class, inherited by all
-classes which implement a locally decomposable score for directed
-acyclic graphs. By default, the class also caches the results of
-computing local scores.
-
-NOTE: It is not mandatory to inherit this class when developing custom
-scores to use with the GES implementation in ges.py. The only
-requirement is that the class defines:
-  1. the local_score function (see below),
-  2. an attribute "p" for the total number of variables.
-
-"""
+"""Utilities for locally decomposable scores used by GES."""
 
 import copy
 

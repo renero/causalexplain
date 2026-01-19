@@ -245,26 +245,7 @@ def summarize_weights(weights, feature_names, layer=0, scale=True):
 
 
 def identify_relationships(weights, feature_names, eps=0.5, min_counts=2, plot=True):
-    """
-    Run a clustering algorithm on the summary values of weights coming out of input
-    cells in the neural network. Summary values are the mean, the median and the
-    positive semidefinite values. Those three dimensions are then clustered to
-    identify what clusters have less or equal than min_count elements, to consider
-    that cluster as relevant to produce the regression for that given feature the
-    NN has been trained for.
-
-    Parameters:
-    - weights: The weights of the neural network model.
-    - feature_names: A list of feature names.
-    - eps: The maximum distance between two samples for one to be considered as in
-        the neighborhood of the other.
-    - min_counts: The minimum number of elements in a cluster to consider it relevant.
-    - plot: If True, plot the clusters.
-
-    Returns:
-    - rels: A dictionary containing the relevant features for each target feature.
-
-    """
+    """Identify feature relationships using clustered weight summaries."""
     rels = {}
     for target in feature_names:
         X = weights[[f"psd_{target}", f"med_{target}",
@@ -440,25 +421,7 @@ def infer_causal_relationships(
         plot=False,
         prog_bar=True,
         silent=False):
-    """
-    Infer causal relationships between the input features and the target variable
-    based on the SHAP values of the trained models.
-
-    Parameters:
-    - trained_models: A dictionary of trained models, where the keys are the target
-        variable names and the values are the trained models.
-    - feature_names: A list of input feature names.
-    - prune: If True, remove asymmetric edges from the graph.
-    - verbose: If True, print additional information.
-    - plot: If True, plot the results.
-    - prog_bar: If True, show a progress bar.
-    - silent: If True, do not show any output.
-
-    Returns:
-    - A dictionary containing the SHAP values, the average SHAP values, the thresholds,
-        the raw graph, and the oriented graph.
-
-    """
+    """Infer causal relationships from SHAP values of trained models."""
     # pbar = tqdm(total=len(feature_names),
     #             **tqdm_params("Computing SHAPLEY values", prog_bar, silent=silent))
     if prog_bar and not silent:

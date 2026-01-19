@@ -1,0 +1,107 @@
+Running Sphinx v7.2.6
+loading pickled environment... done
+[autosummary] generating autosummary for: api/causalexplain.common.rst, api/causalexplain.estimators.cam.rst, api/causalexplain.estimators.fci.rst, api/causalexplain.estimators.ges.rst, api/causalexplain.estimators.lingam.rst, api/causalexplain.estimators.notears.rst, api/causalexplain.estimators.pc.rst, api/causalexplain.estimators.rex.rst, api/causalexplain.estimators.rst, api/causalexplain.explainability.rst, ..., api/causalexplain.metrics.rst, api/causalexplain.models.rst, api/causalexplain.rst, api/causalexplain.tests.rst, api/index.rst, changelog.rst, contributing.rst, index.md, installation.rst, quickstart.rst
+WARNING: Failed to import causalexplain.tests.test_SID.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_compare_graphs.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_cond_indep.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_correct_edge_from_prior.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_feature_selection.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_hsic.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_orient_graph.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_reg_quality.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.test_utils.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.tests.
+Possible hints:
+* AttributeError: module 'causalexplain' has no attribute 'tests'
+* ModuleNotFoundError: No module named 'causalexplain.tests'
+WARNING: Failed to import causalexplain.estimators.cam.selLmBoost.
+Possible hints:
+* AttributeError: module 'causalexplain.estimators.cam' has no attribute 'selLmBoost'
+* ModuleNotFoundError: No module named 'Python'
+myst v3.0.1: MdParserConfig(commonmark_only=False, gfm_only=False, enable_extensions=set(), disable_syntax=[], all_links_external=False, links_external_new_tab=False, url_schemes=('http', 'https', 'mailto', 'ftp'), ref_domains=None, fence_as_directive=set(), number_code_blocks=[], title_to_header=False, heading_anchors=0, heading_slug_func=None, html_meta={}, footnote_transition=True, words_per_minute=200, substitutions={}, linkify_fuzzy_links=True, dmath_allow_labels=True, dmath_allow_space=True, dmath_allow_digits=True, dmath_double_inline=False, update_mathjax=True, mathjax_classes='tex2jax_process|mathjax_process|math|output_area', enable_checkboxes=False, suppress_warnings=[], highlight_code_blocks=True)
+building [mo]: targets for 0 po files that are out of date
+writing output... 
+building [html]: targets for 0 source files that are out of date
+updating environment: 0 added, 3 changed, 0 removed
+[2Kreading sources... [ 33%] api/causalexplain.estimators.cam[2Kreading sources... [ 67%] api/causalexplain.tests[2Kreading sources... [100%] index
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:6: WARNING: Definition list ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:13: WARNING: Definition list ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:16: WARNING: Bullet list ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:21: ERROR: Unexpected indentation.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:22: WARNING: Block quote ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:23: WARNING: Bullet list ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam:29: WARNING: Definition list ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/cam.py:docstring of causalexplain.estimators.cam.cam.CAM:8: WARNING: autosummary: stub file not found 'causalexplain.estimators.cam.cam.CAM.fit'. Check your autosummary_generate setting.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/computeScoreMat.py:docstring of causalexplain.estimators.cam.computeScoreMat:2: WARNING: Bullet list ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/selGamBoost.py:docstring of causalexplain.estimators.cam.selGamBoost:10: ERROR: Unexpected indentation.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/selGamBoost.py:docstring of causalexplain.estimators.cam.selGamBoost:11: WARNING: Block quote ends without a blank line; unexpected unindent.
+/Users/e052819/Code/causalexplain/causalexplain/estimators/cam/selLasso.py:docstring of causalexplain.estimators.cam.selLasso:4: WARNING: Enumerated list ends without a blank line; unexpected unindent.
+WARNING: autodoc: failed to import module 'selLmBoost' from module 'causalexplain.estimators.cam'; the following exception was raised:
+No module named 'Python'
+WARNING: autodoc: failed to import module 'tests.test_SID' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_compare_graphs' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_cond_indep' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_correct_edge_from_prior' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_feature_selection' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_hsic' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_orient_graph' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_reg_quality' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests.test_utils' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+WARNING: autodoc: failed to import module 'tests' from module 'causalexplain'; the following exception was raised:
+No module named 'causalexplain.tests'
+/Users/e052819/Code/causalexplain/docs/index.md:8: WARNING: toctree contains reference to nonexisting document 'api/modules'
+looking for now-outdated files... none found
+pickling environment... done
+checking consistency... /Users/e052819/Code/causalexplain/docs/api/index.rst: WARNING: document isn't included in any toctree
+done
+preparing documents... WARNING: unsupported theme option 'search_bar_position' given
+done
+copying assets... copying static files... done
+copying extra files... done
+done
+[2Kwriting output... [ 20%] api/causalexplain[2Kwriting output... [ 40%] api/causalexplain.estimators[2Kwriting output... [ 60%] api/causalexplain.estimators.cam[2Kwriting output... [ 80%] api/causalexplain.tests[2Kwriting output... [100%] index
+/Users/e052819/Code/causalexplain/README.md:4: WARNING: 'myst' cross-reference target not found: '' [myst.xref_missing]
+generating indices... genindex py-modindex done
+[2Khighlighting module code... [  1%] causalexplain.__main__[2Khighlighting module code... [  3%] causalexplain.causalexplainer[2Khighlighting module code... [  4%] causalexplain.common.notebook[2Khighlighting module code... [  6%] causalexplain.common.plot[2Khighlighting module code... [  7%] causalexplain.common.utils[2Khighlighting module code... [  9%] causalexplain.estimators.cam.cam[2Khighlighting module code... [ 10%] causalexplain.estimators.cam.computeScoreMat[2Khighlighting module code... [ 12%] causalexplain.estimators.cam.computeScoreMatParallel[2Khighlighting module code... [ 13%] causalexplain.estimators.cam.pruning[2Khighlighting module code... [ 14%] causalexplain.estimators.cam.selGam[2Khighlighting module code... [ 16%] causalexplain.estimators.cam.selGamBoost[2Khighlighting module code... [ 17%] causalexplain.estimators.cam.selLasso[2Khighlighting module code... [ 19%] causalexplain.estimators.cam.selLm[2Khighlighting module code... [ 20%] causalexplain.estimators.cam.train_GAMboost[2Khighlighting module code... [ 22%] causalexplain.estimators.cam.train_LMboost[2Khighlighting module code... [ 23%] causalexplain.estimators.cam.train_gam[2Khighlighting module code... [ 25%] causalexplain.estimators.cam.train_gp[2Khighlighting module code... [ 26%] causalexplain.estimators.cam.train_lasso[2Khighlighting module code... [ 28%] causalexplain.estimators.cam.train_linear[2Khighlighting module code... [ 29%] causalexplain.estimators.cam.updateScoreMat[2Khighlighting module code... [ 30%] causalexplain.estimators.fci.fci[2Khighlighting module code... [ 32%] causalexplain.estimators.ges.decomposable_score[2Khighlighting module code... [ 33%] causalexplain.estimators.ges.ges[2Khighlighting module code... [ 35%] causalexplain.estimators.ges.scores[2Khighlighting module code... [ 36%] causalexplain.estimators.ges.utils[2Khighlighting module code... [ 38%] causalexplain.estimators.lingam.bootstrap[2Khighlighting module code... [ 39%] causalexplain.estimators.lingam.lingam[2Khighlighting module code... [ 41%] causalexplain.estimators.lingam.utils[2Khighlighting module code... [ 42%] causalexplain.estimators.notears.lbfgsb_scipy[2Khighlighting module code... [ 43%] causalexplain.estimators.notears.linear[2Khighlighting module code... [ 45%] causalexplain.estimators.notears.locally_connected[2Khighlighting module code... [ 46%] causalexplain.estimators.notears.loss[2Khighlighting module code... [ 48%] causalexplain.estimators.notears.main[2Khighlighting module code... [ 49%] causalexplain.estimators.notears.nonlinear[2Khighlighting module code... [ 51%] causalexplain.estimators.notears.notears[2Khighlighting module code... [ 52%] causalexplain.estimators.notears.trace_expm[2Khighlighting module code... [ 54%] causalexplain.estimators.notears.utils[2Khighlighting module code... [ 55%] causalexplain.estimators.pc.ci_tests[2Khighlighting module code... [ 57%] causalexplain.estimators.pc.dag[2Khighlighting module code... [ 58%] causalexplain.estimators.pc.estimators[2Khighlighting module code... [ 59%] causalexplain.estimators.pc.independencies[2Khighlighting module code... [ 61%] causalexplain.estimators.pc.pc[2Khighlighting module code... [ 62%] causalexplain.estimators.pc.pdag[2Khighlighting module code... [ 64%] causalexplain.estimators.rex.knowledge[2Khighlighting module code... [ 65%] causalexplain.estimators.rex.rex[2Khighlighting module code... [ 67%] causalexplain.explainability.hierarchies[2Khighlighting module code... [ 68%] causalexplain.explainability.perm_importance[2Khighlighting module code... [ 70%] causalexplain.explainability.regression_quality[2Khighlighting module code... [ 71%] causalexplain.explainability.shapley[2Khighlighting module code... [ 72%] causalexplain.generators.generators[2Khighlighting module code... [ 74%] causalexplain.generators.mechanisms[2Khighlighting module code... [ 75%] causalexplain.independence.cond_indep[2Khighlighting module code... [ 77%] causalexplain.independence.edge_orientation[2Khighlighting module code... [ 78%] causalexplain.independence.effect[2Khighlighting module code... [ 80%] causalexplain.independence.feature_selection[2Khighlighting module code... [ 81%] causalexplain.independence.graph_independence[2Khighlighting module code... [ 83%] causalexplain.independence.hsic[2Khighlighting module code... [ 84%] causalexplain.independence.kernels[2Khighlighting module code... [ 86%] causalexplain.independence.mic[2Khighlighting module code... [ 87%] causalexplain.independence.regressors[2Khighlighting module code... [ 88%] causalexplain.metrics.SID[2Khighlighting module code... [ 90%] causalexplain.metrics.compare_graphs[2Khighlighting module code... [ 91%] causalexplain.models._base_models[2Khighlighting module code... [ 93%] causalexplain.models._columnar[2Khighlighting module code... [ 94%] causalexplain.models._loss[2Khighlighting module code... [ 96%] causalexplain.models._models[2Khighlighting module code... [ 97%] causalexplain.models._weight_utils[2Khighlighting module code... [ 99%] causalexplain.models.dnn[2Khighlighting module code... [100%] causalexplain.models.gbt
+writing additional pages... search done
+dumping search index in English (code: en)... done
+dumping object inventory... done
+build succeeded, 38 warnings.
+
+The HTML pages are in _build/html.

@@ -62,22 +62,24 @@ COMBINED_DAG_NAMES = ['un_G_shap', 'in_G_shap',
 
 
 class BaseExperiment:
-    """
-    Base class for experiments.
+    """Base class for notebook experiments.
 
-    Args:
-    input_path (str): The path to the input data.
-    output_path (str): The path to save the experiment output.
-    train_anyway (bool, optional): Whether to train the model even if the
-        experiment exists. Defaults to False.
-    save_anyway (bool, optional): Whether to save the experiment even
-        if it exists. Defaults to False.
-    train_size (float, optional): The proportion of data to use for training.
-        Defaults to 0.9.
-    random_state (int, optional): The random state for reproducibility.
-        Defaults to 42.
-    verbose (bool, optional): Whether to display verbose output.
-        Defaults to False.
+    Parameters
+    ----------
+    input_path : str
+        Path to the input data.
+    output_path : str
+        Path to save experiment outputs.
+    train_anyway : bool, optional
+        Whether to train even if cached outputs exist.
+    save_anyway : bool, optional
+        Whether to overwrite cached outputs.
+    train_size : float, optional
+        Proportion of samples used for training.
+    random_state : int, optional
+        Random seed for reproducibility.
+    verbose : bool, optional
+        Whether to display verbose output.
     """
     model_type: str | None = None
 
@@ -201,19 +203,7 @@ class BaseExperiment:
             os.path.join(self.output_path, f"{os.path.basename(name)}.pickle"))
 
     def create_estimator(self, estimator_name: str, name: str, **kwargs):
-        """
-        Dynamically creates an instance of a class based on the estimator name.
-
-        Args:
-        estimator_name (str): The name of the estimator (key in the 'estimators'
-            dictionary).
-        name (str): The name of the estimator instance.
-        *args: Variable length argument list to be passed to the class constructor.
-        **kwargs: Arbitrary keyword arguments to be passed to the class constructor.
-
-        Returns:
-        An instance of the specified class, or None if the class does not exist.
-        """
+        """Create an estimator instance from the registry."""
         estimator_class = estimators.get(estimator_name)
         if estimator_class is None:
             print(f"Estimator '{estimator_name}' not found.")
@@ -228,14 +218,7 @@ class BaseExperiment:
 
 
 class Experiment(BaseExperiment):
-    """
-    Represents an experiment for causal graph analysis.
-
-    Methods:
-        load: Loads the experiment data.
-        fit: Fits the experiment data.
-        save: Saves the experiment data.
-    """
+    """Notebook-friendly wrapper for training and evaluating estimators."""
 
     estimator_name = None
     rex: Rex | None = None
@@ -263,33 +246,7 @@ class Experiment(BaseExperiment):
         random_state: int = 42,
         verbose=False
     ):
-        """
-        Initializes a new instance of the Experiment class.
-
-        Args:
-            experiment_name (str): The name of the experiment.
-            csv_filename (str, optional): The filename of the CSV file containing
-                the data. Defaults to None.
-            dot_filename (str, optional): The filename of the DOT file containing
-                the causal graph. Defaults to None.
-            data (pd.DataFrame, optional): Dataframe to use instead of reading the CSV.
-            data_is_processed (bool, optional): Whether data is already numeric and ready.
-            train_idx (pd.Index, optional): Precomputed train indices.
-            test_idx (pd.Index, optional): Precomputed test indices.
-            model_type (str, optional): The type of model to use. Defaults to 'nn'.
-                Other options are: 'gbt', 'nn', 'cam', 'pc', 'fci', 'notears',
-                'ges' and 'lingam'.
-            input_path (str, optional): The path to the input data.
-                Defaults to "/Users/renero/phd/data/RC4/".
-            output_path (str, optional): The path to save the output.
-                Defaults to "/Users/renero/phd/output/RC4/".
-            train_size (float, optional): The proportion of data to use for training.
-                Defaults to 0.9.
-            random_state (int, optional): The random seed for reproducibility.
-                Defaults to 42.
-            verbose (bool, optional): Whether to print verbose output.
-                Defaults to False.
-        """
+        """Initialize an experiment session."""
 
         super().__init__(
             input_path, output_path, train_size=train_size,
@@ -308,9 +265,7 @@ class Experiment(BaseExperiment):
             train_idx=train_idx, test_idx=test_idx)
 
     def _check_model_type(self, model_type) -> str:
-        """
-        Checks if the model type is valid.
-        """
+        """Validate and normalize the model type."""
         model_type = model_type.lower()
         if model_type in ['dnn', 'nn']:
             model_type = 'nn'
@@ -328,9 +283,7 @@ class Experiment(BaseExperiment):
         return model_type
 
     def _set_estimator_attr(self, estimator_name: str|None, estimator: Any) -> None:
-        """
-        Assigns the estimator to a stable, typed attribute.
-        """
+        """Assign the estimator to a typed attribute."""
         assert estimator_name is not None, "estimator_name cannot be None"
 
         if estimator_name == 'rex':
@@ -349,15 +302,7 @@ class Experiment(BaseExperiment):
             self.notears = estimator
 
     def fit(self, estimator_name='rex', **kwargs):
-        """
-        Fits the experiment data.
-
-        Args:
-            **kwargs: Additional keyword arguments to pass to the Rex constructor.
-
-        Returns:
-            Rex: The fitted experiment data.
-        """
+        """Fit the selected estimator using the experiment data."""
         self.estimator_name = estimator_name
         kwargs['model_type'] = self.model_type
 
@@ -378,15 +323,7 @@ class Experiment(BaseExperiment):
         return self
 
     def predict(self, estimator='rex', **kwargs):
-        """
-        Predicts with the experiment data.
-
-        Args:
-            **kwargs: Additional keyword arguments to pass to the `predict()` method
-
-        Returns:
-            Rex: The fitted experiment data.
-        """
+        """Run prediction for the active estimator."""
         if self.estimator_name is None:
             self.estimator_name = 'rex'
         estimator = getattr(self, self.estimator_name)
@@ -395,15 +332,7 @@ class Experiment(BaseExperiment):
         return self
 
     def fit_predict(self, estimator='rex', **kwargs):
-        """
-        Fits and predicts with the experiment data.
-
-        Args:
-            **kwargs: Additional keyword arguments to pass to the Rex constructor.
-
-        Returns:
-            Rex: The fitted experiment data.
-        """
+        """Fit and predict with the selected estimator."""
         start_time = time.time()
         self.estimator_name = estimator
 
@@ -448,16 +377,7 @@ class Experiment(BaseExperiment):
                 f"Estimator '{exp_name}' not recognized.")
 
     def load(self, exp_name=None) -> "Experiment":
-        """
-        Loads the experiment data.
-
-        Args:
-            exp_name (str, optional): The name of the experiment to load.
-            If None, loads the current experiment. Defaults to None.
-
-        Returns:
-            Rex: The loaded experiment data.
-        """
+        """Load a previously saved experiment."""
 
         if exp_name is None:
             exp_name = self.experiment_name
@@ -490,16 +410,7 @@ class Experiment(BaseExperiment):
         return self
 
     def save(self, exp_name=None, overwrite: bool = False):
-        """
-        Saves the experiment data.
-
-        Args:
-        -----
-        - exp_name (str, optional): The name to save the experiment as.
-            If None, uses the experiment name. Defaults to None.
-        - overwrite (bool, optional): Whether to overwrite an existing
-            experiment with the same name. Defaults to False.
-        """
+        """Save the experiment data to disk."""
         save_as = exp_name if exp_name is not None else self.experiment_name
         if self.estimator_name is None:
             self.estimator_name = 'rex'

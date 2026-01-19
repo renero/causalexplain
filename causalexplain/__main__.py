@@ -116,6 +116,9 @@ def parse_args() -> argparse.Namespace:
         help='True DAG file name. The file must be in .dot format')
     parser.add_argument(
         '-v', '--verbose', action='store_true', required=False, help='Verbose mode, instead of progress bar.')
+    parser.add_argument(
+        '--gui', action='store_true', required=False,
+        help='Launch the local NiceGUI interface.')
 
     args = parser.parse_args()
     return args
@@ -447,8 +450,12 @@ def main() -> None:
     Returns:
         None: This method does not return a value.
     """
-    header_()
     args = parse_args()
+    if getattr(args, "gui", False):
+        from causalexplain.gui import run_gui
+        run_gui()
+        return
+    header_()
     run_values = check_args_validity(args)
     start_time = time.time()
 

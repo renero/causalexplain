@@ -3,12 +3,14 @@ This module contains the GraphDiscovery class which is responsible for
 creating, fitting, and evaluating causal discovery experiments.
 """
 import os
-import re
 import pickle
+import re
+import uuid
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
+
 import pandas as pd
 from matplotlib.axes import Axes
 import networkx as nx
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from causalexplain.common import (
     DEFAULT_MAX_SAMPLES,
@@ -18,6 +20,7 @@ from causalexplain.common import (
 from causalexplain.common import plot
 from causalexplain.common.notebook import Experiment
 from causalexplain.metrics.compare_graphs import Metrics, evaluate_graph
+from causalexplain.gui import cytoscape as cygui
 
 
 class GraphDiscovery:
@@ -104,6 +107,7 @@ class GraphDiscovery:
             self.data, self.train_size, self.random_state)
         self._validate_dag_nodes(self.ref_graph, self.data_columns)
         self.regressors = self._select_regressors()
+        self._cy_positions: Dict[str, Dict[str, float]] = {}
 
     @staticmethod
     def _normalize_optional_str(value: Optional[str]) -> Optional[str]:
@@ -159,6 +163,7 @@ class GraphDiscovery:
         self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
         self.max_shap_samples = max_shap_samples
         self.trainer: Dict[str, Experiment] = {}
+        self._cy_positions: Dict[str, Dict[str, float]] = {}
 
     def _validate_experiment_inputs(
         self,
@@ -906,6 +911,166 @@ class GraphDiscovery:
             show_node_fill=show_node_fill, title=title or "",
             ax=ax, figsize=figsize, dpi=dpi, save_to_pdf=save_to_pdf,
             layout=layout, **kwargs)
+
+    def plot_interactive(
+        self,
+        ui_parent: Any,
+        show_metrics: bool = False,
+        show_node_fill: bool = True,
+        title: Optional[str] = None,
+        layout: str = "dagre",
+        rank_dir: str = "TB",
+        width: str = "900px",
+        height: str = "500px",
+        persist_positions: bool = True,
+        on_node_click: Optional[Callable[[str], None]] = None,
+        on_edge_click: Optional[Callable[[str, List[str]], None]] = None,
+        root_causes: Optional[List[str]] = None,
+        **kwargs: Any
+    ) -> Dict[str, Dict[str, float]]:
+        """
+        Render the current DAG in a NiceGUI container using Cytoscape.js.
+
+        Example (within a NiceGUI page):
+            >>> from nicegui import ui
+            >>> with ui.column() as container:
+            ...     discoverer.plot_interactive(container, layout="dagre", rank_dir="LR")
+
+        Args:
+            ui_parent (Any): NiceGUI container to attach the visualization.
+            show_metrics (bool, optional): Reserved for parity with plot().
+            show_node_fill (bool, optional): Whether to apply node fill based on scores.
+            title (Optional[str], optional): Title to show above the graph.
+            layout (str, optional): "dagre" or "elk".
+            rank_dir (str, optional): Layout direction ("LR", "RL", "TB", "BT").
+            width (str, optional): CSS width of the graph container.
+            height (str, optional): CSS height of the graph container.
+            persist_positions (bool, optional): Persist node positions on drag.
+            on_node_click (Callable, optional): Callback receiving the node id.
+            on_edge_click (Callable, optional): Callback receiving edge id and classes.
+            root_causes (Optional[List[str]]): Nodes to emphasize with a thicker border.
+            **kwargs: Reserved for future styling options.
+
+        Returns:
+            Dict[str, Dict[str, float]]: Persisted node positions keyed by id.
+        """
+        _ = show_metrics
+        _ = kwargs
+        model = self.model
+        if model.dag is None:
+            raise ValueError("No DAG available to plot. Run the experiment first.")
+
+        graph_id = uuid.uuid4().hex
+        ref_graph = model.ref_graph
+        use_saved = persist_positions and bool(self._cy_positions)
+        elements, _ = cygui._build_cytoscape_elements(
+            model.dag,
+            ref_graph,
+            show_node_fill=show_node_fill,
+            root_causes=root_causes,
+            positions=self._cy_positions if use_saved else None,
+        )
+        layout_config = cygui._cytoscape_layout_config(layout, rank_dir, use_saved)
+        stylesheet = cygui._cytoscape_stylesheet()
+        spec: Dict[str, Any] = {
+            "elements": elements,
+            "style": stylesheet,
+            "layout": layout_config,
+            "width": width,
+            "height": height,
+            "asset_base": cygui._CY_ASSET_BASE_URL or "",
+        }
+
+        from nicegui import app, ui
+
+        cygui._ensure_cytoscape_assets()
+
+        position_endpoint = None
+        click_endpoint = None
+        edge_click_endpoint = None
+
+        if persist_positions:
+            position_endpoint = f"/_cytoscape/{graph_id}/positions"
+
+            async def _handle_positions(payload: Dict[str, Any]) -> Dict[str, str]:
+                positions = payload.get("positions")
+                if isinstance(positions, dict):
+                    updated: Dict[str, Dict[str, float]] = {}
+                    for node_id, pos in positions.items():
+                        if isinstance(pos, dict):
+                            try:
+                                updated[str(node_id)] = {
+                                    "x": float(pos.get("x", 0.0)),
+                                    "y": float(pos.get("y", 0.0)),
+                                }
+                            except (TypeError, ValueError):
+                                continue
+                    self._cy_positions = updated
+                return {"status": "ok"}
+
+            if position_endpoint not in cygui._CY_REGISTERED_ROUTES:
+                app.add_api_route(
+                    position_endpoint, _handle_positions, methods=["POST"]
+                )
+                cygui._CY_REGISTERED_ROUTES.add(position_endpoint)
+
+        if on_node_click is not None:
+            click_endpoint = f"/_cytoscape/{graph_id}/click"
+
+            async def _handle_click(payload: Dict[str, Any]) -> Dict[str, str]:
+                node_id = payload.get("node_id")
+                if node_id is not None:
+                    on_node_click(str(node_id))
+                return {"status": "ok"}
+
+            if click_endpoint not in cygui._CY_REGISTERED_ROUTES:
+                app.add_api_route(
+                    click_endpoint, _handle_click, methods=["POST"]
+                )
+                cygui._CY_REGISTERED_ROUTES.add(click_endpoint)
+
+        if on_edge_click is not None:
+            edge_click_endpoint = f"/_cytoscape/{graph_id}/edge"
+
+            async def _handle_edge_click(payload: Dict[str, Any]) -> Dict[str, str]:
+                edge_id = payload.get("edge_id")
+                classes = payload.get("classes")
+                if edge_id is not None:
+                    if isinstance(classes, list):
+                        class_list = [str(item) for item in classes]
+                    else:
+                        class_list = []
+                    on_edge_click(str(edge_id), class_list)
+                return {"status": "ok"}
+
+            if edge_click_endpoint not in cygui._CY_REGISTERED_ROUTES:
+                app.add_api_route(
+                    edge_click_endpoint, _handle_edge_click, methods=["POST"]
+                )
+                cygui._CY_REGISTERED_ROUTES.add(edge_click_endpoint)
+
+        container_id = f"cytoscape-{graph_id}"
+        container_html = (
+            f'<div id="{container_id}" '
+            f'style="width: {width}; height: {height};"></div>'
+        )
+        script = cygui._cytoscape_init_script(
+            container_id, spec, position_endpoint, click_endpoint, edge_click_endpoint
+        )
+
+        if ui_parent is None or ui_parent is ui:
+            if title:
+                ui.label(title)
+            ui.html(container_html, sanitize=False)
+            ui.run_javascript(script)
+        else:
+            with ui_parent:
+                if title:
+                    ui.label(title)
+                ui.html(container_html, sanitize=False)
+                ui.run_javascript(script)
+
+        return self._cy_positions
 
     @property
     def model(self) -> Experiment:

@@ -399,17 +399,7 @@ class IndependenceAssertion(object):
     """
 
     def __init__(self, event1=[], event2=[], event3=[]):
-        r"""
-        Initialize an IndependenceAssertion object with event1, event2 and event3 attributes.
-
-                    event2
-                    ^
-        event1     /   event3
-           ^      /     ^
-           |     /      |
-          (U || X, Y | Z) read as Random variable U is independent of X and Y given Z.
-            ---
-        """
+        """Initialize an independence assertion with up to three events."""
         if event1 and not event2:
             raise ValueError("event2 needs to be specified")
         if any([event2, event3]) and not event1:

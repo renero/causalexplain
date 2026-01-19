@@ -5,20 +5,7 @@ from scipy.special import expit as sigmoid
 
 
 def notears_linear(X, lambda1, loss_type, max_iter=100, h_tol=1e-8, rho_max=1e+16, w_threshold=0.3):
-    """Solve min_W L(W; X) + lambda1 ‖W‖_1 s.t. h(W) = 0 using augmented Lagrangian.
-
-    Args:
-        X (np.ndarray): [n, d] sample matrix
-        lambda1 (float): l1 penalty parameter
-        loss_type (str): l2, logistic, poisson
-        max_iter (int): max num of dual ascent steps
-        h_tol (float): exit if |h(w_est)| <= htol
-        rho_max (float): exit if rho >= rho_max
-        w_threshold (float): drop edge if |weight| < threshold
-
-    Returns:
-        W_est (np.ndarray): [d, d] estimated DAG
-    """
+    """Solve NOTEARS for linear models with an augmented Lagrangian."""
     def _loss(W):
         """Evaluate value and gradient of loss."""
         M = X @ W

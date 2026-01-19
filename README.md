@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://www.python.org/downloads/release/python-31311/)
-[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey.svg)](#)
+[![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/renero/causalexplain)
 [![PyPI version](https://badge.fury.io/py/causalexplain.svg)](https://badge.fury.io/py/causalexplain)
 [![Build Status](https://github.com/renero/causalexplain/actions/workflows/build.yaml/badge.svg)](https://github.com/renero/causalexplain/actions/workflows/build.yaml)
 [![codecov](https://codecov.io/gh/renero/causalexplain/graph/badge.svg?token=HCV0IJDFLQ)](https://codecov.io/gh/renero/causalexplain)
@@ -99,11 +99,12 @@ $ python -m causalexplain --help
 usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
                      [-b BOOTSTRAP] [-B BOOTSTRAP_PARALLEL_JOBS]
                      [-c {union,intersection}] [-C]
-                     [-d DATASET] [-H MAX_SHAP_SAMPLES] [-i ITERATIONS]
-                     [-l LOAD_MODEL] [-m {rex,pc,fci,ges,lingam,cam,notears}]
-                     [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR] [-q]
-                     [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD] [-t TRUE_DAG]
-                     [-v]```
+                     [-d DATASET] [--gui] [-H MAX_SHAP_SAMPLES]
+                     [-i ITERATIONS] [-l LOAD_MODEL]
+                     [-m {rex,pc,fci,ges,lingam,cam,notears}]
+                     [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
+                     [-q] [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD]
+                     [-t TRUE_DAG] [-v]```
 
 that will present you with a menu to choose the dataset you want to use, the
 method you want to use to infer the causal graph, and the hyperparameters you
@@ -116,6 +117,17 @@ is ReX, but you can also choose between PC, FCI, GES, LiNGAM, CAM, NOTEARS.
 At the end of the execution, the edges of the plausible causal graph will be
 displayed along with the metrics obtained, if the true dag is provided
 (argument `-t`).
+
+#### GUI mode
+
+To use the local GUI, run:
+
+```bash
+$ python -m causalexplain --gui
+```
+
+This launches a browser-based app for training models, loading/evaluating saved
+runs, and generating synthetic datasets, all on your local machine (port 8080).
 
 ### Option 2: Notebook
 
@@ -258,6 +270,12 @@ $ python -m causalexplain -d /path/to/toy_dataset.csv -m cam -t /path/to/toy_dat
 For more information on command line options, run `causalexplain -h` or go to
 the [Quickstart](https://renero.github.io/causalexplain/quickstart.html)
 section in the documentation.
+
+You can also launch the GUI locally:
+
+```bash
+$ python -m causalexplain --gui
+```
 
 ### Prior knowledge (ReX)
 

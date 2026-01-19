@@ -11,7 +11,7 @@
 
 installation
 quickstart
-api/modules
+api/index
 contributing
 changelog
 ```

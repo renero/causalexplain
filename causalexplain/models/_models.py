@@ -1,33 +1,4 @@
-"""
-This module contains the implementation of the BaseModel and MLPModel classes.
-
-The BaseModel class serves as the base class for all models in the causalexplain package.
-It provides common functionality such as data initialization, logger initialization,
-and callback initialization.
-
-The MLPModel class is a specific implementation of the BaseModel class, representing
-a Multi-Layer Perceptron (MLP) model. It defines the architecture and training
-process for the MLP model.
-
-Example usage:
-    data = pd.read_csv("~/phd/data/generated_linear_10.csv")
-    mlp = MLPModel(
-        target='V0',
-        input_size=data.shape[1],
-        hidden_dim=[64, 128, 64],
-        activation=nn.ReLU(),
-        learning_rate=0.05,
-        batch_size=32,
-        loss_fn="mse",
-        dropout=0.05,
-        num_epochs=200,
-        dataframe=data,
-        test_size=0.1,
-        device="auto",
-        seed=1234,
-        early_stop=False)
-    mlp.train()
-"""
+"""Training helpers for neural models used in causal discovery."""
 
 import logging
 import random
