@@ -67,10 +67,12 @@ mdurl==0.1.2
 mlforge
 mpmath==1.3.0
 multidict==6.1.0
+myst-parser
 nest-asyncio==1.6.0
 nicegui>=1.4.0
 networkx>=3.4.2
 numba>=0.63.1
+numpydoc
 numpy>=2.1.0
 optuna==3.3.0
 osqp>=1.0.5
@@ -93,6 +95,7 @@ pydotplus==2.0.2
 pygam>=0.12.0
 Pygments==2.18.0
 pyparsing==3.0.9
+pydata-sphinx-theme
 pytest==7.4.0
 pytest-cov==4.1.0
 python-dateutil==2.9.0.post0
@@ -105,6 +108,7 @@ pyzmq==26.2.0
 qdldl>=0.1.7.post5
 requests==2.32.3
 rich==13.8.1
+roman
 scikit-learn>=1.7.0,<1.8.0
 scipy>=1.14.0
 scs==3.2.7
@@ -116,6 +120,8 @@ snowballstemmer==2.2.0
 Sphinx==7.2.6
 sphinx-gallery==0.14.0
 sphinx-rtd-theme==1.3.0
+sphinx-copybutton
+sphinx-design
 sphinxcontrib-applehelp==2.0.0
 sphinxcontrib-devhelp==2.0.0
 sphinxcontrib-htmlhelp==2.1.0

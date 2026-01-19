@@ -25,7 +25,6 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.ifconfig',
     'sphinx.ext.autosummary',
-    'sphinx.ext.autodoc.typehints',
     'myst_parser',
     'numpydoc',
     'sphinx_copybutton',
@@ -50,6 +49,9 @@ autodoc_type_aliases = {}
 # Autosummary settings
 autosummary_generate = True
 add_module_names = False
+
+# Numpydoc settings
+numpydoc_show_class_members = False
 
 # Napoleon settings
 napoleon_google_docstring = True
@@ -88,7 +90,6 @@ html_theme_options = {
     "navigation_depth": 4,
     "show_nav_level": 1,
     "collapse_navigation": False,
-    "search_bar_position": "navbar",  # or "sidebar"
     "icon_links": [
         {
             "name": "GitHub",

@@ -1,26 +1,11 @@
-"""
-This Python translation aims to maintain the functionality of the original R code. 
-Here are some key points about the translation:
-
-- The function signature remains similar, with default values for `pars` and `output`.
-- We use numpy arrays instead of R matrices.
-- The `xselect()` method is assumed to be part of the model returned by 
-  `train_LMboost`. You may need to adjust this based on the actual implementation.
-- List comprehensions and numpy operations are used to replace some R-specific 
-  operations.
-- The indexing is adjusted to account for Python's 0-based indexing (compared to R's 
-  1-based indexing).
-
-Note that this translation assumes that the `train_LMboost` function in Python returns 
-a dictionary with a 'model' key, which has an `xselect()` method. You may need to 
-adjust this part based on the actual implementation of `train_LMboost` in Python.
-"""
+"""Linear-model boost selection helper translated from the original R code."""
 import numpy as np
 
-from Python.CAM.train_LMboost import train_LMboost
+from .train_LMboost import train_LMboost
 
 
 def selLmBoost(X, pars=None, output=False, k: int = None):
+    """Select candidate parents using boosted linear models."""
     if pars is None:
         pars = {'atLeastThatMuchSelected': 0.02, 'atMostThatManyNeighbors': 10}
 

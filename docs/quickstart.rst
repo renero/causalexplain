@@ -44,6 +44,18 @@ the results to the terminal, like this:
 
 which is the true graph expected.
 
+GUI Mode
+--------
+
+If you prefer a browser-based interface, launch the local GUI with:
+
+.. code-block:: bash
+
+   python -m causalexplain --gui
+
+This starts a local app that lets you train models, load/evaluate saved runs,
+and generate synthetic datasets.
+
 
 Input Arguments Information
 --------------------------
