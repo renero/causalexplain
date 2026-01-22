@@ -149,6 +149,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                 is False.
             silent (bool): Whether to print anything. Default is False. This overrides
                 the verbose argument and the prog_bar argument.
+            progress (ProgressManager, optional): Global progress manager.
+            use_global_pbar (bool): Disable pipeline-owned progress bars.
             random_state (int): The seed for the random number generator.
                 Default is 1234.
 
@@ -265,7 +267,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             self,  # type: ignore
             description=f"{'Fitting models':<26s}", prog_bar=self.prog_bar,
             verbose=self.verbose, silent=self.silent, subtask=True,
-            external_pbar=self.use_global_pbar)
+            external_pbar=self.use_global_pbar)  # global bar managed upstream
         if pipeline is not None:
             if isinstance(pipeline, list):
                 self.fit_pipeline.from_list(pipeline)
@@ -354,7 +356,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             verbose=self.verbose,
             silent=self.silent,
             subtask=True,
-            external_pbar=self.use_global_pbar)
+            external_pbar=self.use_global_pbar)  # global bar managed upstream
 
         # Overwrite values for prog_bar and verbosity with current pipeline
         # values, in case predict is called from a loaded experiment
@@ -570,6 +572,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         else:
             pbar = None
         if self.progress is not None:
+            # Bootstrap iterations are treated as macro-units.
             self.progress.start_phase(
                 "Bootstrap", weight=num_iterations, substeps=num_iterations)
 

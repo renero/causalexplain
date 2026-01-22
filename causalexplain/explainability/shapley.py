@@ -1268,6 +1268,8 @@ class ShapEstimator(BaseEstimator):
         Whether to show a progress bar.
     silent : bool, default=False
         Whether to suppress all output.
+    progress : ProgressManager, optional
+        Global progress manager for macro-unit updates.
     """
 
     device = utils.select_device("cpu")
@@ -1371,6 +1373,7 @@ class ShapEstimator(BaseEstimator):
             verbose: Enable verbose output.
             prog_bar: Whether to show progress bars.
             silent: Suppress all output.
+            progress: Global progress manager for macro-unit updates.
 
         Returns:
             None.
@@ -1608,6 +1611,7 @@ class ShapEstimator(BaseEstimator):
         else:
             pbar = None
         if self.progress is not None:
+            # Report SHAP fitting progress to the global bar.
             self.progress.start_phase(
                 pbar_name or "SHAP_fit",
                 weight=1,
@@ -1862,6 +1866,7 @@ class ShapEstimator(BaseEstimator):
         else:
             pbar = None
         if self.progress is not None:
+            # Report SHAP prediction progress to the global bar.
             self.progress.start_phase(
                 pbar_name or "SHAP_predict",
                 weight=1,

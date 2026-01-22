@@ -21,6 +21,7 @@ class ProgressManager:
         self.pbar: Optional[ProgBar] = None
 
         if self.enabled:
+            # Main bar uses macro-units; phases advance it fractionally.
             self.pbar = ProgBar(
                 name=self.name,
                 num_steps=total_units,
@@ -35,6 +36,7 @@ class ProgressManager:
         weight: int = 1,
         substeps: Optional[int] = None,
     ) -> None:
+        # substeps define the granularity for fractional main-bar updates.
         if not self.enabled:
             return
         self._phase_name = name

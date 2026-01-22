@@ -135,6 +135,7 @@ class GBTRegressor(GradientBoostingRegressor):
             prog_bar (bool): Enable progress bar.
             optuna_prog_bar (bool): Enable Optuna progress bar.
             parallel_jobs (int): Number of parallel jobs for CPU training.
+            progress (ProgressManager, optional): Global progress manager.
 
         Returns:
             None: This method does not return a value.
@@ -220,6 +221,7 @@ class GBTRegressor(GradientBoostingRegressor):
         else:
             pbar = None
         if self.progress is not None:
+            # Report subtask progress to the global bar.
             self.progress.start_phase(
                 pbar_name or "GBT_fit",
                 weight=1,
@@ -495,6 +497,7 @@ class GBTRegressor(GradientBoostingRegressor):
         resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
         fallback_storage = _fallback_optuna_storage(storage, study_name)
         if self.progress is not None:
+            # Each completed trial advances the main bar fractionally.
             self.progress.start_phase("GBT_HPO", weight=n_trials, substeps=n_trials)
         try:
             study = optuna.create_study(

@@ -123,6 +123,7 @@ class NNRegressor(BaseEstimator):
                 is False.
             parallel_jobs (int): Number of parallel jobs to use for CPU training.
                 Default is 0 (sequential).
+            progress (ProgressManager, optional): Global progress manager.
 
         Returns:
             dict: A dictionary with the trained DFF networks, using the name of the
@@ -206,6 +207,7 @@ class NNRegressor(BaseEstimator):
         else:
             pbar = None
         if self.progress is not None:
+            # Report subtask progress to the global bar.
             self.progress.start_phase(
                 pbar_name or "DNN_fit",
                 weight=1,
@@ -613,6 +615,7 @@ class NNRegressor(BaseEstimator):
         resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
         fallback_storage = _fallback_optuna_storage(storage, study_name)
         if self.progress is not None:
+            # Each completed trial advances the main bar fractionally.
             self.progress.start_phase("DNN_HPO", weight=n_trials, substeps=n_trials)
         try:
             study = optuna.create_study(

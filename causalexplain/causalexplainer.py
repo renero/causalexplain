@@ -512,6 +512,7 @@ class GraphDiscovery:
         if self.estimator == 'rex' and not quiet and \
                 not xargs.get('verbose', False) and \
                 xargs.get('prog_bar', True):
+            # Macro units for main bar; phases advance it fractionally.
             hpo_trials = hpo_iterations if hpo_iterations is not None \
                 else DEFAULT_HPO_TRIALS
             bootstrap_trials = bootstrap_iterations if bootstrap_iterations is not None \
