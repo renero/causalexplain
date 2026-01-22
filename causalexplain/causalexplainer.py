@@ -13,11 +13,14 @@ from matplotlib.axes import Axes
 import networkx as nx
 
 from causalexplain.common import (
+    DEFAULT_BOOTSTRAP_TRIALS,
+    DEFAULT_HPO_TRIALS,
     DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     utils,
 )
 from causalexplain.common import plot
+from causalexplain.common.progress import ProgressManager
 from causalexplain.common.notebook import Experiment
 from causalexplain.metrics.compare_graphs import Metrics, evaluate_graph
 from causalexplain.gui import cytoscape as cygui
@@ -505,9 +508,45 @@ class GraphDiscovery:
                 xargs['prog_bar'] = False
                 xargs['silent'] = True
 
-        for trainer_name, experiment in self.trainer.items():
-            if not trainer_name.endswith("_rex"):
-                experiment.fit_predict(estimator=self.estimator, **xargs)
+        progress = None
+        if self.estimator == 'rex' and not quiet and \
+                not xargs.get('verbose', False) and \
+                xargs.get('prog_bar', True):
+            hpo_trials = hpo_iterations if hpo_iterations is not None \
+                else DEFAULT_HPO_TRIALS
+            bootstrap_trials = bootstrap_iterations if bootstrap_iterations is not None \
+                else DEFAULT_BOOTSTRAP_TRIALS
+            total_units = self._progress_total_units(
+                hpo_trials=hpo_trials,
+                bootstrap_trials=bootstrap_trials,
+                regressor_count=len(self.regressors),
+            )
+            progress = ProgressManager(total_units=total_units, name="Training")
+            xargs['progress'] = progress
+            xargs['use_global_pbar'] = True
+            xargs['optuna_prog_bar'] = False
+
+        try:
+            for trainer_name, experiment in self.trainer.items():
+                if not trainer_name.endswith("_rex"):
+                    experiment.fit_predict(estimator=self.estimator, **xargs)
+        finally:
+            if progress is not None:
+                progress.close()
+
+    @staticmethod
+    def _progress_total_units(
+        hpo_trials: int,
+        bootstrap_trials: int,
+        regressor_count: int
+    ) -> int:
+        per_regressor = 0
+        if hpo_trials > 0:
+            per_regressor += hpo_trials
+        per_regressor += 3  # fit + SHAP fit + SHAP predict
+        if bootstrap_trials > 0:
+            per_regressor += bootstrap_trials
+        return max(per_regressor * max(regressor_count, 1), 1)
 
     def combine_and_evaluate_dags(
         self,
