@@ -29,7 +29,7 @@ def default_train_settings() -> Dict[str, Any]:
         "parallel_jobs": 0,
         "bootstrap_parallel_jobs": 0,
         "adaptive_shap_sampling": True,
-        "max_shap_samples": DEFAULT_MAX_SAMPLES,
+        "shap_budget": DEFAULT_MAX_SAMPLES,
         "seed": DEFAULT_SEED,
         "regressors": DEFAULT_REGRESSORS[:],
         "explainer": "gradient",

@@ -67,8 +67,9 @@ $ pip install causalexplain
 
 ## What's new in v0.8.0
 
-- Adaptive SHAP sampling with stability checks and new controls like
-  `max_shap_samples`; GBT defaults to `shap.TreeExplainer`.
+- Adaptive SHAP sampling with stability checks and a single SHAP budget knob
+  (`shap_budget`);
+  GBT defaults to `shap.TreeExplainer`.
 - Parallelization for DNN training and bootstrap runs, plus CLI flags for
   parallel jobs.
 - CUDA/MPS device selection and float32 enforcement for PyTorch models.
@@ -99,7 +100,7 @@ $ python -m causalexplain --help
 usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
                      [-b BOOTSTRAP] [-B BOOTSTRAP_PARALLEL_JOBS]
                      [-c {union,intersection}] [-C]
-                     [-d DATASET] [--gui] [-H MAX_SHAP_SAMPLES]
+                     [-d DATASET] [--gui] [-H SHAP_BUDGET]
                      [-i ITERATIONS] [-l LOAD_MODEL]
                      [-m {rex,pc,fci,ges,lingam,cam,notears}]
                      [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
@@ -194,10 +195,9 @@ python -m causalexplain --no-shap-sampling
 Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
 ReX defaults to `tree` when running the GBT regressor.
 
-When adaptive sampling is enabled, the key knobs are `max_shap_samples`,
-`K_max`, `max_explain_samples`, and `stratify`. These
-control background size, repeated sampling for stability, and how many rows
-are explained.
+When adaptive sampling is enabled, the key knob is `shap_budget`. It controls
+both SHAP background size and the number of rows explained. The legacy
+`max_shap_samples` name is deprecated.
 
 Note on large datasets: if `adaptive_shap_sampling=False` and `m > 2000`, the
 tool warns about potential non-termination (the threshold is conservative).

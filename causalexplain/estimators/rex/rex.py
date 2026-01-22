@@ -113,6 +113,9 @@ class Rex(BaseEstimator, ClassifierMixin):
             verbose: bool = False,
             prog_bar=True,
             silent: bool = False,
+            bootstrap_shap_cache: bool = True,
+            bootstrap_shap_cache_full_data: bool = True,
+            shap_budget: Optional[int] = None,
             progress: Optional[ProgressManager] = None,
             use_global_pbar: bool = False,
             shap_fsize: Tuple[int, int] = (10, 10),
@@ -149,6 +152,12 @@ class Rex(BaseEstimator, ClassifierMixin):
                 is False.
             silent (bool): Whether to print anything. Default is False. This overrides
                 the verbose argument and the prog_bar argument.
+            bootstrap_shap_cache (bool): Cache SHAP values once for bootstrap
+                iterations to reduce runtime. Default is True.
+            bootstrap_shap_cache_full_data (bool): If True, compute cached SHAP
+                values on the full dataset to enable row-subsetting. Default is True.
+            shap_budget (int, optional): Single SHAP budget for background and
+                explained rows, used to keep SHAP runs bounded.
             progress (ProgressManager, optional): Global progress manager.
             use_global_pbar (bool): Disable pipeline-owned progress bars.
             random_state (int): The seed for the random number generator.
@@ -192,6 +201,10 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.bootstrap_tolerance = bootstrap_tolerance
         self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
         self.parallel_jobs = parallel_jobs
+        self.bootstrap_shap_cache = bootstrap_shap_cache
+        self.bootstrap_shap_cache_full_data = bootstrap_shap_cache_full_data
+        self._bootstrap_shap_cache: Optional[ShapEstimator] = None
+        self.shap_budget = shap_budget
 
         self.condlen = condlen
         self.condsize = condsize
@@ -211,6 +224,9 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         for k, v in kwargs.items():
             setattr(self, k, v)
+        if self.shap_budget is None and hasattr(self, "max_shap_samples"):
+            # Backward-compat: allow deprecated max_shap_samples to drive budget.
+            self.shap_budget = getattr(self, "max_shap_samples")
 
         self._fit_desc = "Running Causal Discovery pipeline"
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -425,7 +441,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                     'parallel_jobs': self.parallel_jobs,
                     'explainer': self.explainer,
                     'prog_bar': self.prog_bar,
-                    'verbose': self.verbose
+                    'verbose': self.verbose,
+                    'shap_budget': self.shap_budget,
                 }),
                 ('G_final', 'bootstrap', {
                     'num_iterations': self.bootstrap_trials,
@@ -567,6 +584,40 @@ class Rex(BaseEstimator, ClassifierMixin):
         iter_adjacency_matrix = np.zeros(
             (self.n_features_in_, self.n_features_in_))
 
+        # Cache SHAP values only when it actually amortizes cost. For a single
+        # iteration, caching does extra work with no benefit, so skip it.
+        # Also, multiprocessing requires per-process objects, so caching is
+        # disabled for parallel bootstrap.
+        use_cache = (
+            self.bootstrap_shap_cache
+            and num_iterations > 1
+            and parallel_jobs in (0, 1)
+        )
+        cache_pool = X
+        if use_cache and self._bootstrap_shap_cache is None:
+            # Cache SHAP values once to avoid recomputing them per iteration.
+            # This speeds up bootstrap significantly while preserving the
+            # per-iteration sampling for graph orientation.
+            cache_fit_data = X
+            if self.bootstrap_shap_cache_full_data:
+                # Limit cache size to avoid full-dataset SHAP blowups.
+                max_rows = self.shap_budget
+                if isinstance(max_rows, int) and max_rows > 0 and len(X) > max_rows:
+                    cache_fit_data = X.sample(n=max_rows, random_state=random_state)
+            self._bootstrap_shap_cache = ShapEstimator(
+                models=self.models,
+                explainer=explainer or "explainer",
+                parallel_jobs=0,
+                prog_bar=False,
+                verbose=self.verbose,
+                shap_budget=self.shap_budget,
+            )
+            self._bootstrap_shap_cache.fit(
+                cache_fit_data, use_full_data=self.bootstrap_shap_cache_full_data)
+        if use_cache and self._bootstrap_shap_cache is not None:
+            # Sample from the cached rows so sample indices map to SHAP values.
+            cache_pool = self._bootstrap_shap_cache.X_test
+
         if self.prog_bar and not self.verbose:
             pbar = ProgBar().start_subtask("Bootstrap", num_iterations)
         else:
@@ -578,6 +629,7 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         results = []
         if parallel_jobs != 0 and parallel_jobs != 1:
+            # Cached SHAP objects are not process-safe; fall back to per-iteration SHAP.
             # Prepare the partial function with fixed arguments
             partial_process_iteration = partial(
                 Rex._bootstrap_iteration, X=X, models=self.models,
@@ -607,10 +659,18 @@ class Rex(BaseEstimator, ClassifierMixin):
         else:
             # Sequential processing
             for iter in range(num_iterations):
-                result = Rex._bootstrap_iteration(
-                    iter, X=X, models=self.models, sampling_split=sampling_split,
-                    feature_names=self.feature_names, prior=prior, random_state=random_state,
-                    explainer=explainer, verbose=self.verbose)
+                if use_cache and self._bootstrap_shap_cache is not None:
+                    # Reuse cached SHAP values and subset them by sampled rows.
+                    data_sample = cache_pool.sample(
+                        frac=sampling_split, random_state=iter * random_state)
+                    dag = self._bootstrap_shap_cache.predict(
+                        data_sample, prior=prior, sample_idx=data_sample.index)
+                    result = utils.graph_to_adjacency(dag, self.feature_names)
+                else:
+                    result = Rex._bootstrap_iteration(
+                        iter, X=X, models=self.models, sampling_split=sampling_split,
+                        feature_names=self.feature_names, prior=prior, random_state=random_state,
+                        explainer=explainer, verbose=self.verbose)
                 results.append(result)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)

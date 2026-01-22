@@ -61,7 +61,8 @@ class GraphDiscovery:
             device (Optional[str], optional): Device selection for regressors.
             parallel_jobs (int, optional): Number of parallel jobs for CPU training.
             bootstrap_parallel_jobs (int, optional): Number of parallel jobs for bootstrap.
-            max_shap_samples (Optional[int], optional): Cap for SHAP background samples.
+            max_shap_samples (Optional[int], optional): Deprecated name for the SHAP
+                workload budget; use --shap-budget in the CLI.
 
         Returns:
             None: This method does not return a value.
@@ -485,7 +486,8 @@ class GraphDiscovery:
                 'bootstrap_parallel_jobs': self.bootstrap_parallel_jobs
             }
             if self.max_shap_samples is not None:
-                xargs['max_shap_samples'] = self.max_shap_samples
+                # Use a single SHAP budget to control background/explain rows.
+                xargs['shap_budget'] = self.max_shap_samples
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations
             if bootstrap_iterations is not None:

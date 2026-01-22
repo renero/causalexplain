@@ -54,6 +54,12 @@ def parse_args() -> argparse.Namespace:
         '-B', '--bootstrap-parallel-jobs', type=int, required=False, default=0,
         help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
     parser.add_argument(
+        '--bootstrap-shap-cache',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Cache SHAP values once during bootstrap to speed up iterations. '
+             'Use --no-bootstrap-shap-cache to disable.')
+    parser.add_argument(
         '-c', '--combine', type=str, required=False, choices=['union', 'intersection'],
         help='Combine ReX DAGs using the specified operation: union or intersection.')
     device_group.add_argument(
@@ -69,9 +75,13 @@ def parse_args() -> argparse.Namespace:
         '-l', '--load_model', type=str, required=False,
         help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
     parser.add_argument(
-        '-H', '--max-shap-samples', '--max_shap_samples', type=int, required=False,
-        help='Max background samples for adaptive SHAP. '
+        '-H', '--shap-budget', type=int, required=False,
+        help='SHAP workload budget (background + explained rows). '
              f'Default is {DEFAULT_MAX_SAMPLES}.')
+    parser.add_argument(
+        '--max-shap-samples', '--max_shap_samples', type=int, required=False,
+        help='Deprecated; use --shap-budget. '
+             f'Current default is {DEFAULT_MAX_SAMPLES}.')
     parser.add_argument(
         '-m', '--method', type=str, required=False,
         choices=['rex', 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'],
@@ -222,6 +232,8 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
         if args.bootstrap is not None else DEFAULT_BOOTSTRAP_TRIALS
     run_values['bootstrap_tolerance'] = args.threshold \
         if args.threshold is not None else DEFAULT_BOOTSTRAP_TOLERANCE
+    run_values['bootstrap_shap_cache'] = getattr(
+        args, "bootstrap_shap_cache", True)
 
     run_values['combine_op'] = args.combine if args.combine is not None else 'union'
     run_values['verbose'] = True if args.verbose else False
@@ -229,11 +241,17 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
-    max_shap_samples = getattr(args, "max_shap_samples", None)
-    if max_shap_samples is None or max_shap_samples <= 0:
-        run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
-    else:
-        run_values['max_shap_samples'] = max_shap_samples
+    shap_budget = getattr(args, "shap_budget", None)
+    legacy_max_shap = getattr(args, "max_shap_samples", None)
+    if shap_budget is None or shap_budget <= 0:
+        if legacy_max_shap is not None and legacy_max_shap > 0:
+            print("WARNING: --max-shap-samples is deprecated; "
+                  "use --shap-budget instead.")
+            shap_budget = legacy_max_shap
+        else:
+            shap_budget = DEFAULT_MAX_SAMPLES
+    run_values['shap_budget'] = shap_budget
+    run_values['max_shap_samples'] = shap_budget
     run_values['parallel_jobs'] = getattr(args, "parallel_jobs", 0)
     run_values['bootstrap_parallel_jobs'] = getattr(
         args, "bootstrap_parallel_jobs", 0)
@@ -307,7 +325,7 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
         parallel_jobs=run_values['parallel_jobs'],
         bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
         device=run_values['device'],
-        max_shap_samples=run_values.get('max_shap_samples')
+        max_shap_samples=run_values.get('shap_budget')
     )
     _check_csv_size_warning(discoverer, run_values)
 
@@ -363,7 +381,8 @@ def _train_if_needed(
         bootstrap_tolerance=run_values.get('bootstrap_tolerance'),
         quiet=run_values.get('quiet', False),
         adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True),
-        max_shap_samples=run_values.get('max_shap_samples')
+        shap_budget=run_values.get('shap_budget'),
+        bootstrap_shap_cache=run_values.get('bootstrap_shap_cache', True),
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])

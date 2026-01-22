@@ -256,9 +256,13 @@ class TrainTab:
                         "Adaptive SHAP sampling",
                         value=self.settings.get("adaptive_shap_sampling", True),
                     )
+                    shap_budget_value = self.settings.get(
+                        "shap_budget",
+                        self.settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
+                    )
                     max_shap_input = self.ui.number(
-                        "Max SHAP samples",
-                        value=self.settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
+                        "SHAP budget",
+                        value=shap_budget_value,
                     ).props("dense")
                     regressors_input = self.ui.select(
                         ["nn", "gbt"],
@@ -300,7 +304,7 @@ class TrainTab:
                     self.storage,
                     "train_settings",
                     self.settings,
-                    "max_shap_samples",
+                    "shap_budget",
                 )
                 bind_setting(
                     regressors_input,
@@ -542,8 +546,11 @@ class TrainTab:
             "adaptive_shap_sampling": settings.get(
                 "adaptive_shap_sampling", True
             ),
-            "max_shap_samples": int(
-                settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES)
+            "shap_budget": int(
+                settings.get(
+                    "shap_budget",
+                    settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
+                )
             ),
             "explainer": settings.get("explainer", "gradient"),
             "corr_method": settings.get("corr_method", "spearman"),
@@ -585,7 +592,12 @@ class TrainTab:
                 bootstrap_parallel_jobs=int(
                     settings["bootstrap_parallel_jobs"]
                 ),
-                max_shap_samples=int(settings["max_shap_samples"]),
+                max_shap_samples=int(
+                    settings.get(
+                        "shap_budget",
+                        settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
+                    )
+                ),
             )
             if settings["method"] == "rex":
                 regressors = settings.get("regressors", DEFAULT_REGRESSORS)
