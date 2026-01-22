@@ -27,7 +27,8 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 from mlforge.progbar import ProgBar   # type: ignore
 
-from ..common import DEFAULT_HPO_TRIALS,  utils
+from ..common import DEFAULT_HPO_TRIALS, utils
+from ..common.progress import ProgressManager
 from ._columnar import ColumnsDataset
 from ._models import MLPModel
 from ._optuna_storage import (
@@ -90,7 +91,8 @@ class NNRegressor(BaseEstimator):
             prog_bar: bool = True,
             silent: bool = False,
             optuna_prog_bar: bool = False,
-            parallel_jobs: int = 0):
+            parallel_jobs: int = 0,
+            progress: ProgressManager | None = None):
         """
         Train DFF networks for all variables in data. Each network will be trained to
         predict one of the variables in the data, using the rest as predictors plus one
@@ -121,6 +123,7 @@ class NNRegressor(BaseEstimator):
                 is False.
             parallel_jobs (int): Number of parallel jobs to use for CPU training.
                 Default is 0 (sequential).
+            progress (ProgressManager, optional): Global progress manager.
 
         Returns:
             dict: A dictionary with the trained DFF networks, using the name of the
@@ -145,6 +148,7 @@ class NNRegressor(BaseEstimator):
         self.silent = silent
         self.optuna_prog_bar = optuna_prog_bar
         self.parallel_jobs = parallel_jobs
+        self.progress = progress
 
         self.regressor = None
         self._fit_desc = "Training NNs"
@@ -202,6 +206,13 @@ class NNRegressor(BaseEstimator):
             pbar = ProgBar().start_subtask(pbar_name, len(self.feature_names))
         else:
             pbar = None
+        if self.progress is not None:
+            # Report subtask progress to the global bar.
+            self.progress.start_phase(
+                pbar_name or "DNN_fit",
+                weight=1,
+                substeps=len(self.feature_names),
+            )
 
         def _fit_target(target_name: str) -> Tuple[str, MLPModel]:
             X_target = X_original
@@ -242,6 +253,9 @@ class NNRegressor(BaseEstimator):
                     target_name, model = future.result()
                     results[target_name] = model
                     pbar.update_subtask(pbar_name, idx + 1) if pbar else None
+                    if self.progress is not None:
+                        self.progress.update_phase(
+                            idx + 1, total_substeps=len(self.feature_names))
             for target_name in self.feature_names:
                 self.regressor[target_name] = results[target_name]
         else:
@@ -249,8 +263,13 @@ class NNRegressor(BaseEstimator):
                 target_name, model = _fit_target(target_name)
                 self.regressor[target_name] = model
                 pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
+                if self.progress is not None:
+                    self.progress.update_phase(
+                        target_idx + 1, total_substeps=len(self.feature_names))
 
         pbar.remove(pbar_name) if pbar else None
+        if self.progress is not None:
+            self.progress.finish_phase()
         self.is_fitted_ = True
         return self
 
@@ -584,6 +603,8 @@ class NNRegressor(BaseEstimator):
             Returns:
                 None: This method does not return a value.
             """
+            if self.progress is not None:
+                self.progress.update_phase(trial.number + 1)
             if trial.value < min_loss or study.best_value < min_loss:
                 study.stop()
 
@@ -593,6 +614,9 @@ class NNRegressor(BaseEstimator):
         # Create and run the HPO study.
         resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
         fallback_storage = _fallback_optuna_storage(storage, study_name)
+        if self.progress is not None:
+            # Each completed trial advances the main bar fractionally.
+            self.progress.start_phase("DNN_HPO", weight=n_trials, substeps=n_trials)
         try:
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
@@ -627,6 +651,9 @@ class NNRegressor(BaseEstimator):
                     not self.silent) & (not self.verbose)),
                 callbacks=[callback]
             )
+        finally:
+            if self.progress is not None:
+                self.progress.finish_phase()
 
         # Capture the best parameters and the minimum loss.
         best_trials = sorted(study.best_trials, key=lambda x: x.values[0])

@@ -33,6 +33,7 @@ import torch
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FormatStrFormatter
 from mlforge.progbar import ProgBar  # type: ignore
+from ..common.progress import ProgressManager
 from scipy.stats import kstest, spearmanr
 from sklearn.base import BaseEstimator
 from sklearn.discriminant_analysis import StandardScaler
@@ -1267,6 +1268,8 @@ class ShapEstimator(BaseEstimator):
         Whether to show a progress bar.
     silent : bool, default=False
         Whether to suppress all output.
+    progress : ProgressManager, optional
+        Global progress manager for macro-unit updates.
     """
 
     device = utils.select_device("cpu")
@@ -1306,7 +1309,8 @@ class ShapEstimator(BaseEstimator):
             on_gpu: bool = False,
             verbose: bool = False,
             prog_bar: bool = True,
-            silent: bool = False) -> None:
+            silent: bool = False,
+            progress: ProgressManager | None = None) -> None:
         """
         Initialize the ShapEstimator object.
 
@@ -1369,6 +1373,7 @@ class ShapEstimator(BaseEstimator):
             verbose: Enable verbose output.
             prog_bar: Whether to show progress bars.
             silent: Suppress all output.
+            progress: Global progress manager for macro-unit updates.
 
         Returns:
             None.
@@ -1391,6 +1396,7 @@ class ShapEstimator(BaseEstimator):
         self.verbose = verbose
         self.prog_bar = prog_bar
         self.silent = silent
+        self.progress = progress
 
         self._fit_desc = f"Running SHAP explainer ({self.explainer})"
         self._pred_desc = "Building graph skeleton"
@@ -1597,12 +1603,20 @@ class ShapEstimator(BaseEstimator):
         self.feature_order = {}
         self.all_mean_shap_values = np.empty((0,), dtype=np.float16)
         # Initialize the progress bar
+        pbar_name = ""
         if self.prog_bar and not self.verbose:
             caller_name = self._get_method_caller_name()
             pbar_name = f"({caller_name}) SHAP_fit"
             pbar = ProgBar().start_subtask(pbar_name, len(self.feature_names))
         else:
             pbar = None
+        if self.progress is not None:
+            # Report SHAP fitting progress to the global bar.
+            self.progress.start_phase(
+                pbar_name or "SHAP_fit",
+                weight=1,
+                substeps=len(self.feature_names),
+            )
 
         self.X_train, self.X_test = train_test_split(
             X, test_size=min(0.2, 250 / len(X)), random_state=42
@@ -1633,6 +1647,11 @@ class ShapEstimator(BaseEstimator):
                     results.append(result)
                     if pbar:
                         pbar.update_subtask(pbar_name, len(results))  # type: ignore
+                    if self.progress is not None:
+                        self.progress.update_phase(
+                            len(results),
+                            total_substeps=len(self.feature_names),
+                        )
                 pbar.remove(pbar_name) if pbar else None            # type: ignore
                 pbar = None
                 pool.close()
@@ -1645,6 +1664,11 @@ class ShapEstimator(BaseEstimator):
                 results.append(result)
                 if pbar:
                     pbar.update_subtask(pbar_name, len(results))  # type: ignore
+                if self.progress is not None:
+                    self.progress.update_phase(
+                        len(results),
+                        total_substeps=len(self.feature_names),
+                    )
 
         # Collect results
         for target_name, shap_values_target, feature_order_target, shap_mean_values_target in results:
@@ -1665,6 +1689,8 @@ class ShapEstimator(BaseEstimator):
 
         if pbar:
             pbar.remove(pbar_name)  # type: ignore
+        if self.progress is not None:
+            self.progress.finish_phase()
 
         self.all_mean_shap_values = self.all_mean_shap_values.flatten()
         self._compute_scaled_shap_threshold()
@@ -1833,11 +1859,19 @@ class ShapEstimator(BaseEstimator):
         # Who is calling me?
         caller_name = self._get_method_caller_name()
 
+        pbar_name = ""
         if self.prog_bar and (not self.verbose):
             pbar_name = f"({caller_name}) SHAP_predict"
             pbar = ProgBar().start_subtask(pbar_name, 4 + len(self.feature_names))
         else:
             pbar = None
+        if self.progress is not None:
+            # Report SHAP prediction progress to the global bar.
+            self.progress.start_phase(
+                pbar_name or "SHAP_predict",
+                weight=1,
+                substeps=4 + len(self.feature_names),
+            )
 
         # Reshape SHAP values if necessary
         for feature in self.feature_names:
@@ -1849,9 +1883,15 @@ class ShapEstimator(BaseEstimator):
         # SHAP values
         self.compute_error_contribution()
         pbar.update_subtask(pbar_name, 1) if pbar else None     # type: ignore
+        if self.progress is not None:
+            self.progress.update_phase(
+                1, total_substeps=4 + len(self.feature_names))
 
         self._compute_discrepancies(self.X_test)                # type: ignore
         pbar.update_subtask(pbar_name, 2) if pbar else None     # type: ignore
+        if self.progress is not None:
+            self.progress.update_phase(
+                2, total_substeps=4 + len(self.feature_names))
 
         self.connections = {}
         for target_idx, target in enumerate(self.feature_names):
@@ -1880,6 +1920,9 @@ class ShapEstimator(BaseEstimator):
                 verbose=self.verbose)
             pbar.update_subtask(
                 pbar_name, target_idx + 3) if pbar else None     # type: ignore
+            if self.progress is not None:
+                self.progress.update_phase(
+                    target_idx + 3, total_substeps=4 + len(self.feature_names))
 
         dag = utils.digraph_from_connected_features(
             X, self.feature_names, self.models, self.connections, root_causes, prior,
@@ -1887,14 +1930,26 @@ class ShapEstimator(BaseEstimator):
             verbose=self.verbose)
         pbar.update_subtask(pbar_name, # type: ignore
             len( self.feature_names) + 3) if pbar else None
+        if self.progress is not None:
+            self.progress.update_phase(
+                len(self.feature_names) + 3,
+                total_substeps=4 + len(self.feature_names),
+            )
 
         dag = utils.break_cycles_if_present(
             dag, self.shap_discrepancies,                       # type: ignore
             self.prior, verbose=self.verbose)
         pbar.update_subtask(pbar_name,                          # type: ignore
             len(self.feature_names) + 4) if pbar else None
+        if self.progress is not None:
+            self.progress.update_phase(
+                len(self.feature_names) + 4,
+                total_substeps=4 + len(self.feature_names),
+            )
 
         pbar.remove(pbar_name) if pbar else None                # type: ignore
+        if self.progress is not None:
+            self.progress.finish_phase()
 
         return dag
 

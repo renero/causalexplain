@@ -65,6 +65,7 @@ from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 
 from ..common import DEFAULT_HPO_TRIALS, utils
+from ..common.progress import ProgressManager
 from ._optuna_storage import (
     _ensure_writable_optuna_storage,
     _fallback_optuna_storage,
@@ -103,7 +104,8 @@ class GBTRegressor(GradientBoostingRegressor):
             silent=False,
             prog_bar=True,
             optuna_prog_bar=False,
-            parallel_jobs: int = 0):
+            parallel_jobs: int = 0,
+            progress: ProgressManager | None = None):
         """
         Initialize the gradient boosting regressor wrapper.
 
@@ -133,6 +135,7 @@ class GBTRegressor(GradientBoostingRegressor):
             prog_bar (bool): Enable progress bar.
             optuna_prog_bar (bool): Enable Optuna progress bar.
             parallel_jobs (int): Number of parallel jobs for CPU training.
+            progress (ProgressManager, optional): Global progress manager.
 
         Returns:
             None: This method does not return a value.
@@ -165,6 +168,7 @@ class GBTRegressor(GradientBoostingRegressor):
         self.prog_bar = prog_bar
         self.optuna_prog_bar = optuna_prog_bar
         self.parallel_jobs = parallel_jobs
+        self.progress = progress
         self.regressor = None
         self._estimator_name = 'gbt'
         self._estimator_class = GradientBoostingRegressor
@@ -210,11 +214,19 @@ class GBTRegressor(GradientBoostingRegressor):
         except Exception:  # pylint: disable=broad-except
             caller_name = "unknown"
 
+        pbar_name = ""
         if self.prog_bar and not self.verbose:
             pbar_name = f"({caller_name}) GBT_fit"
             pbar = ProgBar().start_subtask(pbar_name, len(self.feature_names))
         else:
             pbar = None
+        if self.progress is not None:
+            # Report subtask progress to the global bar.
+            self.progress.start_phase(
+                pbar_name or "GBT_fit",
+                weight=1,
+                substeps=len(self.feature_names),
+            )
 
         def _fit_target(target_name: str, loss_value: str, gbt_model):
             model = gbt_model(
@@ -262,6 +274,9 @@ class GBTRegressor(GradientBoostingRegressor):
                     target_name, model = future.result()
                     results[target_name] = model
                     pbar.update_subtask(pbar_name, idx+1) if pbar else None
+                    if self.progress is not None:
+                        self.progress.update_phase(
+                            idx + 1, total_substeps=len(self.feature_names))
             for target_name in self.feature_names:
                 self.regressor[target_name] = results[target_name]
             if self.feature_names:
@@ -276,8 +291,13 @@ class GBTRegressor(GradientBoostingRegressor):
                 )
                 self.regressor[target_name] = model
                 pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
+                if self.progress is not None:
+                    self.progress.update_phase(
+                        target_idx + 1, total_substeps=len(self.feature_names))
 
         pbar.remove(pbar_name) if pbar else None
+        if self.progress is not None:
+            self.progress.finish_phase()
         self.is_fitted_ = True
         return self
 
@@ -465,6 +485,8 @@ class GBTRegressor(GradientBoostingRegressor):
             Returns:
                 None: This method does not return a value.
             """
+            if self.progress is not None:
+                self.progress.update_phase(trial.number + 1)
             if trial.value < min_loss or study.best_value < min_loss:
                 study.stop()
 
@@ -474,6 +496,9 @@ class GBTRegressor(GradientBoostingRegressor):
         # Create and run the HPO study.
         resolved_storage = _ensure_writable_optuna_storage(storage, study_name)
         fallback_storage = _fallback_optuna_storage(storage, study_name)
+        if self.progress is not None:
+            # Each completed trial advances the main bar fractionally.
+            self.progress.start_phase("GBT_HPO", weight=n_trials, substeps=n_trials)
         try:
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
@@ -508,6 +533,9 @@ class GBTRegressor(GradientBoostingRegressor):
                 show_progress_bar=(self.optuna_prog_bar & (
                     not self.silent) & (not self.verbose)),
                 callbacks=[callback])
+        finally:
+            if self.progress is not None:
+                self.progress.finish_phase()
 
         # Capture the best hyperparameters and the minimum loss
         best_trials = sorted(study.best_trials, key=lambda x: x.values[0])

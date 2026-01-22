@@ -32,6 +32,7 @@ from sklearn.utils.validation import check_random_state
 from ...common import (DEFAULT_BOOTSTRAP_SAMPLING_SPLIT,
                        DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_TRIALS,
                        DEFAULT_HPO_TRIALS, utils)
+from ...common.progress import ProgressManager
 from ...explainability.regression_quality import RegQuality
 from ...explainability.shapley import ShapEstimator
 from ...metrics.compare_graphs import Metrics, evaluate_graph
@@ -112,6 +113,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             verbose: bool = False,
             prog_bar=True,
             silent: bool = False,
+            progress: Optional[ProgressManager] = None,
+            use_global_pbar: bool = False,
             shap_fsize: Tuple[int, int] = (10, 10),
             dpi: int = 75,
             pdf_filename: Optional[str] = None,
@@ -146,6 +149,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                 is False.
             silent (bool): Whether to print anything. Default is False. This overrides
                 the verbose argument and the prog_bar argument.
+            progress (ProgressManager, optional): Global progress manager.
+            use_global_pbar (bool): Disable pipeline-owned progress bars.
             random_state (int): The seed for the random number generator.
                 Default is 1234.
 
@@ -165,6 +170,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.verbose = verbose
         self.silent = silent
         self.random_state = random_state
+        self.progress = progress
+        self.use_global_pbar = use_global_pbar or progress is not None
 
         self.model_type = NNRegressor if model_type == "nn" else GBTRegressor
         self.explainer = explainer
@@ -238,10 +245,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         # Create the pipeline for the training stages.
         self._set_fit_pipeline(pipeline)
 
-        n_steps = self.fit_pipeline.len()
-        n_steps += (self._steps_from_hpo(self.fit_pipeline) * 2) - 1
-
-        self.fit_pipeline.run(n_steps)
+        self.fit_pipeline.run()
         self.fit_pipeline.close()
         self.is_fitted_ = True
 
@@ -262,7 +266,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.fit_pipeline = Pipeline(
             self,  # type: ignore
             description=f"{'Fitting models':<26s}", prog_bar=self.prog_bar,
-            verbose=self.verbose, silent=self.silent, subtask=True)
+            verbose=self.verbose, silent=self.silent, subtask=True,
+            external_pbar=self.use_global_pbar)  # global bar managed upstream
         if pipeline is not None:
             if isinstance(pipeline, list):
                 self.fit_pipeline.from_list(pipeline)
@@ -350,19 +355,19 @@ class Rex(BaseEstimator, ClassifierMixin):
             prog_bar=self.prog_bar,
             verbose=self.verbose,
             silent=self.silent,
-            subtask=True)
+            subtask=True,
+            external_pbar=self.use_global_pbar)  # global bar managed upstream
 
         # Overwrite values for prog_bar and verbosity with current pipeline
         # values, in case predict is called from a loaded experiment
         if hasattr(self, "shaps") and self.shaps is not None:
             self.shaps.prog_bar = self.prog_bar
             self.shaps.verbose = self.verbose
+            self.shaps.progress = self.progress
 
         # Load a pipeline if specified, or create the default one.
         self._set_predict_pipeline(ref_graph, pipeline)
-        n_steps = self._get_steps_predict_pipeline()
-
-        self.predict_pipeline.run(n_steps)
+        self.predict_pipeline.run()
 
         # Check if "G_final" exists in this object (self)
         if 'G_final' in self.__dict__ and self.G_final is not None:
@@ -566,6 +571,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             pbar = ProgBar().start_subtask("Bootstrap", num_iterations)
         else:
             pbar = None
+        if self.progress is not None:
+            # Bootstrap iterations are treated as macro-units.
+            self.progress.start_phase(
+                "Bootstrap", weight=num_iterations, substeps=num_iterations)
 
         results = []
         if parallel_jobs != 0 and parallel_jobs != 1:
@@ -589,6 +598,9 @@ class Rex(BaseEstimator, ClassifierMixin):
                     results.append(result)
                     if pbar:
                         pbar.update_subtask("Bootstrap", len(results))
+                    if self.progress is not None:
+                        self.progress.update_phase(
+                            len(results), total_substeps=num_iterations)
                 if pbar:
                     pbar.remove("Bootstrap")
                     pbar = None
@@ -602,8 +614,13 @@ class Rex(BaseEstimator, ClassifierMixin):
                 results.append(result)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
+                if self.progress is not None:
+                    self.progress.update_phase(
+                        iter + 1, total_substeps=num_iterations)
             if self.prog_bar and not self.verbose and pbar is not None:
                 pbar.remove("Bootstrap")
+        if self.progress is not None:
+            self.progress.finish_phase()
 
         for result in results:
             iter_adjacency_matrix += result
@@ -1176,7 +1193,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             prog_bar=self.prog_bar,
             verbose=self.verbose,
             silent=self.silent,
-            subtask=True)
+            subtask=True,
+            external_pbar=self.use_global_pbar)
         pipeline.from_list(steps)
         pipeline.run()
         pipeline.close()
