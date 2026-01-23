@@ -21,6 +21,8 @@ def default_train_settings() -> Dict[str, Any]:
         "prior_path": "",
         "method": "rex",
         "hpo_iterations": DEFAULT_HPO_TRIALS,
+        "hpo_optimization": False,
+        "hpo_optimization_limit": 0,
         "bootstrap_iterations": DEFAULT_BOOTSTRAP_TRIALS,
         "bootstrap_tolerance": DEFAULT_BOOTSTRAP_TOLERANCE,
         "combine_op": "union",

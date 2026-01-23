@@ -196,6 +196,10 @@ that the hyper-parameter optimization will perform in the ReX method. The defaul
 value is 100, but you can change it to a different value, to test the effect of
 the number of iterations on the performance of the method.
 
+The option ``--hpo-optimization`` enables Optuna pruning and downsampled HPO
+objectives to speed up tuning runs. You can cap rows with
+``--hpo-optimization-limit`` (disabled by default).
+
 The option ``-S`` or ``--seed`` allows you to specify a seed for the random number
 generator. The default value is 1234, but you can change it to a different value,
 to test the effect of the seed on the performance of the method.

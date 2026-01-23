@@ -84,6 +84,16 @@ def parse_args() -> argparse.Namespace:
         '-i', '--iterations', type=int, required=False,
         help='Hyper-parameter tuning max. iterations. Default is 20.')
     parser.add_argument(
+        '--hpo-optimization',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='Enable HPO optimization (pruning + downsampled objective). '
+             'Use --no-hpo-optimization to disable (default).')
+    parser.add_argument(
+        '--hpo-optimization-limit', type=int, required=False,
+        help='Row cap for the HPO objective when optimization is enabled. '
+             'Omit to use an internal default.')
+    parser.add_argument(
         '-l', '--load_model', type=str, required=False,
         help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
     parser.add_argument(
@@ -245,6 +255,11 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['quiet'] = True if args.quiet else False
     run_values['hpo_iterations'] = args.iterations \
         if args.iterations is not None else DEFAULT_HPO_TRIALS
+    run_values['hpo_optimization'] = getattr(args, "hpo_optimization", False)
+    hpo_optimization_limit = getattr(args, "hpo_optimization_limit", None)
+    if hpo_optimization_limit is not None and hpo_optimization_limit <= 0:
+        hpo_optimization_limit = None
+    run_values['hpo_optimization_limit'] = hpo_optimization_limit
     run_values['bootstrap_iterations'] = args.bootstrap \
         if args.bootstrap is not None else DEFAULT_BOOTSTRAP_TRIALS
     run_values['bootstrap_tolerance'] = args.threshold \
@@ -413,6 +428,8 @@ def _train_if_needed(
         bootstrap_shap_cache=run_values.get('bootstrap_shap_cache', True),
         precompute_target_matrices=run_values.get(
             'precompute_target_matrices', False),
+        hpo_optimization=run_values.get('hpo_optimization', False),
+        hpo_optimization_limit=run_values.get('hpo_optimization_limit'),
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])

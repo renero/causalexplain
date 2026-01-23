@@ -27,7 +27,7 @@ from sklearn.preprocessing import StandardScaler
 from torch.utils.data import DataLoader
 from mlforge.progbar import ProgBar   # type: ignore
 
-from ..common import DEFAULT_HPO_TRIALS, utils
+from ..common import DEFAULT_HPO_TRIALS, DEFAULT_MAX_CSV_LINES, utils
 from ..common.progress import ProgressManager
 from ._columnar import ColumnsDataset
 from ._models import MLPModel
@@ -92,6 +92,8 @@ class NNRegressor(BaseEstimator):
             silent: bool = False,
             optuna_prog_bar: bool = False,
             parallel_jobs: int = 0,
+            hpo_optimization: bool = False,
+            hpo_optimization_limit: int | None = None,
             progress: ProgressManager | None = None):
         """
         Train DFF networks for all variables in data. Each network will be trained to
@@ -123,6 +125,9 @@ class NNRegressor(BaseEstimator):
                 is False.
             parallel_jobs (int): Number of parallel jobs to use for CPU training.
                 Default is 0 (sequential).
+            hpo_optimization (bool): Enable HPO pruning and downsampled objective.
+                Default is False.
+            hpo_optimization_limit (int|None): Row cap for HPO downsampling.
             progress (ProgressManager, optional): Global progress manager.
 
         Returns:
@@ -148,6 +153,8 @@ class NNRegressor(BaseEstimator):
         self.silent = silent
         self.optuna_prog_bar = optuna_prog_bar
         self.parallel_jobs = parallel_jobs
+        self.hpo_optimization = hpo_optimization
+        self.hpo_optimization_limit = hpo_optimization_limit
         self.progress = progress
 
         self.regressor = None
@@ -155,6 +162,31 @@ class NNRegressor(BaseEstimator):
 
         if self.verbose:
             self.prog_bar = False
+
+    def _downsample_for_hpo(
+        self,
+        train_data: pd.DataFrame,
+        test_data: pd.DataFrame,
+        limit: int,
+        seed: int
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Downsample HPO data while preserving the train/test split ratio.
+
+        This speeds up Optuna trials without affecting the final fit, which
+        still uses the full dataset.
+        """
+        total_rows = len(train_data) + len(test_data)
+        if total_rows <= limit:
+            return train_data, test_data
+
+        frac = min(1.0, limit / total_rows)
+        train_rows = max(1, int(round(len(train_data) * frac)))
+        test_rows = max(1, int(round(len(test_data) * frac)))
+
+        train_sample = train_data.sample(n=train_rows, random_state=seed)
+        test_sample = test_data.sample(n=test_rows, random_state=seed + 1)
+        return train_sample, test_sample
 
     def fit(self, X):
         """A reference implementation of a fitting function.
@@ -444,10 +476,31 @@ class NNRegressor(BaseEstimator):
             min_loss: float = 0.05,
             storage: str = 'sqlite:///rex_tuning.db',
             load_if_exists: bool = True,
-            n_trials: int = DEFAULT_HPO_TRIALS) -> Dict[str, Any]:
+            n_trials: int = DEFAULT_HPO_TRIALS,
+            hpo_optimization: bool | None = None,
+            hpo_optimization_limit: int | None = None) -> Dict[str, Any]:
         """
         Tune the hyperparameters of the model using Optuna.
         """
+        use_optimization = (
+            self.hpo_optimization
+            if hpo_optimization is None
+            else hpo_optimization
+        )
+        limit = (
+            self.hpo_optimization_limit
+            if hpo_optimization_limit is None
+            else hpo_optimization_limit
+        )
+        if limit is None or limit <= 0:
+            limit = DEFAULT_MAX_CSV_LINES
+
+        hpo_train = training_data
+        hpo_test = test_data
+        if use_optimization:
+            # Downsample only for HPO trials; final fit uses full data.
+            hpo_train, hpo_test = self._downsample_for_hpo(
+                training_data, test_data, limit, self.random_state)
         class Objective:
             """
             A class to define the objective function for the hyperparameter optimization
@@ -473,7 +526,8 @@ class NNRegressor(BaseEstimator):
                     test_data,
                     device='cpu',
                     prog_bar=True,
-                    verbose=False):
+                    verbose=False,
+                    enable_pruning: bool = False):
                 """
                 Initialize the Optuna objective with training data and settings.
 
@@ -483,6 +537,7 @@ class NNRegressor(BaseEstimator):
                     device (str): Device to run the model on.
                     prog_bar (bool): Whether to show a progress bar.
                     verbose (bool): Whether to enable verbose logging.
+                    enable_pruning (bool): Enable Optuna pruning callbacks.
 
                 Returns:
                     None: This method does not return a value.
@@ -500,6 +555,7 @@ class NNRegressor(BaseEstimator):
                 self.models = None
                 self.prog_bar = prog_bar
                 self.verbose = verbose
+                self.enable_pruning = enable_pruning
 
             def __call__(self, trial):
                 """
@@ -536,7 +592,9 @@ class NNRegressor(BaseEstimator):
 
                 # Now, measure the performance of the model with the test data.
                 loss = []
-                for target in list(self.train_data.columns):
+                for target_idx, target in enumerate(
+                    list(self.train_data.columns)
+                ):
                     model = self.models.regressor[target].model
                     loader = DataLoader(
                         ColumnsDataset(target, self.test_data),
@@ -544,6 +602,10 @@ class NNRegressor(BaseEstimator):
                         shuffle=False)
                     avg_loss, _, _ = self.compute_loss(model, loader)
                     loss.append(avg_loss)
+                    if self.enable_pruning:
+                        trial.report(np.median(loss), step=target_idx)
+                        if trial.should_prune():
+                            raise optuna.TrialPruned()
 
                 return np.median(loss)
 
@@ -617,14 +679,21 @@ class NNRegressor(BaseEstimator):
         if self.progress is not None:
             # Each completed trial advances the main bar fractionally.
             self.progress.start_phase("DNN_HPO", weight=n_trials, substeps=n_trials)
+        pruner = None
+        if use_optimization:
+            # Median pruner with a small startup window keeps pruning conservative.
+            pruner = optuna.pruners.MedianPruner(
+                n_startup_trials=5, n_warmup_steps=0, interval_steps=1)
         try:
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
-                storage=resolved_storage, load_if_exists=load_if_exists)
+                storage=resolved_storage, load_if_exists=load_if_exists,
+                pruner=pruner)
             study.optimize(
                 Objective(
-                    training_data, test_data, device=self.device,
-                    prog_bar=self.prog_bar, verbose=self.verbose),
+                    hpo_train, hpo_test, device=self.device,
+                    prog_bar=self.prog_bar, verbose=self.verbose,
+                    enable_pruning=use_optimization),
                 n_trials=n_trials,
                 show_progress_bar=(self.optuna_prog_bar & (
                     not self.silent) & (not self.verbose)),
@@ -641,11 +710,13 @@ class NNRegressor(BaseEstimator):
                     f"storage={fallback_storage}")
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
-                storage=fallback_storage, load_if_exists=load_if_exists)
+                storage=fallback_storage, load_if_exists=load_if_exists,
+                pruner=pruner)
             study.optimize(
                 Objective(
-                    training_data, test_data, device=self.device,
-                    prog_bar=self.prog_bar, verbose=self.verbose),
+                    hpo_train, hpo_test, device=self.device,
+                    prog_bar=self.prog_bar, verbose=self.verbose,
+                    enable_pruning=use_optimization),
                 n_trials=n_trials,
                 show_progress_bar=(self.optuna_prog_bar & (
                     not self.silent) & (not self.verbose)),
@@ -684,7 +755,9 @@ class NNRegressor(BaseEstimator):
             hpo_min_loss: float = 0.05,
             hpo_storage: str = 'sqlite:///rex_tuning.db',
             hpo_load_if_exists: bool = True,
-            hpo_n_trials: int = DEFAULT_HPO_TRIALS):
+            hpo_n_trials: int = DEFAULT_HPO_TRIALS,
+            hpo_optimization: bool | None = None,
+            hpo_optimization_limit: int | None = None):
         """
         Tune the hyperparameters of the model using Optuna, and the fit the model
         with the best parameters.
@@ -697,7 +770,9 @@ class NNRegressor(BaseEstimator):
         regressor_args = self.tune(
             train_data, test_data, n_trials=hpo_n_trials, study_name=hpo_study_name,
             min_loss=hpo_min_loss, storage=hpo_storage,
-            load_if_exists=hpo_load_if_exists)
+            load_if_exists=hpo_load_if_exists,
+            hpo_optimization=hpo_optimization,
+            hpo_optimization_limit=hpo_optimization_limit)
 
         if self.verbose and not self.silent:
             print(

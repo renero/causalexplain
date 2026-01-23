@@ -117,6 +117,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             bootstrap_shap_cache_full_data: bool = True,
             shap_budget: Optional[int] = None,
             precompute_target_matrices: bool = False,
+            hpo_optimization: bool = False,
+            hpo_optimization_limit: Optional[int] = None,
             progress: Optional[ProgressManager] = None,
             use_global_pbar: bool = False,
             shap_fsize: Tuple[int, int] = (10, 10),
@@ -161,6 +163,9 @@ class Rex(BaseEstimator, ClassifierMixin):
                 explained rows, used to keep SHAP runs bounded.
             precompute_target_matrices (bool): Precompute per-target feature
                 matrices in regressors to reduce repeated slicing. Default is False.
+            hpo_optimization (bool): Enable HPO pruning and downsampled objective.
+                Default is False.
+            hpo_optimization_limit (int, optional): Row cap for HPO downsampling.
             progress (ProgressManager, optional): Global progress manager.
             use_global_pbar (bool): Disable pipeline-owned progress bars.
             random_state (int): The seed for the random number generator.
@@ -209,6 +214,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         self._bootstrap_shap_cache: Optional[ShapEstimator] = None
         self.shap_budget = shap_budget
         self.precompute_target_matrices = precompute_target_matrices
+        self.hpo_optimization = hpo_optimization
+        self.hpo_optimization_limit = hpo_optimization_limit
 
         self.condlen = condlen
         self.condsize = condsize
@@ -297,7 +304,11 @@ class Rex(BaseEstimator, ClassifierMixin):
             # This is the final set of steps in default mode.
             steps = [
                 ('models', self.model_type),
-                ('models.tune_fit', {'hpo_n_trials': self.hpo_n_trials}),
+                ('models.tune_fit', {
+                    'hpo_n_trials': self.hpo_n_trials,
+                    'hpo_optimization': self.hpo_optimization,
+                    'hpo_optimization_limit': self.hpo_optimization_limit,
+                }),
                 ('models.score', {})
             ]
             self.fit_pipeline.from_list(steps)

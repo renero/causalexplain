@@ -196,6 +196,10 @@ For GBT-based ReX runs, `-gbt-optimization` controls whether per-target
 feature matrices are cached to reduce repeated slicing. Use
 `--no-gbt-optimization` to disable and lower memory usage (disabled by default).
 
+To speed up hyperparameter tuning, use `--hpo-optimization` to enable Optuna
+pruning and a downsampled HPO objective. You can cap rows with
+`--hpo-optimization-limit` (disabled by default).
+
 Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
 ReX defaults to `tree` when running the GBT regressor.
 

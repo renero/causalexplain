@@ -64,7 +64,7 @@ from sklearn.ensemble import (GradientBoostingClassifier,
 from sklearn.metrics import f1_score
 from sklearn.preprocessing import StandardScaler
 
-from ..common import DEFAULT_HPO_TRIALS, utils
+from ..common import DEFAULT_HPO_TRIALS, DEFAULT_MAX_CSV_LINES, utils
 from ..common.progress import ProgressManager
 from ._optuna_storage import (
     _ensure_writable_optuna_storage,
@@ -106,6 +106,8 @@ class GBTRegressor(GradientBoostingRegressor):
             optuna_prog_bar=False,
             parallel_jobs: int = 0,
             precompute_target_matrices: bool = False,
+            hpo_optimization: bool = False,
+            hpo_optimization_limit: int | None = None,
             progress: ProgressManager | None = None):
         """
         Initialize the gradient boosting regressor wrapper.
@@ -138,6 +140,9 @@ class GBTRegressor(GradientBoostingRegressor):
             parallel_jobs (int): Number of parallel jobs for CPU training.
             precompute_target_matrices (bool): Precompute per-target feature
                 matrices to avoid repeated dataframe slicing. Default is False.
+            hpo_optimization (bool): Enable HPO pruning and downsampled objective.
+                Default is False.
+            hpo_optimization_limit (int|None): Row cap for HPO downsampling.
             progress (ProgressManager, optional): Global progress manager.
 
         Returns:
@@ -172,6 +177,8 @@ class GBTRegressor(GradientBoostingRegressor):
         self.optuna_prog_bar = optuna_prog_bar
         self.parallel_jobs = parallel_jobs
         self.precompute_target_matrices = precompute_target_matrices
+        self.hpo_optimization = hpo_optimization
+        self.hpo_optimization_limit = hpo_optimization_limit
         self.progress = progress
         self.regressor = None
         self._estimator_name = 'gbt'
@@ -213,6 +220,31 @@ class GBTRegressor(GradientBoostingRegressor):
             # Align to the training column order for stable model inputs.
             X_eval = X_eval.loc[:, self._trained_columns]
         return X_eval
+
+    def _downsample_for_hpo(
+        self,
+        train_data: pd.DataFrame,
+        test_data: pd.DataFrame,
+        limit: int,
+        seed: int
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Downsample HPO data while preserving the train/test split ratio.
+
+        This keeps Optuna trials faster without affecting the final fit,
+        which still uses full data.
+        """
+        total_rows = len(train_data) + len(test_data)
+        if total_rows <= limit:
+            return train_data, test_data
+
+        frac = min(1.0, limit / total_rows)
+        train_rows = max(1, int(round(len(train_data) * frac)))
+        test_rows = max(1, int(round(len(test_data) * frac)))
+
+        train_sample = train_data.sample(n=train_rows, random_state=seed)
+        test_sample = test_data.sample(n=test_rows, random_state=seed + 1)
+        return train_sample, test_sample
 
     def fit(self, X):
         """
@@ -424,11 +456,32 @@ class GBTRegressor(GradientBoostingRegressor):
         min_loss: float = 0.05,
         storage: str = "sqlite:///rex_tuning.db",
         load_if_exists: bool = True,
-        n_trials: int = DEFAULT_HPO_TRIALS
+        n_trials: int = DEFAULT_HPO_TRIALS,
+        hpo_optimization: bool | None = None,
+        hpo_optimization_limit: int | None = None
     ):
         """
         Tune the hyperparameters of the model using Optuna.
         """
+        use_optimization = (
+            self.hpo_optimization
+            if hpo_optimization is None
+            else hpo_optimization
+        )
+        limit = (
+            self.hpo_optimization_limit
+            if hpo_optimization_limit is None
+            else hpo_optimization_limit
+        )
+        if limit is None or limit <= 0:
+            limit = DEFAULT_MAX_CSV_LINES
+
+        hpo_train = training_data
+        hpo_test = test_data
+        if use_optimization:
+            # Downsample only for HPO trials; final fit uses full data.
+            hpo_train, hpo_test = self._downsample_for_hpo(
+                training_data, test_data, limit, self.random_state)
         class Objective:
             """
             A class to define the objective function for the hyperparameter optimization
@@ -455,7 +508,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     device='cpu',
                     prog_bar=True,
                     verbose=False,
-                    precompute_target_matrices: bool = False):
+                    precompute_target_matrices: bool = False,
+                    enable_pruning: bool = False):
                 """
                 Initialize the Optuna objective.
 
@@ -467,6 +521,7 @@ class GBTRegressor(GradientBoostingRegressor):
                     verbose (bool): Whether to enable verbose logging.
                     precompute_target_matrices (bool): Precompute per-target
                         feature matrices to reduce per-trial overhead.
+                    enable_pruning (bool): Enable Optuna pruning callbacks.
 
                 Returns:
                     None: This method does not return a value.
@@ -478,6 +533,7 @@ class GBTRegressor(GradientBoostingRegressor):
                 self.prog_bar = prog_bar
                 self.verbose = verbose
                 self.precompute_target_matrices = precompute_target_matrices
+                self.enable_pruning = enable_pruning
                 self._feature_cols_by_target = {
                     target: [
                         col for col in train_data.columns if col != target
@@ -547,7 +603,9 @@ class GBTRegressor(GradientBoostingRegressor):
                 # Now, measure the performance of the model with the test data.
                 loss = []
                 X_test = self._X_test
-                for target_name in list(self.train_data.columns):
+                for target_idx, target_name in enumerate(
+                    list(self.train_data.columns)
+                ):
                     model = self.models.regressor[target_name]
                     # For regressors, this is R2, for classifiers this is accuracy
                     if model.__class__.__name__ == "GradientBoostingClassifier":
@@ -582,6 +640,10 @@ class GBTRegressor(GradientBoostingRegressor):
                     # in the minimization mode of the error function.
                     loss.append(1.0) if goodness_of_fit < 0.0 else loss.append(
                         1.0 - goodness_of_fit)
+                    if self.enable_pruning:
+                        trial.report(np.median(loss), step=target_idx)
+                        if trial.should_prune():
+                            raise optuna.TrialPruned()
 
                 return np.median(loss)
 
@@ -611,15 +673,22 @@ class GBTRegressor(GradientBoostingRegressor):
         if self.progress is not None:
             # Each completed trial advances the main bar fractionally.
             self.progress.start_phase("GBT_HPO", weight=n_trials, substeps=n_trials)
+        pruner = None
+        if use_optimization:
+            # Median pruner with a small startup window keeps pruning conservative.
+            pruner = optuna.pruners.MedianPruner(
+                n_startup_trials=5, n_warmup_steps=0, interval_steps=1)
         try:
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
-                storage=resolved_storage, load_if_exists=load_if_exists)
+                storage=resolved_storage, load_if_exists=load_if_exists,
+                pruner=pruner)
             study.optimize(
                 Objective(
-                    training_data, test_data, prog_bar=self.prog_bar,
+                    hpo_train, hpo_test, prog_bar=self.prog_bar,
                     verbose=self.verbose,
-                    precompute_target_matrices=self.precompute_target_matrices),
+                    precompute_target_matrices=self.precompute_target_matrices,
+                    enable_pruning=use_optimization),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (
@@ -636,12 +705,14 @@ class GBTRegressor(GradientBoostingRegressor):
                     f"storage={fallback_storage}")
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
-                storage=fallback_storage, load_if_exists=load_if_exists)
+                storage=fallback_storage, load_if_exists=load_if_exists,
+                pruner=pruner)
             study.optimize(
                 Objective(
-                    training_data, test_data, prog_bar=self.prog_bar,
+                    hpo_train, hpo_test, prog_bar=self.prog_bar,
                     verbose=self.verbose,
-                    precompute_target_matrices=self.precompute_target_matrices),
+                    precompute_target_matrices=self.precompute_target_matrices,
+                    enable_pruning=use_optimization),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (
@@ -683,7 +754,9 @@ class GBTRegressor(GradientBoostingRegressor):
             hpo_min_loss: float = 0.05,
             hpo_storage: str = 'sqlite:///rex_tuning.db',
             hpo_load_if_exists: bool = True,
-            hpo_n_trials: int = DEFAULT_HPO_TRIALS):
+            hpo_n_trials: int = DEFAULT_HPO_TRIALS,
+            hpo_optimization: bool | None = None,
+            hpo_optimization_limit: int | None = None):
         """
         Tune the hyperparameters of the model using Optuna, and the fit the model
         with the best parameters.
@@ -696,7 +769,9 @@ class GBTRegressor(GradientBoostingRegressor):
         regressor_args = self.tune(
             train_data, test_data, n_trials=hpo_n_trials, study_name=hpo_study_name,
             min_loss=hpo_min_loss, storage=hpo_storage,
-            load_if_exists=hpo_load_if_exists)
+            load_if_exists=hpo_load_if_exists,
+            hpo_optimization=hpo_optimization,
+            hpo_optimization_limit=hpo_optimization_limit)
 
         if self.verbose and not self.silent:
             print(

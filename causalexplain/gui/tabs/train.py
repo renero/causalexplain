@@ -273,6 +273,15 @@ class TrainTab:
                         label="Regressors",
                         multiple=True,
                     )
+                with self.ui.element("div").classes("field-row"):
+                    hpo_opt_switch = self.ui.switch(
+                        "HPO optimization (pruning + downsample)",
+                        value=self.settings.get("hpo_optimization", False),
+                    )
+                    hpo_opt_limit_input = self.ui.number(
+                        "HPO optimization limit (rows, 0 = auto)",
+                        value=self.settings.get("hpo_optimization_limit", 0),
+                    ).props("dense")
 
                 bind_setting(
                     device_select,
@@ -322,6 +331,20 @@ class TrainTab:
                     "train_settings",
                     self.settings,
                     "regressors",
+                )
+                bind_setting(
+                    hpo_opt_switch,
+                    self.storage,
+                    "train_settings",
+                    self.settings,
+                    "hpo_optimization",
+                )
+                bind_setting(
+                    hpo_opt_limit_input,
+                    self.storage,
+                    "train_settings",
+                    self.settings,
+                    "hpo_optimization_limit",
                 )
 
                 with self.ui.expansion("Advanced ReX settings", value=False):
@@ -560,6 +583,13 @@ class TrainTab:
         shap_budget = int(raw_budget)
         if shap_budget <= 0:
             shap_budget = None
+        hpo_optimization = settings.get("hpo_optimization", False)
+        raw_hpo_limit = settings.get("hpo_optimization_limit", 0)
+        if raw_hpo_limit in ("", None):
+            raw_hpo_limit = 0
+        hpo_limit = int(raw_hpo_limit)
+        if hpo_limit <= 0:
+            hpo_limit = None
         return {
             "adaptive_shap_sampling": settings.get(
                 "adaptive_shap_sampling", True
@@ -568,6 +598,8 @@ class TrainTab:
                 "precompute_target_matrices", False
             ),
             "shap_budget": shap_budget,
+            "hpo_optimization": hpo_optimization,
+            "hpo_optimization_limit": hpo_limit,
             "explainer": settings.get("explainer", "gradient"),
             "corr_method": settings.get("corr_method", "spearman"),
             "corr_alpha": float(settings.get("corr_alpha", 0.6)),
