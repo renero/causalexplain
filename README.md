@@ -67,8 +67,8 @@ $ pip install causalexplain
 
 ## What's new in v0.8.0
 
-- Adaptive SHAP sampling with stability checks and a single SHAP budget knob
-  (`shap_budget`);
+- Adaptive SHAP sampling with stability checks and an optional SHAP
+  optimization limit knob (`--shap-optimization-limit`, Python: `shap_budget`);
   GBT defaults to `shap.TreeExplainer`.
 - Parallelization for DNN training and bootstrap runs, plus CLI flags for
   parallel jobs.
@@ -100,7 +100,7 @@ $ python -m causalexplain --help
 usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
                      [-b BOOTSTRAP] [-B BOOTSTRAP_PARALLEL_JOBS]
                      [-c {union,intersection}] [-C]
-                     [-d DATASET] [--gui] [-H SHAP_BUDGET]
+                     [-d DATASET] [--gui] [-H SHAP_OPTIMIZATION_LIMIT]
                      [-i ITERATIONS] [-l LOAD_MODEL]
                      [-m {rex,pc,fci,ges,lingam,cam,notears}]
                      [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
@@ -192,12 +192,17 @@ python -m causalexplain --shap-sampling
 python -m causalexplain --no-shap-sampling
 ```
 
+For GBT-based ReX runs, `-gbt-optimization` controls whether per-target
+feature matrices are cached to reduce repeated slicing. Use
+`--no-gbt-optimization` to disable and lower memory usage (disabled by default).
+
 Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
 ReX defaults to `tree` when running the GBT regressor.
 
-When adaptive sampling is enabled, the key knob is `shap_budget`. It controls
-both SHAP background size and the number of rows explained. The legacy
-`max_shap_samples` name is deprecated.
+When adaptive sampling is enabled, the key knob is the SHAP optimization
+limit (`--shap-optimization-limit`, Python: `shap_budget`). It controls both
+SHAP background size and the number of rows explained; omit it to disable the
+limit. The legacy `max_shap_samples` name is deprecated.
 
 Note on large datasets: if `adaptive_shap_sampling=False` and `m > 2000`, the
 tool warns about potential non-termination (the threshold is conservative).

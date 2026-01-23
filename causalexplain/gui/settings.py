@@ -8,7 +8,6 @@ from causalexplain.common import (
     DEFAULT_BOOTSTRAP_TOLERANCE,
     DEFAULT_BOOTSTRAP_TRIALS,
     DEFAULT_HPO_TRIALS,
-    DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     DEFAULT_SEED,
 )
@@ -29,7 +28,8 @@ def default_train_settings() -> Dict[str, Any]:
         "parallel_jobs": 0,
         "bootstrap_parallel_jobs": 0,
         "adaptive_shap_sampling": True,
-        "shap_budget": DEFAULT_MAX_SAMPLES,
+        "shap_budget": 0,
+        "precompute_target_matrices": False,
         "seed": DEFAULT_SEED,
         "regressors": DEFAULT_REGRESSORS[:],
         "explainer": "gradient",

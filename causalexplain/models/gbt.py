@@ -105,6 +105,7 @@ class GBTRegressor(GradientBoostingRegressor):
             prog_bar=True,
             optuna_prog_bar=False,
             parallel_jobs: int = 0,
+            precompute_target_matrices: bool = False,
             progress: ProgressManager | None = None):
         """
         Initialize the gradient boosting regressor wrapper.
@@ -135,6 +136,8 @@ class GBTRegressor(GradientBoostingRegressor):
             prog_bar (bool): Enable progress bar.
             optuna_prog_bar (bool): Enable Optuna progress bar.
             parallel_jobs (int): Number of parallel jobs for CPU training.
+            precompute_target_matrices (bool): Precompute per-target feature
+                matrices to avoid repeated dataframe slicing. Default is False.
             progress (ProgressManager, optional): Global progress manager.
 
         Returns:
@@ -168,11 +171,48 @@ class GBTRegressor(GradientBoostingRegressor):
         self.prog_bar = prog_bar
         self.optuna_prog_bar = optuna_prog_bar
         self.parallel_jobs = parallel_jobs
+        self.precompute_target_matrices = precompute_target_matrices
         self.progress = progress
         self.regressor = None
         self._estimator_name = 'gbt'
         self._estimator_class = GradientBoostingRegressor
         self._fit_desc = "Training GBTs"
+        self._feature_cols_by_target: dict[str, list[str]] = {}
+        self._trained_columns: list[str] = []
+
+    def _setup_feature_columns(self, X: pd.DataFrame) -> None:
+        """
+        Cache the training column order and per-target feature lists.
+
+        The cached order keeps model inputs consistent across predict/score
+        calls while enabling fast feature matrix precomputation.
+        """
+        self._trained_columns = list(X.columns)
+        self._feature_cols_by_target = {
+            target: [col for col in self._trained_columns if col != target]
+            for target in self.feature_names
+        }
+
+    def _align_columns(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Cast categoricals and align columns to the training order.
+
+        This avoids accidental feature reordering when inference data arrives
+        with shuffled columns.
+        """
+        X_eval = utils.cast_categoricals_to_int(X)
+        if self._trained_columns:
+            missing = [
+                col for col in self._trained_columns if col not in X_eval.columns
+            ]
+            if missing:
+                raise ValueError(
+                    "Prediction data is missing required columns: "
+                    + ", ".join(missing)
+                )
+            # Align to the training column order for stable model inputs.
+            X_eval = X_eval.loc[:, self._trained_columns]
+        return X_eval
 
     def fit(self, X):
         """
@@ -188,11 +228,7 @@ class GBTRegressor(GradientBoostingRegressor):
 
         X_original = X
 
-        columns = list(X_original.columns)
-        features_by_target = {}
-        for target_name in self.feature_names:
-            base_features = [col for col in columns if col != target_name]
-            features_by_target[target_name] = base_features
+        self._setup_feature_columns(X_original)
 
         model_class_by_target = {}
         loss_by_target = {}
@@ -228,6 +264,14 @@ class GBTRegressor(GradientBoostingRegressor):
                 substeps=len(self.feature_names),
             )
 
+        X_by_target = None
+        if self.precompute_target_matrices:
+            # Precompute per-target feature matrices once to reuse in the loop.
+            X_by_target = {
+                target: X_original.loc[:, self._feature_cols_by_target[target]]
+                for target in self.feature_names
+            }
+
         def _fit_target(target_name: str, loss_value: str, gbt_model):
             model = gbt_model(
                 loss=loss_value,
@@ -252,7 +296,12 @@ class GBTRegressor(GradientBoostingRegressor):
                 tol=self.tol,
                 ccp_alpha=self.ccp_alpha
             )
-            X_target = X_original.loc[:, features_by_target[target_name]]
+            if X_by_target is not None:
+                X_target = X_by_target[target_name]
+            else:
+                X_target = X_original.loc[
+                    :, self._feature_cols_by_target[target_name]
+                ]
             model.fit(X_target, X_original[target_name])
             return target_name, model
 
@@ -313,9 +362,23 @@ class GBTRegressor(GradientBoostingRegressor):
                 f"Call 'fit' with appropriate arguments before using this method.")
         y_pred = list()
 
+        X_eval = self._align_columns(X)
+        X_by_target = None
+        if self.precompute_target_matrices:
+            # Precompute once to avoid repeated DataFrame slicing.
+            X_by_target = {
+                target: X_eval.loc[:, self._feature_cols_by_target[target]]
+                for target in self.feature_names
+            }
+
         for target_name in self.feature_names:
             y_pred.append(
-                self.regressor[target_name].predict(X.drop(target_name, axis=1)))
+                self.regressor[target_name].predict(
+                    X_by_target[target_name]
+                    if X_by_target is not None
+                    else X_eval.loc[:, self._feature_cols_by_target[target_name]]
+                )
+            )
 
         return np.array(y_pred)
 
@@ -331,10 +394,20 @@ class GBTRegressor(GradientBoostingRegressor):
                 f"Call 'fit' with appropriate arguments before using this method.")
 
         scores = list()
-        X_eval = utils.cast_categoricals_to_int(X)
+        X_eval = self._align_columns(X)
+        X_by_target = None
+        if self.precompute_target_matrices:
+            # Precompute once per score call to reuse across targets.
+            X_by_target = {
+                target: X_eval.loc[:, self._feature_cols_by_target[target]]
+                for target in self.feature_names
+            }
         for target_name in self.feature_names:
             R2 = self.regressor[target_name].score(
-                X_eval.drop(target_name, axis=1), X_eval[target_name])
+                X_by_target[target_name]
+                if X_by_target is not None
+                else X_eval.loc[:, self._feature_cols_by_target[target_name]],
+                X_eval[target_name])
 
             # Append 1.0 if R2 is negative, or 1.0 - R2 otherwise since we're
             # in the minimization mode of the error function.
@@ -381,7 +454,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     test_data,
                     device='cpu',
                     prog_bar=True,
-                    verbose=False):
+                    verbose=False,
+                    precompute_target_matrices: bool = False):
                 """
                 Initialize the Optuna objective.
 
@@ -391,6 +465,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     device (str): Unused placeholder for interface parity.
                     prog_bar (bool): Whether to show a progress bar.
                     verbose (bool): Whether to enable verbose logging.
+                    precompute_target_matrices (bool): Precompute per-target
+                        feature matrices to reduce per-trial overhead.
 
                 Returns:
                     None: This method does not return a value.
@@ -401,6 +477,27 @@ class GBTRegressor(GradientBoostingRegressor):
                 self.random_state = GBTRegressor.random_state
                 self.prog_bar = prog_bar
                 self.verbose = verbose
+                self.precompute_target_matrices = precompute_target_matrices
+                self._feature_cols_by_target = {
+                    target: [
+                        col for col in train_data.columns if col != target
+                    ]
+                    for target in train_data.columns
+                }
+                self._X_test = utils.cast_categoricals_to_int(self.test_data)
+                if self._feature_cols_by_target:
+                    self._X_test = self._X_test.loc[
+                        :, list(train_data.columns)
+                    ]
+                self._X_test_by_target = None
+                if self.precompute_target_matrices:
+                    # Cache per-target feature matrices for faster scoring.
+                    self._X_test_by_target = {
+                        target: self._X_test.loc[
+                            :, self._feature_cols_by_target[target]
+                        ]
+                        for target in self._feature_cols_by_target
+                    }
 
             def __call__(self, trial):
                 """
@@ -442,24 +539,39 @@ class GBTRegressor(GradientBoostingRegressor):
                     n_iter_no_change=self.n_iter_no_change,
                     tol=self.tol,
                     prog_bar=True & (not self.verbose) & (self.prog_bar),
-                    silent=True)
+                    silent=True,
+                    precompute_target_matrices=self.precompute_target_matrices)
 
                 self.models.fit(self.train_data)
 
                 # Now, measure the performance of the model with the test data.
                 loss = []
-                X_test = utils.cast_categoricals_to_int(self.test_data)
+                X_test = self._X_test
                 for target_name in list(self.train_data.columns):
                     model = self.models.regressor[target_name]
                     # For regressors, this is R2, for classifiers this is accuracy
                     if model.__class__.__name__ == "GradientBoostingClassifier":
                         # Get the F1 score of the model
+                        X_features = (
+                            self._X_test_by_target[target_name]
+                            if self._X_test_by_target is not None
+                            else X_test.loc[
+                                :, self._feature_cols_by_target[target_name]
+                            ]
+                        )
                         goodness_of_fit = f1_score(
                             X_test[target_name],
-                            model.predict(X_test.drop(target_name, axis=1)))
+                            model.predict(X_features))
                     elif model.__class__.__name__ == "GradientBoostingRegressor":
+                        X_features = (
+                            self._X_test_by_target[target_name]
+                            if self._X_test_by_target is not None
+                            else X_test.loc[
+                                :, self._feature_cols_by_target[target_name]
+                            ]
+                        )
                         goodness_of_fit = model.score(
-                            X_test.drop(target_name, axis=1), X_test[target_name])
+                            X_features, X_test[target_name])
                     else:
                         raise ValueError(
                             f"Model {model.__class__.__name__} is not supported."
@@ -506,7 +618,8 @@ class GBTRegressor(GradientBoostingRegressor):
             study.optimize(
                 Objective(
                     training_data, test_data, prog_bar=self.prog_bar,
-                    verbose=self.verbose),
+                    verbose=self.verbose,
+                    precompute_target_matrices=self.precompute_target_matrices),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (
@@ -527,7 +640,8 @@ class GBTRegressor(GradientBoostingRegressor):
             study.optimize(
                 Objective(
                     training_data, test_data, prog_bar=self.prog_bar,
-                    verbose=self.verbose),
+                    verbose=self.verbose,
+                    precompute_target_matrices=self.precompute_target_matrices),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (

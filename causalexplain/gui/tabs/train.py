@@ -11,7 +11,6 @@ from typing import Any, Dict, Optional
 
 from causalexplain.causalexplainer import GraphDiscovery
 from causalexplain.common import (
-    DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     SUPPORTED_METHODS,
     utils,
@@ -256,12 +255,16 @@ class TrainTab:
                         "Adaptive SHAP sampling",
                         value=self.settings.get("adaptive_shap_sampling", True),
                     )
+                    precompute_switch = self.ui.switch(
+                        "GBT optimization (feature cache)",
+                        value=self.settings.get("precompute_target_matrices", False),
+                    )
                     shap_budget_value = self.settings.get(
                         "shap_budget",
-                        self.settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
+                        self.settings.get("max_shap_samples", 0),
                     )
                     max_shap_input = self.ui.number(
-                        "SHAP budget",
+                        "SHAP optimization limit (0 = off)",
                         value=shap_budget_value,
                     ).props("dense")
                     regressors_input = self.ui.select(
@@ -298,6 +301,13 @@ class TrainTab:
                     "train_settings",
                     self.settings,
                     "adaptive_shap_sampling",
+                )
+                bind_setting(
+                    precompute_switch,
+                    self.storage,
+                    "train_settings",
+                    self.settings,
+                    "precompute_target_matrices",
                 )
                 bind_setting(
                     max_shap_input,
@@ -542,16 +552,22 @@ class TrainTab:
         split = settings.get("bootstrap_sampling_split", "auto")
         if isinstance(split, str) and split.lower() != "auto":
             split = float(split)
+        raw_budget = settings.get(
+            "shap_budget", settings.get("max_shap_samples", 0)
+        )
+        if raw_budget in ("", None):
+            raw_budget = 0
+        shap_budget = int(raw_budget)
+        if shap_budget <= 0:
+            shap_budget = None
         return {
             "adaptive_shap_sampling": settings.get(
                 "adaptive_shap_sampling", True
             ),
-            "shap_budget": int(
-                settings.get(
-                    "shap_budget",
-                    settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
-                )
+            "precompute_target_matrices": settings.get(
+                "precompute_target_matrices", False
             ),
+            "shap_budget": shap_budget,
             "explainer": settings.get("explainer", "gradient"),
             "corr_method": settings.get("corr_method", "spearman"),
             "corr_alpha": float(settings.get("corr_alpha", 0.6)),
@@ -580,6 +596,14 @@ class TrainTab:
                 prior_path = ensure_file(prior_path, ".json")
                 prior = utils.read_json_file(prior_path)
             dataset_name = os.path.splitext(os.path.basename(dataset_path))[0]
+            raw_budget = settings.get(
+                "shap_budget", settings.get("max_shap_samples", 0)
+            )
+            if raw_budget in ("", None):
+                raw_budget = 0
+            shap_budget = int(raw_budget)
+            if shap_budget <= 0:
+                shap_budget = None
             discoverer = GraphDiscovery(
                 experiment_name=dataset_name,
                 model_type=settings["method"],
@@ -592,12 +616,7 @@ class TrainTab:
                 bootstrap_parallel_jobs=int(
                     settings["bootstrap_parallel_jobs"]
                 ),
-                max_shap_samples=int(
-                    settings.get(
-                        "shap_budget",
-                        settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
-                    )
-                ),
+                max_shap_samples=shap_budget,
             )
             if settings["method"] == "rex":
                 regressors = settings.get("regressors", DEFAULT_REGRESSORS)

@@ -132,9 +132,10 @@ CLI example
 Available SHAP backends are ``kernel``, ``gradient``, ``explainer``, and
 ``tree``. ReX defaults to ``tree`` when running the GBT regressor.
 
-When adaptive sampling is enabled, the key knob is ``shap_budget``. It controls
-both SHAP background size and the number of rows explained. The legacy
-``max_shap_samples`` name is deprecated.
+When adaptive sampling is enabled, the key knob is the SHAP optimization limit
+(``--shap-optimization-limit``, Python: ``shap_budget``). It controls both SHAP
+background size and the number of rows explained; omit it to disable the limit.
+The legacy ``max_shap_samples`` name is deprecated.
 
 If ``adaptive_shap_sampling=False`` and ``m > 2000``, the tool emits a warning
 about potential non-termination (the threshold is conservative).
@@ -173,6 +174,10 @@ threshold on the performance of the method. Lower values in the adjacency matrix
 represent edges that appear less frequently in the bootstrap samples, while higher
 values represent edges that appear more frequently. So, a higher threshold
 represents a more conservative approach to the inference of the causal graph.
+
+The option ``-gbt-optimization`` (disabled by default) caches per-target feature
+matrices for the ReX GBT regressor to avoid repeated dataframe slicing. Use
+``--no-gbt-optimization`` to disable the cache when memory is tight.
 
 The option ``-r`` or ``--regressor`` allows you to specify a list of comma-separated
 names of the regressors to be used. The default value is ``dnn,gbt``, but you can

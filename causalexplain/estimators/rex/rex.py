@@ -116,6 +116,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             bootstrap_shap_cache: bool = True,
             bootstrap_shap_cache_full_data: bool = True,
             shap_budget: Optional[int] = None,
+            precompute_target_matrices: bool = False,
             progress: Optional[ProgressManager] = None,
             use_global_pbar: bool = False,
             shap_fsize: Tuple[int, int] = (10, 10),
@@ -158,6 +159,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                 values on the full dataset to enable row-subsetting. Default is True.
             shap_budget (int, optional): Single SHAP budget for background and
                 explained rows, used to keep SHAP runs bounded.
+            precompute_target_matrices (bool): Precompute per-target feature
+                matrices in regressors to reduce repeated slicing. Default is False.
             progress (ProgressManager, optional): Global progress manager.
             use_global_pbar (bool): Disable pipeline-owned progress bars.
             random_state (int): The seed for the random number generator.
@@ -205,6 +208,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.bootstrap_shap_cache_full_data = bootstrap_shap_cache_full_data
         self._bootstrap_shap_cache: Optional[ShapEstimator] = None
         self.shap_budget = shap_budget
+        self.precompute_target_matrices = precompute_target_matrices
 
         self.condlen = condlen
         self.condsize = condsize
