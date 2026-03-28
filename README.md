@@ -65,13 +65,14 @@ The project can be installed using pip:
 $ pip install causalexplain
 ```
 
-## What's new in v0.8.0
+## What's new in v0.9.2
 
 - Adaptive SHAP sampling with stability checks and an optional SHAP
   optimization limit knob (`--shap-optimization-limit`, Python: `shap_budget`);
   GBT defaults to `shap.TreeExplainer`.
 - Parallelization for DNN training and bootstrap runs, plus CLI flags for
   parallel jobs.
+- Bootstrap SHAP caching and HPO optimization controls for faster ReX runs.
 - CUDA/MPS device selection and float32 enforcement for PyTorch models.
 - Prior handling and diagnostics improvements across ReX, SHAP, and feature
   selection.

@@ -3,6 +3,17 @@ Changelog
 
 All notable changes to this project will be documented in this file.
 
+[0.9.2] - 2025
+--------------
+
+Changed
+~~~~~~~
+* Added SHAP budget batching, bootstrap SHAP caching, and HPO optimization
+  controls for ReX workflows.
+* Renamed and surfaced the optimization settings in the CLI and GUI Train tab.
+* Fixed the bootstrap-cache and gradient SHAP regressions uncovered during
+  merge validation.
+
 [0.9.0] - 2025
 --------------
 
