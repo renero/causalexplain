@@ -607,28 +607,37 @@ class Rex(BaseEstimator, ClassifierMixin):
             self.bootstrap_shap_cache
             and num_iterations > 1
             and parallel_jobs in (0, 1)
+            and getattr(self.models, "regressor", None) is not None
         )
         cache_pool = X
         if use_cache and self._bootstrap_shap_cache is None:
             # Cache SHAP values once to avoid recomputing them per iteration.
             # This speeds up bootstrap significantly while preserving the
             # per-iteration sampling for graph orientation.
-            cache_fit_data = X
-            if self.bootstrap_shap_cache_full_data:
-                # Limit cache size to avoid full-dataset SHAP blowups.
-                max_rows = self.shap_budget
-                if isinstance(max_rows, int) and max_rows > 0 and len(X) > max_rows:
-                    cache_fit_data = X.sample(n=max_rows, random_state=random_state)
-            self._bootstrap_shap_cache = ShapEstimator(
-                models=self.models,
-                explainer=explainer or "explainer",
-                parallel_jobs=0,
-                prog_bar=False,
-                verbose=self.verbose,
-                shap_budget=self.shap_budget,
-            )
-            self._bootstrap_shap_cache.fit(
-                cache_fit_data, use_full_data=self.bootstrap_shap_cache_full_data)
+            try:
+                cache_fit_data = X
+                if self.bootstrap_shap_cache_full_data:
+                    # Limit cache size to avoid full-dataset SHAP blowups.
+                    max_rows = self.shap_budget
+                    if isinstance(max_rows, int) and max_rows > 0 and len(X) > max_rows:
+                        cache_fit_data = X.sample(n=max_rows, random_state=random_state)
+                self._bootstrap_shap_cache = ShapEstimator(
+                    models=self.models,
+                    explainer=explainer or "explainer",
+                    parallel_jobs=0,
+                    prog_bar=False,
+                    verbose=self.verbose,
+                    shap_budget=self.shap_budget,
+                )
+                self._bootstrap_shap_cache.fit(
+                    cache_fit_data, use_full_data=self.bootstrap_shap_cache_full_data)
+            except (AssertionError, AttributeError, TypeError, ValueError) as exc:
+                # Keep bootstrap compatible with lightweight/internal callers
+                # that do not expose a full regressors container.
+                self._bootstrap_shap_cache = None
+                use_cache = False
+                if self.verbose:
+                    print(f"  > Disabling bootstrap SHAP cache: {exc}")
         if use_cache and self._bootstrap_shap_cache is not None:
             # Sample from the cached rows so sample indices map to SHAP values.
             cache_pool = self._bootstrap_shap_cache.X_test
