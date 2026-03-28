@@ -12,8 +12,8 @@ Here's a simple example of how to get CausalExplain help from the command line:
 
    python -m causalexplain --help
 
-In order to run CausalExplain from the command line, you need to have Python 3.10
-or later installed on your system. To install CausalExplain, run the following
+In order to run CausalExplain from the command line, you need to have Python
+3.10+ installed on your system. To install CausalExplain, run the following
 command:
 
 .. code-block:: bash

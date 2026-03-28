@@ -1,7 +1,7 @@
 ![logo](https://raw.githubusercontent.com/renero/causalexplain/main/docs/_static/logo-light.png)
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://www.python.org/downloads/release/python-31311/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/renero/causalexplain)
 [![PyPI version](https://badge.fury.io/py/causalexplain.svg)](https://badge.fury.io/py/causalexplain)
 [![Build Status](https://github.com/renero/causalexplain/actions/workflows/build.yaml/badge.svg)](https://github.com/renero/causalexplain/actions/workflows/build.yaml)
@@ -57,7 +57,7 @@ datasets, highlighting its robustness across different types of data.
 
 - Operating System: Linux or macOS
 - Environment Manager: PyEnv or Conda
-- Programming Language: Python 3.10 or higher
+- Programming Language: Python 3.10+
 - Hardware: CPU (CUDA/MPS optional)
 
 ## Installation
