@@ -20,8 +20,12 @@ command:
 
    pip install causalexplain
 
-Once CausalExplain is installed, you can run it from the command line by typing
-``python -m causalexplain``.
+Once CausalExplain is installed, use the top-level help to inspect the
+available subcommands:
+
+.. code-block:: bash
+
+   python -m causalexplain --help
 
 .. warning::
 
@@ -35,7 +39,7 @@ use the following command, assuming default parameters:
 
 .. code-block:: bash
 
-   python -m causalexplain -d /path/to/toy_dataset.csv
+   python -m causalexplain run -d /path/to/toy_dataset.csv
 
 That will generate the ReX model and run the model on the dataset, and print
 the results to the terminal, like this:
@@ -51,6 +55,35 @@ the results to the terminal, like this:
 
 which is the true graph expected.
 
+Synthetic data generation
+-------------------------
+
+The CLI can also generate a synthetic dataset and save both the data matrix and
+the ground-truth DAG in one step:
+
+.. code-block:: bash
+
+   python -m causalexplain generate \
+       --mechanism linear \
+       --variables 10 \
+       --samples 500 \
+       --output /path/to/generated/toy_dataset
+
+This writes ``/path/to/generated/toy_dataset.csv`` and
+``/path/to/generated/toy_dataset.dot``.
+
+Generation mode requires these arguments:
+
+* ``--mechanism``: one of ``linear``, ``polynomial``, ``sigmoid_add``,
+  ``sigmoid_mix``, ``gp_add``, or ``gp_mix``.
+* ``--variables``: number of variables to generate.
+* ``--samples``: number of rows to generate.
+* ``--output``: output base path; the CLI appends ``.csv`` and ``.dot``.
+
+The remaining generation controls default to the same values as the GUI:
+``--timeout 30``, ``--max-retries 50``, ``--min-edges 0``,
+``--max-edges 30``, ``--max-parents 3``, ``--seed 1234``, and ``--rescale``.
+
 GUI Mode
 --------
 
@@ -58,7 +91,7 @@ If you prefer a browser-based interface, launch the local GUI with:
 
 .. code-block:: bash
 
-   python -m causalexplain --gui
+   python -m causalexplain gui
 
 This starts a local app that lets you train models, load/evaluate saved runs,
 and generate synthetic datasets.
@@ -73,6 +106,8 @@ The basic arguments are:
 * ``-t`` or ``--true_dag``: The path to the true DAG file in DOT format.
 * ``-m`` or ``--method``: The method to use to infer the causal graph.
 * ``-p`` or ``--prior``: JSON file with prior knowledge for ReX (optional).
+* ``generate``: Subcommand for synthetic-data generation.
+* ``gui``: Subcommand that launches the local GUI.
 
 The stable, supported path is ReX. Other bundled methods are mainly present
 for comparison. In particular, ``pc`` and ``cam`` are currently unsupported.
@@ -112,7 +147,7 @@ Use it from the CLI like this:
 
 .. code-block:: bash
 
-   python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+   python -m causalexplain run -d /path/to/data.csv -p /path/to/prior.json
 
 Adaptive SHAP sampling
 ----------------------
@@ -136,8 +171,8 @@ CLI example
 
 .. code-block:: bash
 
-   python -m causalexplain --shap-sampling
-   python -m causalexplain --no-shap-sampling
+   python -m causalexplain run --shap-sampling
+   python -m causalexplain run --no-shap-sampling
 
 Available SHAP backends are ``kernel``, ``gradient``, ``explainer``, and
 ``tree``. ReX defaults to ``tree`` when running the GBT regressor.

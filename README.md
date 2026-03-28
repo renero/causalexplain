@@ -97,7 +97,7 @@ the datasets in the `data` folder.
 After installation, you can use either the installed `causalexplain` command
 or the module entry point:
 
-```
+``` 
 $ causalexplain --help
 $ python -m causalexplain --help
    ___                      _                 _       _
@@ -106,38 +106,58 @@ $ python -m causalexplain --help
 / /__| (_| | |_| \__ \ (_| | |  __/>  <| |_) | | (_| | | | | |
 \____/\__,_|\__,_|___/\__,_|_|\___/_/\_\ .__/|_|\__,_|_|_| |_|
                                        |_|
-usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
-                     [-b BOOTSTRAP] [-B BOOTSTRAP_PARALLEL_JOBS]
-                     [-c {union,intersection}] [-C]
-                     [-d DATASET] [--gui] [-H SHAP_OPTIMIZATION_LIMIT]
-                     [-i ITERATIONS] [-l LOAD_MODEL]
-                     [-m {rex,pc,fci,ges,lingam,cam,notears}]
-                     [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
-                     [-q] [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD]
-                     [-t TRUE_DAG] [-v]
+usage: causalexplain [-h] {run,generate,gui} ...
 ```
 
-The help output lists the available options for dataset paths, estimator
-selection, SHAP controls, bootstrap settings, and GUI mode.
+The top-level help lists the available subcommands. Use
+`causalexplain run --help`, `causalexplain generate --help`, and
+`causalexplain gui --help` for mode-specific options.
 
-The minimum required to run `causalexplain` is a dataset file in CSV format,
-with the first row containing the names of the variables, and the rest of
-the rows containing the values of the variables. The method selected by default
-is ReX, but you can also choose between PC, FCI, GES, LiNGAM, CAM, NOTEARS.
-At the end of the execution, the edges of the plausible causal graph will be
-displayed along with the metrics obtained, if the true dag is provided
+The minimum required to run `causalexplain run` is a dataset file in CSV
+format, with the first row containing the names of the variables, and the rest
+of the rows containing the values of the variables. The method selected by
+default is ReX, but you can also choose between PC, FCI, GES, LiNGAM, CAM, and
+NOTEARS. At the end of the execution, the edges of the plausible causal graph
+will be displayed along with the metrics obtained, if the true DAG is provided
 (argument `-t`).
 
 PC and CAM are still exposed in the CLI for reproducibility and internal
 comparison, but they are currently unsupported: parts of their helper API are
 unfinished, and they should not be treated as stable public interfaces.
 
+#### Generate synthetic data from the CLI
+
+The CLI can also generate a synthetic dataset and save both the `.csv` data
+file and the `.dot` ground-truth DAG from a single output base path:
+
+```bash
+$ python -m causalexplain generate \
+    --mechanism linear \
+    --variables 10 \
+    --samples 500 \
+    --output /path/to/generated/toy_dataset
+```
+
+This writes `/path/to/generated/toy_dataset.csv` and
+`/path/to/generated/toy_dataset.dot`.
+
+The required arguments for generation mode are:
+
+- `--mechanism`
+- `--variables`
+- `--samples`
+- `--output`
+
+The remaining generation controls default to the same values used by the GUI:
+`--timeout 30`, `--max-retries 50`, `--min-edges 0`, `--max-edges 30`,
+`--max-parents 3`, `--seed 1234`, and `--rescale`.
+
 #### GUI mode
 
 To use the local GUI, run:
 
 ```bash
-$ python -m causalexplain --gui
+$ python -m causalexplain gui
 ```
 
 This launches a browser-based app for training models, loading/evaluating saved
@@ -201,8 +221,8 @@ res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=Fals
 CLI example (same executable shown above):
 
 ```bash
-python -m causalexplain --shap-sampling
-python -m causalexplain --no-shap-sampling
+python -m causalexplain run --shap-sampling
+python -m causalexplain run --no-shap-sampling
 ```
 
 For GBT-based ReX runs, `-gbt-optimization` controls whether per-target
@@ -279,7 +299,7 @@ The following command illustrates how to run `causalexplain` on the toy dataset
 using the ReX method:
 
 ```bash
-$ python -m causalexplain -d /path/to/toy_dataset.csv -t /path/to/toy_dataset.dot
+$ python -m causalexplain run -d /path/to/toy_dataset.csv -t /path/to/toy_dataset.dot
 ```
 
 The CLI still exposes `-m pc` and `-m cam` for research/reference workflows,
@@ -293,7 +313,7 @@ section in the documentation.
 You can also launch the GUI locally:
 
 ```bash
-$ python -m causalexplain --gui
+$ python -m causalexplain gui
 ```
 
 ### Prior knowledge (ReX)
@@ -319,7 +339,7 @@ Example JSON file:
 Use it from the CLI with `-p`/`--prior` (ReX only):
 
 ```bash
-$ python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+$ python -m causalexplain run -d /path/to/data.csv -p /path/to/prior.json
 ```
 
 Or from a notebook:
