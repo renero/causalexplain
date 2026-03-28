@@ -1152,13 +1152,13 @@ class GraphDiscovery:
         if ui_parent is None or ui_parent is ui:
             if title:
                 ui.label(title)
-            ui.html(container_html, sanitize=False)
+            ui.html(container_html)
             ui.run_javascript(script)
         else:
             with ui_parent:
                 if title:
                     ui.label(title)
-                ui.html(container_html, sanitize=False)
+                ui.html(container_html)
                 ui.run_javascript(script)
 
         return self._cy_positions
