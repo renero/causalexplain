@@ -13,23 +13,36 @@
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 #
+from __future__ import annotations
 
 import argparse
 import os
 import sys
 import time
-from typing import Any, Dict, Optional
-
-import networkx as nx
-
-import pandas as pd
-from .causalexplainer import GraphDiscovery
-from causalexplain.common.notebook import Experiment
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
                                   DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
+
+if TYPE_CHECKING:
+    import networkx as nx
+
+    from .causalexplainer import GraphDiscovery as GraphDiscoveryType
+    from causalexplain.common.notebook import Experiment
+
+
+GraphDiscovery = None
+
+
+def _resolve_graph_discovery() -> type["GraphDiscoveryType"]:
+    """Return GraphDiscovery, honoring monkeypatched module globals."""
+    global GraphDiscovery
+    if GraphDiscovery is None:
+        from .causalexplainer import GraphDiscovery as _GraphDiscovery
+        GraphDiscovery = _GraphDiscovery
+    return GraphDiscovery
 
 
 def parse_args() -> argparse.Namespace:
@@ -339,8 +352,13 @@ def show_run_values(run_values: Dict[str, Any]) -> None:
     """
     print("-----")
     print("Run values:")
+    try:
+        import pandas as pd
+    except ImportError:  # pragma: no cover - pandas is a runtime dependency
+        pd = None
+
     for k, v in run_values.items():
-        if isinstance(v, pd.DataFrame):
+        if pd is not None and isinstance(v, pd.DataFrame):
             print(f"- {k}: {v.shape[0]}x{v.shape[1]} DataFrame")
             continue
         print(f"- {k}: {v}")
@@ -348,7 +366,7 @@ def show_run_values(run_values: Dict[str, Any]) -> None:
     print("-----")
 
 
-def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
+def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscoveryType:
     """
     Initialize the GraphDiscovery object with run-time configuration.
     Check also for CSV size warnings related to SHAP sampling.
@@ -359,7 +377,8 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
     Returns:
         GraphDiscovery: The initialized GraphDiscovery object.
     """
-    discoverer = GraphDiscovery(
+    discoverer_cls = _resolve_graph_discovery()
+    discoverer = discoverer_cls(
         experiment_name=run_values['dataset_name'],
         model_type=run_values['estimator'],
         csv_filename=run_values['dataset_filepath'],
@@ -377,7 +396,7 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
 
 
 def _load_or_prepare(
-    discoverer: GraphDiscovery,
+    discoverer: GraphDiscoveryType,
     run_values: Dict[str, Any]
 ) -> Optional[Experiment]:
     """
@@ -400,7 +419,7 @@ def _load_or_prepare(
 
 
 def _train_if_needed(
-    discoverer: GraphDiscovery,
+    discoverer: GraphDiscoveryType,
     run_values: Dict[str, Any],
     result: Optional[Experiment]
 ) -> Optional[Experiment]:
@@ -454,7 +473,7 @@ def _ensure_result(result: Optional[Experiment]) -> Experiment:
     return result
 
 
-def _ensure_dag(result: Experiment) -> nx.DiGraph:
+def _ensure_dag(result: Experiment) -> "nx.DiGraph":
     """
     Ensure that the result contains a DAG.
 
@@ -474,7 +493,7 @@ def _ensure_dag(result: Experiment) -> nx.DiGraph:
 
 
 def _check_csv_size_warning(
-    discoverer: GraphDiscovery,
+    discoverer: GraphDiscoveryType,
     run_values: dict
 ):
     """
