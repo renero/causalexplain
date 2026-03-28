@@ -13,7 +13,10 @@
 
 '**CausalExplain**' is a library that implements methods to extract the causal
 graph, from tabular data, specifically the **ReX** method, and other compared
-methods like GES, PC, FCI, LiNGAM, CAM, and NOTEARS.
+methods like GES, PC, FCI, LiNGAM, CAM, and NOTEARS. At present, the public,
+supported path is centered on ReX and the more complete comparison methods;
+the PC and CAM implementations remain in the repository for research/reference
+purposes but are not supported as production-ready public APIs.
 
 This repository contains the implementation of **ReX** and all necessary tools
 to reproduce the results presented in our accompanying paper. **ReX** supports
@@ -124,6 +127,10 @@ is ReX, but you can also choose between PC, FCI, GES, LiNGAM, CAM, NOTEARS.
 At the end of the execution, the edges of the plausible causal graph will be
 displayed along with the metrics obtained, if the true dag is provided
 (argument `-t`).
+
+PC and CAM are still exposed in the CLI for reproducibility and internal
+comparison, but they are currently unsupported: parts of their helper API are
+unfinished, and they should not be treated as stable public interfaces.
 
 #### GUI mode
 
@@ -275,12 +282,9 @@ using the ReX method:
 $ python -m causalexplain -d /path/to/toy_dataset.csv -t /path/to/toy_dataset.dot
 ```
 
-The same command can be used to run `causalexplain` on the toy dataset using the
-CAM method:
-
-```bash
-$ python -m causalexplain -d /path/to/toy_dataset.csv -m cam -t /path/to/toy_dataset.dot
-```
+The CLI still exposes `-m pc` and `-m cam` for research/reference workflows,
+but those two methods are currently unsupported and are not considered
+release-ready public interfaces.
 
 For more information on command line options, run `causalexplain -h` or go to
 the [Quickstart](https://renero.github.io/causalexplain/quickstart.html)

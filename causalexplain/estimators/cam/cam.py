@@ -10,6 +10,12 @@ This module provides a Python translation of the original CAM implementation:
 The implementation depends on helper modules in this package such as
 ``computeScoreMat``, ``updateScoreMat``, ``pruning``, ``selGamBoost``, and
 ``selGam``.
+
+Warning
+-------
+This implementation is currently unsupported as a public API. It remains in
+the repository for research/reference purposes, but some score and training
+paths are still incomplete or explicitly unimplemented.
 """
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init
 # pylint: disable=C0103:invalid-name, W0221:arguments-differ
@@ -36,7 +42,14 @@ from ...metrics.compare_graphs import evaluate_graph
 
 
 class CAM:
-    """Causal Additive Model (CAM) estimator."""
+    """Causal Additive Model (CAM) estimator.
+
+    Warning
+    -------
+    This estimator is currently unsupported as a public API. It is available
+    for research/reference usage, but some score and training paths remain
+    incomplete or unimplemented.
+    """
     def __init__(
             self,
             name:str,

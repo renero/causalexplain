@@ -113,7 +113,8 @@ def parse_args() -> argparse.Namespace:
         '-m', '--method', type=str, required=False,
         choices=['rex', 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'],
         help="Method to used. If not specified, the method will be ReX.\n" +
-        "Other options are: 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'.")
+        "Other options are: 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'. "
+        "Note: 'pc' and 'cam' are currently unsupported public interfaces.")
     device_group.add_argument(
         '-M', '--mps', action='store_true', required=False,
         help='Run on Apple Silicon MPS (requires MPS support).')

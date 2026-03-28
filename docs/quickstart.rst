@@ -23,6 +23,13 @@ command:
 Once CausalExplain is installed, you can run it from the command line by typing
 ``python -m causalexplain``.
 
+.. warning::
+
+   The ``pc`` and ``cam`` methods are still exposed for reproducibility and
+   internal comparison, but they are currently unsupported as public APIs.
+   Their helper surface is incomplete, so they should not be treated as
+   release-ready user-facing methods.
+
 To run a simple case with a ``toy_dataset.csv`` file using ReX model, you can
 use the following command, assuming default parameters:
 
@@ -66,6 +73,9 @@ The basic arguments are:
 * ``-t`` or ``--true_dag``: The path to the true DAG file in DOT format.
 * ``-m`` or ``--method``: The method to use to infer the causal graph.
 * ``-p`` or ``--prior``: JSON file with prior knowledge for ReX (optional).
+
+The stable, supported path is ReX. Other bundled methods are mainly present
+for comparison. In particular, ``pc`` and ``cam`` are currently unsupported.
 
 These options allow you to specify the dataset, true DAG, and method to be used.
 In case you don't have a true DAG, the result is the plausible causal graph,

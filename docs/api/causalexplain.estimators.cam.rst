@@ -1,6 +1,12 @@
 causalexplain.estimators.cam package
 ====================================
 
+.. warning::
+
+   The CAM implementation is currently unsupported as a public API. It remains
+   in the repository for research/reference purposes, but some score/training
+   paths are still incomplete or explicitly unimplemented.
+
 Submodules
 ----------
 
