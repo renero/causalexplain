@@ -29,7 +29,6 @@ from causalexplain.common.notebook import Experiment
 from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
                                   DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
-                                  DEFAULT_MAX_SAMPLES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
 
 
@@ -54,6 +53,25 @@ def parse_args() -> argparse.Namespace:
         '-B', '--bootstrap-parallel-jobs', type=int, required=False, default=0,
         help='Number of parallel jobs for bootstrap iterations (0 = sequential).')
     parser.add_argument(
+        '--bootstrap-shap-cache',
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help='Cache SHAP values once during bootstrap to speed up iterations. '
+             'Use --no-bootstrap-shap-cache to disable.')
+    parser.add_argument(
+        '--precompute-target-matrices',
+        action=argparse.BooleanOptionalAction,
+        dest='precompute_target_matrices',
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS)
+    parser.add_argument(
+        '-gbt-optimization', '--gbt-optimization',
+        action=argparse.BooleanOptionalAction,
+        dest='precompute_target_matrices',
+        default=False,
+        help='Enable the GBT optimization that caches per-target feature '
+             'matrices. Use --no-gbt-optimization to disable (default).')
+    parser.add_argument(
         '-c', '--combine', type=str, required=False, choices=['union', 'intersection'],
         help='Combine ReX DAGs using the specified operation: union or intersection.')
     device_group.add_argument(
@@ -66,12 +84,31 @@ def parse_args() -> argparse.Namespace:
         '-i', '--iterations', type=int, required=False,
         help='Hyper-parameter tuning max. iterations. Default is 20.')
     parser.add_argument(
+        '--hpo-optimization',
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help='Enable HPO optimization (pruning + downsampled objective). '
+             'Use --no-hpo-optimization to disable (default).')
+    parser.add_argument(
+        '--hpo-optimization-limit', type=int, required=False,
+        help='Row cap for the HPO objective when optimization is enabled. '
+             'Omit to use an internal default.')
+    parser.add_argument(
         '-l', '--load_model', type=str, required=False,
         help='Model name (pickle) to load. If not specified, the model will be trained and avealuated.')
     parser.add_argument(
-        '-H', '--max-shap-samples', '--max_shap_samples', type=int, required=False,
-        help='Max background samples for adaptive SHAP. '
-             f'Default is {DEFAULT_MAX_SAMPLES}.')
+        '--shap-budget', type=int,
+        dest='shap_budget', required=False,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS)
+    parser.add_argument(
+        '-H', '--shap-optimization-limit', type=int,
+        dest='shap_budget', required=False,
+        help='SHAP optimization limit (background + explained rows). '
+             'Omit to disable (default).')
+    parser.add_argument(
+        '--max-shap-samples', '--max_shap_samples', type=int, required=False,
+        help='Deprecated; use --shap-optimization-limit.')
     parser.add_argument(
         '-m', '--method', type=str, required=False,
         choices=['rex', 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'],
@@ -218,10 +255,25 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['quiet'] = True if args.quiet else False
     run_values['hpo_iterations'] = args.iterations \
         if args.iterations is not None else DEFAULT_HPO_TRIALS
+    run_values['hpo_optimization'] = getattr(args, "hpo_optimization", False)
+    hpo_optimization_limit = getattr(args, "hpo_optimization_limit", None)
+    if hpo_optimization_limit is not None and hpo_optimization_limit <= 0:
+        hpo_optimization_limit = None
+    run_values['hpo_optimization_limit'] = hpo_optimization_limit
     run_values['bootstrap_iterations'] = args.bootstrap \
         if args.bootstrap is not None else DEFAULT_BOOTSTRAP_TRIALS
     run_values['bootstrap_tolerance'] = args.threshold \
         if args.threshold is not None else DEFAULT_BOOTSTRAP_TOLERANCE
+    run_values['bootstrap_shap_cache'] = getattr(
+        args, "bootstrap_shap_cache", True)
+    if any(arg.startswith("--precompute-target-matrices")
+           for arg in sys.argv) or \
+            any(arg.startswith("--no-precompute-target-matrices")
+                for arg in sys.argv):
+        print("WARNING: --precompute-target-matrices is deprecated; "
+              "use --gbt-optimization instead.")
+    run_values['precompute_target_matrices'] = getattr(
+        args, "precompute_target_matrices", False)
 
     run_values['combine_op'] = args.combine if args.combine is not None else 'union'
     run_values['verbose'] = True if args.verbose else False
@@ -229,11 +281,20 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
-    max_shap_samples = getattr(args, "max_shap_samples", None)
-    if max_shap_samples is None or max_shap_samples <= 0:
-        run_values['max_shap_samples'] = DEFAULT_MAX_SAMPLES
-    else:
-        run_values['max_shap_samples'] = max_shap_samples
+    if any(arg.startswith("--shap-budget") for arg in sys.argv):
+        print("WARNING: --shap-budget is deprecated; "
+              "use --shap-optimization-limit instead.")
+    shap_budget = getattr(args, "shap_budget", None)
+    legacy_max_shap = getattr(args, "max_shap_samples", None)
+    if shap_budget is None or shap_budget <= 0:
+        if legacy_max_shap is not None and legacy_max_shap > 0:
+            print("WARNING: --max-shap-samples is deprecated; "
+                  "use --shap-optimization-limit instead.")
+            shap_budget = legacy_max_shap
+        else:
+            shap_budget = None
+    run_values['shap_budget'] = shap_budget
+    run_values['max_shap_samples'] = shap_budget
     run_values['parallel_jobs'] = getattr(args, "parallel_jobs", 0)
     run_values['bootstrap_parallel_jobs'] = getattr(
         args, "bootstrap_parallel_jobs", 0)
@@ -307,7 +368,7 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscovery:
         parallel_jobs=run_values['parallel_jobs'],
         bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
         device=run_values['device'],
-        max_shap_samples=run_values.get('max_shap_samples')
+        max_shap_samples=run_values.get('shap_budget')
     )
     _check_csv_size_warning(discoverer, run_values)
 
@@ -363,7 +424,12 @@ def _train_if_needed(
         bootstrap_tolerance=run_values.get('bootstrap_tolerance'),
         quiet=run_values.get('quiet', False),
         adaptive_shap_sampling=run_values.get('adaptive_shap_sampling', True),
-        max_shap_samples=run_values.get('max_shap_samples')
+        shap_budget=run_values.get('shap_budget'),
+        bootstrap_shap_cache=run_values.get('bootstrap_shap_cache', True),
+        precompute_target_matrices=run_values.get(
+            'precompute_target_matrices', False),
+        hpo_optimization=run_values.get('hpo_optimization', False),
+        hpo_optimization_limit=run_values.get('hpo_optimization_limit'),
     )
     return discoverer.combine_and_evaluate_dags(
         run_values['prior'], combine_op=run_values['combine_op'])
@@ -423,7 +489,7 @@ def _check_csv_size_warning(
     # What dataset size threshold is used and why:
     # We warn when m > DEFAULT_MAX_CSV_LINES to be conservative about runtime/memory blowups.
     # How users can mitigate (enable adaptive sampling, cap explain set, etc):
-    # Enable adaptive_shap_sampling or reduce rows via max_shap_samples,
+    # Enable adaptive_shap_sampling or reduce rows via --shap-optimization-limit,
     # max_explain_samples, or external subsampling.
     if not run_values.get('adaptive_shap_sampling', True):
         data = getattr(discoverer, "data", None)
@@ -433,7 +499,7 @@ def _check_csv_size_warning(
                 f"{len(data)} rows (>2000). SHAP computation may take a very "
                 "long time, use excessive memory, or fail to halt. Consider "
                 "enabling adaptive_shap_sampling=True or reducing rows via "
-                "max_shap_samples, max_explain_samples, or subsampling.")
+                "--shap-optimization-limit, max_explain_samples, or subsampling.")
             print(warning_text, file=sys.stderr)
 
 

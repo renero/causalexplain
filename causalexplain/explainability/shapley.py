@@ -1270,6 +1270,8 @@ class ShapEstimator(BaseEstimator):
         Whether to suppress all output.
     progress : ProgressManager, optional
         Global progress manager for macro-unit updates.
+    shap_budget : int, optional
+        Single SHAP workload budget for background and explained rows.
     """
 
     device = utils.select_device("cpu")
@@ -1290,6 +1292,8 @@ class ShapEstimator(BaseEstimator):
     prog_bar = True
     verbose = False
     silent = False
+    gradient_shap_batch_size = 128
+    explain_size = None
 
 
     def __init__(
@@ -1305,11 +1309,13 @@ class ShapEstimator(BaseEstimator):
             background_size: Optional[int] = 200,
             background_method: str = "sample",
             background_seed: Optional[int] = None,
+            shap_budget: Optional[int] = None,
             parallel_jobs: int = 0,
             on_gpu: bool = False,
             verbose: bool = False,
             prog_bar: bool = True,
             silent: bool = False,
+            gradient_shap_batch_size: int = 128,
             progress: ProgressManager | None = None) -> None:
         """
         Initialize the ShapEstimator object.
@@ -1368,11 +1374,14 @@ class ShapEstimator(BaseEstimator):
             background_size: Background sample size for SHAP explainers.
             background_method: Background selection method ("sample" or "kmeans").
             background_seed: Random seed for background sampling.
+            shap_budget: Single knob to limit SHAP workload (background and
+                explained rows) for faster runs on large datasets.
             parallel_jobs: Parallel worker count.
             on_gpu: Whether to use GPU for SHAP computation.
             verbose: Enable verbose output.
             prog_bar: Whether to show progress bars.
             silent: Suppress all output.
+            gradient_shap_batch_size: Batch size for gradient SHAP runs.
             progress: Global progress manager for macro-unit updates.
 
         Returns:
@@ -1396,7 +1405,15 @@ class ShapEstimator(BaseEstimator):
         self.verbose = verbose
         self.prog_bar = prog_bar
         self.silent = silent
+        self.gradient_shap_batch_size = gradient_shap_batch_size
         self.progress = progress
+        if shap_budget is not None and shap_budget > 0:
+            # Single budget drives background size and explained rows, plus a
+            # derived batch size for gradient SHAP to keep memory stable.
+            self.background_size = shap_budget
+            self.explain_size = shap_budget
+            self.gradient_shap_batch_size = max(
+                16, min(128, shap_budget // 4))
 
         self._fit_desc = f"Running SHAP explainer ({self.explainer})"
         self._pred_desc = "Building graph skeleton"
@@ -1578,7 +1595,7 @@ class ShapEstimator(BaseEstimator):
             shap_mean_values_target
 
 
-    def fit(self, X: pd.DataFrame) -> "ShapEstimator":
+    def fit(self, X: pd.DataFrame, use_full_data: bool = False) -> "ShapEstimator":
         """
         Fit the ShapleyExplainer model to the given dataset.
 
@@ -1590,6 +1607,9 @@ class ShapEstimator(BaseEstimator):
 
         Args:
             X: Input dataset used to compute SHAP values.
+            use_full_data: If True, skip train/test split and compute SHAP
+                values over all rows. This enables row-subsetting later for
+                bootstrap resampling without recomputing SHAP values.
 
         Returns:
             The fitted estimator instance.
@@ -1618,9 +1638,21 @@ class ShapEstimator(BaseEstimator):
                 substeps=len(self.feature_names),
             )
 
-        self.X_train, self.X_test = train_test_split(
-            X, test_size=min(0.2, 250 / len(X)), random_state=42
-        )
+        if use_full_data:
+            # Use all rows for SHAP so cached values can be subset by index later,
+            # which is useful for bootstrap resampling without recomputing SHAP.
+            self.X_train = X
+            self.X_test = X
+        else:
+            self.X_train, self.X_test = train_test_split(
+                X, test_size=min(0.2, 250 / len(X)), random_state=42
+            )
+        if self.explain_size is not None and len(self.X_test) > self.explain_size:
+            # Cap explained rows to honor the single SHAP budget.
+            self.X_test = self.X_test.sample(
+                n=self.explain_size, random_state=42)
+        # Keep index mapping for row-subset selection in predict().
+        self._shap_index = self.X_test.index
 
         # Prepare arguments for partial function
         partial_process_target = partial(
@@ -1764,18 +1796,15 @@ class ShapEstimator(BaseEstimator):
             background = self._select_background(X_train, allow_kmeans=False)
             background = np.asarray(background, dtype=np.float32)
             X_test = np.asarray(X_test, dtype=np.float32)
-            X_train_tensor = torch.from_numpy(background).float()
-            X_test_tensor = torch.from_numpy(X_test).float()
-            model_device = self.device
-            if hasattr(model, "parameters"):
-                try:
-                    model_device = next(model.parameters()).device
-                except StopIteration:
-                    model_device = self.device
-            self.shap_explainer[target_name] = shap.GradientExplainer(
-                model, [X_train_tensor.to(model_device)])
-            shap_values = self.shap_explainer[target_name](
-                [X_test_tensor.to(model_device)]).values
+            # Use batched Gradient SHAP calls to avoid long stalls on large
+            # datasets while preserving the same explainer semantics.
+            self.shap_explainer[target_name] = build_gradient_explainer(
+                model, background)
+            shap_values = compute_gradient_shap(
+                self.shap_explainer[target_name],
+                X_test,
+                batch_size=self.gradient_shap_batch_size,
+            )
         elif self.explainer == "explainer":
             background = self._select_background(X_train)
             if isinstance(model, torch.nn.Module):
@@ -1815,7 +1844,8 @@ class ShapEstimator(BaseEstimator):
             self,
             X: pd.DataFrame,
             root_causes: list[str]|None = None,
-            prior: list[list[str]]|None = None) -> nx.DiGraph:
+            prior: list[list[str]]|None = None,
+            sample_idx: pd.Index|None = None) -> nx.DiGraph:
         """
         Builds a causal graph from the shap values using a selection mechanism based
         on clustering, knee or abrupt methods.
@@ -1831,6 +1861,9 @@ class ShapEstimator(BaseEstimator):
             The prior knowledge about the connections between the features. If None,
             all features are considered as valid candidates for the connections, by
             default None.
+        sample_idx : pd.Index, optional
+            Row indices to subset SHAP values when they were computed on full data.
+            This enables bootstrap resampling without recomputing SHAP values.
 
         Returns
         -------
@@ -1911,8 +1944,17 @@ class ShapEstimator(BaseEstimator):
                 print(f"  > Candidate causes for target '{target}': {candidate_causes}")
 
             # Select the features that are connected to the target
+            shap_values_for_target = self.shap_values[target]
+            if sample_idx is not None and hasattr(self, "_shap_index"):
+                # Map sample indices into the SHAP value row positions; this
+                # allows bootstrap iterations to reuse cached SHAP values.
+                row_idx = self._shap_index.get_indexer(sample_idx)
+                row_idx = row_idx[row_idx >= 0]
+                if row_idx.size > 0:
+                    shap_values_for_target = shap_values_for_target[row_idx]
+
             self.connections[target] = select_features(
-                values=self.shap_values[target],
+                values=shap_values_for_target,
                 feature_names=candidate_causes, # feature_names_wo_target,
                 min_impact=self.min_impact,
                 exhaustive=self.exhaustive,

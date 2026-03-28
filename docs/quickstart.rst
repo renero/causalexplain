@@ -132,8 +132,10 @@ CLI example
 Available SHAP backends are ``kernel``, ``gradient``, ``explainer``, and
 ``tree``. ReX defaults to ``tree`` when running the GBT regressor.
 
-When adaptive sampling is enabled, the key knobs are ``max_shap_samples``,
-``K_max``, ``max_explain_samples``, and ``stratify``.
+When adaptive sampling is enabled, the key knob is the SHAP optimization limit
+(``--shap-optimization-limit``, Python: ``shap_budget``). It controls both SHAP
+background size and the number of rows explained; omit it to disable the limit.
+The legacy ``max_shap_samples`` name is deprecated.
 
 If ``adaptive_shap_sampling=False`` and ``m > 2000``, the tool emits a warning
 about potential non-termination (the threshold is conservative).
@@ -173,6 +175,10 @@ represent edges that appear less frequently in the bootstrap samples, while high
 values represent edges that appear more frequently. So, a higher threshold
 represents a more conservative approach to the inference of the causal graph.
 
+The option ``-gbt-optimization`` (disabled by default) caches per-target feature
+matrices for the ReX GBT regressor to avoid repeated dataframe slicing. Use
+``--no-gbt-optimization`` to disable the cache when memory is tight.
+
 The option ``-r`` or ``--regressor`` allows you to specify a list of comma-separated
 names of the regressors to be used. The default value is ``dnn,gbt``, but you can
 change it to a different list of regressors. Current implementation only supports
@@ -189,6 +195,10 @@ The option ``-i`` or ``--iterations`` allows you to specify the number of iterat
 that the hyper-parameter optimization will perform in the ReX method. The default
 value is 100, but you can change it to a different value, to test the effect of
 the number of iterations on the performance of the method.
+
+The option ``--hpo-optimization`` enables Optuna pruning and downsampled HPO
+objectives to speed up tuning runs. You can cap rows with
+``--hpo-optimization-limit`` (disabled by default).
 
 The option ``-S`` or ``--seed`` allows you to specify a seed for the random number
 generator. The default value is 1234, but you can change it to a different value,

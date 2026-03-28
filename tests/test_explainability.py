@@ -454,6 +454,10 @@ def test_shap_explainer_variants(monkeypatch):
         def to(self, device):
             return self
 
+    class DummyTorchModel(torch.nn.Module):
+        def forward(self, X):
+            return X.sum(dim=1, keepdim=True)
+
     # Kernel branch
     sh = smod.ShapEstimator(models=None, prog_bar=False, verbose=False)
     sh.explainer = "kernel"
@@ -469,13 +473,18 @@ def test_shap_explainer_variants(monkeypatch):
     # Gradient branch
     sh.explainer = "gradient"
     monkeypatch.setattr(
-        smod.shap,
-        "GradientExplainer",
-        lambda model, data: lambda x: SimpleNamespace(
-            values=np.full((x[0].shape[0], data[0].shape[1]), 2.0)
-        ),
+        smod,
+        "build_gradient_explainer",
+        lambda model, data: SimpleNamespace(model=model, data=data),
     )
-    grad_vals = sh._run_selected_shap_explainer("t", DummyModel(), X_train, X_test)
+    monkeypatch.setattr(
+        smod,
+        "compute_gradient_shap",
+        lambda explainer, X_explain, batch_size=128: np.full(
+            (len(X_explain), X_explain.shape[1]), 2.0)
+    )
+    grad_vals = sh._run_selected_shap_explainer(
+        "t", DummyTorchModel(), X_train, X_test)
     assert grad_vals.shape == (1, 2)
 
     # Explainer branch

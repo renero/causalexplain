@@ -15,7 +15,6 @@ import networkx as nx
 from causalexplain.common import (
     DEFAULT_BOOTSTRAP_TRIALS,
     DEFAULT_HPO_TRIALS,
-    DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     utils,
 )
@@ -61,7 +60,9 @@ class GraphDiscovery:
             device (Optional[str], optional): Device selection for regressors.
             parallel_jobs (int, optional): Number of parallel jobs for CPU training.
             bootstrap_parallel_jobs (int, optional): Number of parallel jobs for bootstrap.
-            max_shap_samples (Optional[int], optional): Cap for SHAP background samples.
+            max_shap_samples (Optional[int], optional): Deprecated name for the SHAP
+                workload budget; use --shap-optimization-limit in the CLI. A
+                non-positive or missing value disables the budget.
 
         Returns:
             None: This method does not return a value.
@@ -73,7 +74,7 @@ class GraphDiscovery:
         resolved_max_shap = (
             max_shap_samples
             if isinstance(max_shap_samples, int) and max_shap_samples > 0
-            else DEFAULT_MAX_SAMPLES
+            else None
         )
 
         if normalized_experiment is None and normalized_csv is None:
@@ -137,7 +138,7 @@ class GraphDiscovery:
         device: str,
         parallel_jobs: int,
         bootstrap_parallel_jobs: int,
-        max_shap_samples: int
+        max_shap_samples: Optional[int]
     ) -> None:
         """
         Initialize the instance with placeholder state for deferred configuration.
@@ -485,7 +486,8 @@ class GraphDiscovery:
                 'bootstrap_parallel_jobs': self.bootstrap_parallel_jobs
             }
             if self.max_shap_samples is not None:
-                xargs['max_shap_samples'] = self.max_shap_samples
+                # Use a single SHAP budget to control background/explain rows.
+                xargs['shap_budget'] = self.max_shap_samples
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations
             if bootstrap_iterations is not None:
@@ -771,11 +773,12 @@ class GraphDiscovery:
             return "SHAP adaptive sampling: unavailable"
 
         adaptive = getattr(rex_estimator, 'adaptive_shap_sampling', True)
-        max_shap_samples = getattr(
-            rex_estimator, 'max_shap_samples', DEFAULT_MAX_SAMPLES)
+        shap_budget = getattr(rex_estimator, 'shap_budget', None)
+        if shap_budget is None:
+            shap_budget = getattr(rex_estimator, 'max_shap_samples', None)
+        if not isinstance(shap_budget, int) or shap_budget <= 0:
+            shap_budget = None
         k_max = getattr(rex_estimator, 'K_max', 5)
-        if not isinstance(max_shap_samples, int) or max_shap_samples <= 0:
-            max_shap_samples = DEFAULT_MAX_SAMPLES
         if not isinstance(k_max, int) or k_max <= 0:
             k_max = 5
 
@@ -798,17 +801,19 @@ class GraphDiscovery:
                 "SHAP adaptive sampling: disabled "
                 f"({mode}, K={k_target}, samples={n_background})"
             )
-        if n_rows <= max_shap_samples:
+        if shap_budget is None:
+            return "SHAP adaptive sampling: enabled (optimization limit: disabled)"
+        if n_rows <= shap_budget:
             mode = "no_sampling"
             n_background = n_rows
             k_target = 1
-        elif n_rows <= 2 * max_shap_samples:
+        elif n_rows <= 2 * shap_budget:
             mode = "single_sample"
-            n_background = max_shap_samples
+            n_background = shap_budget
             k_target = 1
         else:
             mode = "multi_sample"
-            n_background = min(max_shap_samples, n_rows)
+            n_background = min(shap_budget, n_rows)
             k_target = min(int(k_max), 5)
 
         return f"SHAP adaptive sampling: {mode} (K={k_target}, samples={n_background})"
