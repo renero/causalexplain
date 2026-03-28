@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 """
 This module contains the GraphDiscovery class which is responsible for
 creating, fitting, and evaluating causal discovery experiments.
 """
+import importlib
 import os
 import pickle
 import re
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, cast
 
 import pandas as pd
-from matplotlib.axes import Axes
 import networkx as nx
 
 from causalexplain.common import (
@@ -18,11 +20,52 @@ from causalexplain.common import (
     DEFAULT_REGRESSORS,
     utils,
 )
-from causalexplain.common import plot
 from causalexplain.common.progress import ProgressManager
-from causalexplain.common.notebook import Experiment
-from causalexplain.metrics.compare_graphs import Metrics, evaluate_graph
-from causalexplain.gui import cytoscape as cygui
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from causalexplain.common.notebook import Experiment
+    from causalexplain.metrics.compare_graphs import Metrics
+
+
+class _LazyModuleProxy:
+    """Resolve a heavy module only when one of its attributes is used."""
+
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+        self._module: Any = None
+
+    def _load(self) -> Any:
+        if self._module is None:
+            self._module = importlib.import_module(self._module_name)
+        return self._module
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
+
+
+plot = _LazyModuleProxy("causalexplain.common.plot")
+cygui = _LazyModuleProxy("causalexplain.gui.cytoscape")
+Experiment = None
+evaluate_graph = None
+
+
+def _resolve_experiment_class() -> Any:
+    """Return the Experiment class, honoring monkeypatched module globals."""
+    global Experiment
+    if Experiment is None:
+        from causalexplain.common.notebook import Experiment as _Experiment
+        Experiment = _Experiment
+    return Experiment
+
+
+def _resolve_evaluate_graph() -> Any:
+    """Return evaluate_graph, honoring monkeypatched module globals."""
+    global evaluate_graph
+    if evaluate_graph is None:
+        from causalexplain.metrics.compare_graphs import evaluate_graph as _evaluate_graph
+        evaluate_graph = _evaluate_graph
+    return evaluate_graph
 
 
 class GraphDiscovery:
@@ -428,10 +471,11 @@ class GraphDiscovery:
 
         csv_filename = cast(str, self.csv_filename)
         dot_filename = cast(str, self.dot_filename)
+        experiment_class = _resolve_experiment_class()
         self.trainer: Dict[str, Experiment] = {}
         for model_type in self.regressors:
             trainer_name = f"{self.dataset_name}_{model_type}"
-            self.trainer[trainer_name] = Experiment(
+            self.trainer[trainer_name] = experiment_class(
                 experiment_name=self.dataset_name,
                 csv_filename=csv_filename,
                 dot_filename=dot_filename,
@@ -577,7 +621,7 @@ class GraphDiscovery:
             estimator_obj = getattr(self.trainer[trainer_key], self.estimator)
             self.trainer[trainer_key].dag = estimator_obj.dag
             if self.ref_graph is not None and self.data_columns is not None:
-                self.trainer[trainer_key].metrics = evaluate_graph(
+                self.trainer[trainer_key].metrics = _resolve_evaluate_graph()(
                     self.ref_graph, estimator_obj.dag, self.data_columns)
             else:
                 self.trainer[trainer_key].metrics = None
@@ -603,10 +647,11 @@ class GraphDiscovery:
             dag = inter_cycles_removed
 
         # Create a new Experiment object for the combined DAG
+        experiment_class = _resolve_experiment_class()
         new_trainer = f"{self.dataset_name}_rex"
         if new_trainer in self.trainer:
             del self.trainer[new_trainer]
-        self.trainer[new_trainer] = Experiment(
+        self.trainer[new_trainer] = experiment_class(
             experiment_name=self.dataset_name,
             model_type='rex',
             data=self.data,
@@ -621,7 +666,7 @@ class GraphDiscovery:
         self.trainer[new_trainer].ref_graph = self.ref_graph
         self.trainer[new_trainer].dag = dag
         if self.ref_graph is not None and self.data_columns is not None:
-            self.trainer[new_trainer].metrics = evaluate_graph(
+            self.trainer[new_trainer].metrics = _resolve_evaluate_graph()(
                 self.ref_graph, dag, self.data_columns)
         else:
             self.trainer[new_trainer].metrics = None
@@ -951,6 +996,7 @@ class GraphDiscovery:
             ref_graph = model.ref_graph
         else:
             ref_graph = None
+
         plot.dag(
             graph=model.dag, reference=ref_graph, show_metrics=show_metrics,
             show_node_fill=show_node_fill, title=title or "",

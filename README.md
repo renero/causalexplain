@@ -54,7 +54,7 @@ datasets, highlighting its robustness across different types of data.
 
 - Operating System: Linux or macOS
 - Environment Manager: PyEnv or Conda
-- Programming Language: Python 3.13.11 or higher
+- Programming Language: Python 3.10 or higher
 - Hardware: CPU (CUDA/MPS optional)
 
 ## Installation
@@ -64,6 +64,9 @@ The project can be installed using pip:
 ```bash
 $ pip install causalexplain
 ```
+
+This installs the package together with its core runtime dependencies for the
+CLI, plotting, and bundled causal-discovery methods.
 
 ## What's new in v0.9.2
 
@@ -88,9 +91,11 @@ the datasets in the `data` folder.
 
 ### Option 1: Command Line
 
-To run `causalexplain` on your data, you can use the `causalexplain` command:
+After installation, you can use either the installed `causalexplain` command
+or the module entry point:
 
 ```
+$ causalexplain --help
 $ python -m causalexplain --help
    ___                      _                 _       _
   / __\__ _ _   _ ___  __ _| | _____  ___ __ | | __ _(_)_ __
@@ -106,11 +111,11 @@ usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
                      [-m {rex,pc,fci,ges,lingam,cam,notears}]
                      [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
                      [-q] [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD]
-                     [-t TRUE_DAG] [-v]```
+                     [-t TRUE_DAG] [-v]
+```
 
-that will present you with a menu to choose the dataset you want to use, the
-method you want to use to infer the causal graph, and the hyperparameters you
-want to use.
+The help output lists the available options for dataset paths, estimator
+selection, SHAP controls, bootstrap settings, and GUI mode.
 
 The minimum required to run `causalexplain` is a dataset file in CSV format,
 with the first row containing the names of the variables, and the rest of
