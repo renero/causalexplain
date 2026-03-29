@@ -3,7 +3,7 @@
 import logging
 import random
 import warnings
-from typing import List, Union
+from typing import List, Literal, Union
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,7 @@ torch_log.setLevel(logging.ERROR)
 
 
 DEVICE = "cpu"
+ActivationName = Literal["relu", "gelu", "selu", "tanh", "linear", "sigmoid"]
 
 
 class BaseModel(object):
@@ -217,8 +218,9 @@ class MLPModel(BaseModel):
     Args:
         target (str): The target variable name.
         input_size (int): The size of the input features.
-        hidden_dim (List[int]): The dimensions of the hidden layers.
-        activation (nn.Module): The activation function to use in the hidden layers.
+        hidden_dim (int | List[int]): The dimensions of the hidden layers.
+        activation (ActivationName): The activation function name to use in the
+            hidden layers.
         learning_rate (float): The learning rate for training.
         batch_size (int): The batch size for training.
         loss_fn (str): The loss function to use.
@@ -241,8 +243,8 @@ class MLPModel(BaseModel):
         self,
         target: str,
         input_size: int,
-        hidden_dim: List[int],
-        activation: nn.Module,
+        hidden_dim: int | List[int],
+        activation: ActivationName,
         learning_rate: float,
         batch_size: int,
         loss_fn: str,
@@ -269,7 +271,7 @@ class MLPModel(BaseModel):
             min_delta=min_delta)
 
         self.input_size = input_size
-        self.hidden_dim = hidden_dim
+        self.hidden_dim = [hidden_dim] if isinstance(hidden_dim, int) else hidden_dim
         self.activation = activation
         self.learning_rate = learning_rate
         self.batch_size = batch_size

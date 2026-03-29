@@ -49,19 +49,38 @@ def set_input_value(input_el: Any, value: str) -> None:
 
 
 async def save_upload(
-    file_upload: Any, upload_dir: str, suffix: Optional[str] = None
+    upload_event: Any, upload_dir: str, suffix: Optional[str] = None
 ) -> str:
     """Persist an uploaded file to the GUI upload folder."""
     import os
     import time
 
-    filename = getattr(file_upload, "name", "upload")
+    filename = getattr(upload_event, "name", None)
+    legacy_file = getattr(upload_event, "file", None)
+    content = getattr(upload_event, "content", None)
+
+    if filename is None and legacy_file is not None:
+        filename = getattr(legacy_file, "name", None)
+    if not filename:
+        filename = "upload"
     if suffix and not filename.lower().endswith(suffix):
         filename = f"{filename}{suffix}"
     timestamp = int(time.time() * 1000)
     base = os.path.basename(filename)
     path = os.path.join(upload_dir, f"{timestamp}_{base}")
-    await file_upload.save(path)
+
+    if legacy_file is not None and hasattr(legacy_file, "save"):
+        await legacy_file.save(path)
+        return path
+
+    if content is None:
+        raise ValueError("Upload event missing file content.")
+
+    if hasattr(content, "seek"):
+        content.seek(0)
+    payload = content.read()
+    with open(path, "wb") as file_obj:
+        file_obj.write(payload)
     return path
 
 
@@ -79,10 +98,7 @@ def make_upload_handler(
 
     async def _handler(event: Any) -> None:
         """Persist an uploaded file and update UI state."""
-        file_upload = getattr(event, "file", None)
-        if file_upload is None:
-            raise ValueError("Upload event missing file payload.")
-        path = await save_upload(file_upload, upload_dir, suffix)
+        path = await save_upload(event, upload_dir, suffix)
         set_input_value(input_el, path)
         update_settings(storage, settings_key, settings_ref, field, path)
         if status_label is not None:

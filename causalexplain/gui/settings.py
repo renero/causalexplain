@@ -74,6 +74,17 @@ def default_generate_settings() -> Dict[str, Any]:
     }
 
 
+def default_diagnostics_settings() -> Dict[str, Any]:
+    """Return default settings for the diagnostics tab."""
+    return {
+        "view": "Regression Errors",
+        "selected_target": "",
+        "selected_regressor": "",
+        "selected_source": "",
+        "selected_pair_target": "",
+    }
+
+
 def merge_settings(stored: Any, defaults: Dict[str, Any]) -> Dict[str, Any]:
     """Merge persisted settings into the provided defaults."""
     merged = defaults.copy()

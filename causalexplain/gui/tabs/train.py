@@ -35,6 +35,7 @@ class TrainTab:
         storage: Any,
         settings: Dict[str, Any],
         upload_dir: str,
+        active_model_state: Dict[str, Any],
     ) -> None:
         """Initialize the train tab with shared GUI dependencies."""
         self.ui = ui
@@ -42,6 +43,7 @@ class TrainTab:
         self.storage = storage
         self.settings = settings
         self.upload_dir = upload_dir
+        self.active_model_state = active_model_state
         self.state: Dict[str, Any] = {
             "task": None,
             "running": False,
@@ -76,6 +78,10 @@ class TrainTab:
         """Build the dataset/prior input section."""
         with self.ui.element("div").classes("section-card span-full"):
             self.ui.label("Inputs + Prior").classes("section-title")
+            self.ui.label(
+                "Browse uploads a copy into .gui_uploads. "
+                "Paste a full local path manually if you need to keep the original path."
+            ).classes("subtle")
 
             with self.ui.element("div").classes("file-row"):
                 self.ui.label("Dataset CSV").classes("file-label")
@@ -456,12 +462,12 @@ class TrainTab:
 
     def _build_run_section(self) -> None:
         """Build the training action section."""
-        with self.ui.element("div").classes("section-card"):
+        with self.ui.element("div").classes("section-card run-card"):
             self.ui.label("Run").classes("section-title")
             with self.ui.element("div").classes("action-row"):
                 self.run_button = self.ui.button(
                     "Start training", on_click=self.start_training_task
-                )
+                ).classes("primary-pill")
                 self.cancel_button = self.ui.button(
                     "Cancel", on_click=self.cancel_training_task
                 ).props("flat")
@@ -560,6 +566,17 @@ class TrainTab:
         if self.train_overlay_status is not None:
             self.train_overlay_status.text = ""
             self.train_overlay_status.update()
+
+    def _publish_active_model(
+        self,
+        discoverer: Any,
+        ref_graph: Any,
+        source: str,
+    ) -> None:
+        """Publish the active trained model to shared GUI state."""
+        publisher = self.active_model_state.get("set_active_model")
+        if callable(publisher):
+            publisher(discoverer, ref_graph, source)
 
     def _append_log_lines(self, text: str) -> None:
         """Append text lines to the training log."""
@@ -716,6 +733,7 @@ class TrainTab:
         self.state["dag"] = result.get("dag")
         metrics = result.get("metrics")
         ref_graph = result.get("ref_graph")
+        self._publish_active_model(discoverer, ref_graph, "trained model")
         overlay_error = render_cytoscape_overlay(
             self.train_overlay_container,
             self.train_overlay_status,

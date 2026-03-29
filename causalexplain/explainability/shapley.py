@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from multiprocessing import get_context
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Literal
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, Union, Literal
 
 import colorama
 import networkx as nx
@@ -36,7 +36,7 @@ from mlforge.progbar import ProgBar  # type: ignore
 from ..common.progress import ProgressManager
 from scipy.stats import kstest, spearmanr
 from sklearn.base import BaseEstimator
-from sklearn.discriminant_analysis import StandardScaler
+from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score
 from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
 
@@ -50,6 +50,13 @@ RESET = colorama.Style.RESET_ALL
 
 AnyGraph = Union[nx.DiGraph, nx.Graph]
 K = 180.0 / math.pi
+
+
+class _ModelCollection(Protocol):
+    regressor: Dict[str, Any]
+
+    def predict(self, X: Any) -> Any:
+        ...
 
 
 @dataclass
@@ -156,9 +163,10 @@ def _safe_indexing(X: Any, indices: Union[np.ndarray, List[int]]) -> Any:
     Returns:
         The indexed subset in the same container type as the input.
     """
+    index_array = np.asarray(indices, dtype=np.intp)
     if isinstance(X, (pd.DataFrame, pd.Series)):
-        return X.iloc[indices]
-    return np.asarray(X)[indices]
+        return X.iloc[index_array.tolist()]
+    return np.asarray(X)[index_array]
 
 
 def sample_rows(
@@ -1388,7 +1396,7 @@ class ShapEstimator(BaseEstimator):
             None.
         """
         self.explainer = explainer
-        self.models = models
+        self.models: _ModelCollection | None = models
         self.correlation_th = correlation_th
         self.mean_shap_percentile = mean_shap_percentile
         self.iters = iters
@@ -1398,8 +1406,8 @@ class ShapEstimator(BaseEstimator):
         self.background_size = background_size
         self.background_method = background_method
         self.background_seed = background_seed
-        self.corr_matrix = None
-        self.correlated_features = defaultdict(list)
+        self.corr_matrix: pd.DataFrame | None = None
+        self.correlated_features: defaultdict[str, list[str]] = defaultdict(list)
         self.parallel_jobs = parallel_jobs
         self.on_gpu = on_gpu
         self.verbose = verbose
@@ -1417,6 +1425,22 @@ class ShapEstimator(BaseEstimator):
 
         self._fit_desc = f"Running SHAP explainer ({self.explainer})"
         self._pred_desc = "Building graph skeleton"
+        self.feature_names: List[str] = []
+        self.shap_explainer: Dict[str, Any] = {}
+        self.shap_values: Dict[str, np.ndarray] = {}
+        self.shap_mean_values: Dict[str, np.ndarray] = {}
+        self.feature_order: Dict[str, np.ndarray] = {}
+        self.all_mean_shap_values = np.empty((0,), dtype=np.float16)
+        self.mean_shap_threshold = 0.0
+        self.X_train: pd.DataFrame | None = None
+        self.X_test: pd.DataFrame | None = None
+        self._shap_index: pd.Index | None = None
+        self.connections: Dict[str, Any] = {}
+        self.discrepancies: pd.DataFrame | None = None
+        self.shap_discrepancies: defaultdict[str, Dict[str, ShapDiscrepancy]] = defaultdict(dict)
+        self.error_contribution: pd.DataFrame | None = None
+        self.prior: list[list[str]] | None = None
+        self.is_fitted_ = False
 
     def _select_background(
             self,
@@ -1615,8 +1639,7 @@ class ShapEstimator(BaseEstimator):
             The fitted estimator instance.
         """
         assert self.models is not None, "shap.models must be set"
-
-        self.feature_names = list(self.models.regressor.keys())  # type: ignore
+        self.feature_names = list(self.models.regressor.keys())
         self.shap_explainer = {}
         self.shap_values = {}
         self.shap_mean_values = {}
@@ -1677,14 +1700,15 @@ class ShapEstimator(BaseEstimator):
                 results = []
                 for result in pool.imap_unordered(partial_process_target, self.feature_names):
                     results.append(result)
-                    if pbar:
-                        pbar.update_subtask(pbar_name, len(results))  # type: ignore
+                    if pbar is not None:
+                        pbar.update_subtask(pbar_name, len(results))
                     if self.progress is not None:
                         self.progress.update_phase(
                             len(results),
                             total_substeps=len(self.feature_names),
                         )
-                pbar.remove(pbar_name) if pbar else None            # type: ignore
+                if pbar is not None:
+                    pbar.remove(pbar_name)
                 pbar = None
                 pool.close()
                 pool.join()
@@ -1694,8 +1718,8 @@ class ShapEstimator(BaseEstimator):
             for target_name in self.feature_names:
                 result = partial_process_target(target_name)
                 results.append(result)
-                if pbar:
-                    pbar.update_subtask(pbar_name, len(results))  # type: ignore
+                if pbar is not None:
+                    pbar.update_subtask(pbar_name, len(results))
                 if self.progress is not None:
                     self.progress.update_phase(
                         len(results),
@@ -1719,8 +1743,8 @@ class ShapEstimator(BaseEstimator):
                 (self.all_mean_shap_values, shap_mean_values_target)
             )
 
-        if pbar:
-            pbar.remove(pbar_name)  # type: ignore
+        if pbar is not None:
+            pbar.remove(pbar_name)
         if self.progress is not None:
             self.progress.finish_phase()
 
@@ -1915,13 +1939,16 @@ class ShapEstimator(BaseEstimator):
         # Compute error contribution at this stage, since it needs the individual
         # SHAP values
         self.compute_error_contribution()
-        pbar.update_subtask(pbar_name, 1) if pbar else None     # type: ignore
+        if pbar is not None:
+            pbar.update_subtask(pbar_name, 1)
         if self.progress is not None:
             self.progress.update_phase(
                 1, total_substeps=4 + len(self.feature_names))
 
-        self._compute_discrepancies(self.X_test)                # type: ignore
-        pbar.update_subtask(pbar_name, 2) if pbar else None     # type: ignore
+        assert self.X_test is not None, "X_test must be set before predict"
+        self._compute_discrepancies(self.X_test)
+        if pbar is not None:
+            pbar.update_subtask(pbar_name, 2)
         if self.progress is not None:
             self.progress.update_phase(
                 2, total_substeps=4 + len(self.feature_names))
@@ -1960,8 +1987,8 @@ class ShapEstimator(BaseEstimator):
                 exhaustive=self.exhaustive,
                 threshold=float(self.mean_shap_threshold),
                 verbose=self.verbose)
-            pbar.update_subtask(
-                pbar_name, target_idx + 3) if pbar else None     # type: ignore
+            if pbar is not None:
+                pbar.update_subtask(pbar_name, target_idx + 3)
             if self.progress is not None:
                 self.progress.update_phase(
                     target_idx + 3, total_substeps=4 + len(self.feature_names))
@@ -1970,8 +1997,8 @@ class ShapEstimator(BaseEstimator):
             X, self.feature_names, self.models, self.connections, root_causes, prior,
             reciprocity=self.reciprocity, anm_iterations=self.iters,
             verbose=self.verbose)
-        pbar.update_subtask(pbar_name, # type: ignore
-            len( self.feature_names) + 3) if pbar else None
+        if pbar is not None:
+            pbar.update_subtask(pbar_name, len(self.feature_names) + 3)
         if self.progress is not None:
             self.progress.update_phase(
                 len(self.feature_names) + 3,
@@ -1979,17 +2006,18 @@ class ShapEstimator(BaseEstimator):
             )
 
         dag = utils.break_cycles_if_present(
-            dag, self.shap_discrepancies,                       # type: ignore
+            dag, self.shap_discrepancies,
             self.prior, verbose=self.verbose)
-        pbar.update_subtask(pbar_name,                          # type: ignore
-            len(self.feature_names) + 4) if pbar else None
+        if pbar is not None:
+            pbar.update_subtask(pbar_name, len(self.feature_names) + 4)
         if self.progress is not None:
             self.progress.update_phase(
                 len(self.feature_names) + 4,
                 total_substeps=4 + len(self.feature_names),
             )
 
-        pbar.remove(pbar_name) if pbar else None                # type: ignore
+        if pbar is not None:
+            pbar.remove(pbar_name)
         if self.progress is not None:
             self.progress.finish_phase()
 
@@ -2424,7 +2452,9 @@ class ShapEstimator(BaseEstimator):
             DataFrame of per-feature error contributions.
         """
         error_contribution = dict()
-        predictions = self.models.predict(self.X_test)   # type: ignore
+        assert self.models is not None, "models must be set before computing errors"
+        assert self.X_test is not None, "X_test must be set before computing errors"
+        predictions = self.models.predict(self.X_test)
 
         predictions = self._adjust_predictions_shape(
             predictions, (self.X_test.shape[0], self.X_test.shape[1]))

@@ -16,9 +16,10 @@ source of random noise.
 
 import inspect
 import warnings
-from typing import Dict, List, Tuple, Union, Any
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
+from numpy.typing import NDArray
 import optuna
 import pandas as pd
 import torch
@@ -30,7 +31,7 @@ from mlforge.progbar import ProgBar   # type: ignore
 from ..common import DEFAULT_HPO_TRIALS, DEFAULT_MAX_CSV_LINES, utils
 from ..common.progress import ProgressManager
 from ._columnar import ColumnsDataset
-from ._models import MLPModel
+from ._models import ActivationName, MLPModel
 from ._optuna_storage import (
     _ensure_writable_optuna_storage,
     _fallback_optuna_storage,
@@ -74,7 +75,7 @@ class NNRegressor(BaseEstimator):
     def __init__(
             self,
             hidden_dim: Union[int, List[int]] = [75, 17],
-            activation: str = 'relu',
+            activation: ActivationName = 'relu',
             learning_rate: float = 0.0046,
             dropout: float = 0.001,
             batch_size: int = 44,
@@ -134,8 +135,8 @@ class NNRegressor(BaseEstimator):
             dict: A dictionary with the trained DFF networks, using the name of the
                 variables as the key.
         """
-        self.hidden_dim = hidden_dim
-        self.activation = activation
+        self.hidden_dim: int | List[int] = hidden_dim
+        self.activation: ActivationName = activation
         self.learning_rate = learning_rate
         self.dropout = dropout
         self.batch_size = batch_size
@@ -157,7 +158,7 @@ class NNRegressor(BaseEstimator):
         self.hpo_optimization_limit = hpo_optimization_limit
         self.progress = progress
 
-        self.regressor = None
+        self.regressor: Optional[Dict[str, MLPModel]] = None
         self._fit_desc = "Training NNs"
 
         if self.verbose:
@@ -325,6 +326,7 @@ class NNRegressor(BaseEstimator):
         if not self.is_fitted_:
             raise ValueError("This Rex instance is not fitted yet. \
                 Call 'fit' with appropriate arguments before using this estimator.")
+        assert self.regressor is not None, "Regressor dictionary is not initialized"
 
         loaders = {
             target: DataLoader(
@@ -393,15 +395,19 @@ class NNRegressor(BaseEstimator):
         if not self.is_fitted_:
             raise ValueError("This Rex instance is not fitted yet. \
                 Call 'fit' with appropriate arguments before using this estimator.")
+        assert self.regressor is not None, "Regressor dictionary is not initialized"
 
         # Call the class method to predict the values for each target variable
         y_hat = self.predict(X)
 
-        # Handle the case where the prediction returned by the model is not a
-        # numpy array but a numpy object type
-        if isinstance(y_hat, np.ndarray) and y_hat.dtype == np.object_:
-            y_hat = np.vstack(y_hat[:, :].flatten()).astype(np.float32)
-            y_hat = torch.as_tensor(y_hat, dtype=torch.float32)
+        # Normalize predictions to a numeric ndarray for loss computation.
+        if isinstance(y_hat, torch.Tensor):
+            y_hat = y_hat.detach().cpu().numpy()
+        if isinstance(y_hat, np.ndarray):
+            if y_hat.dtype == np.object_:
+                y_hat = np.asarray(y_hat.tolist(), dtype=np.float32)
+            else:
+                y_hat = y_hat.astype(np.float32, copy=False)
         scores = []
         for i, target in enumerate(self.feature_names):
             y_preds = torch.as_tensor(y_hat[i], dtype=torch.float32)
@@ -411,7 +417,7 @@ class NNRegressor(BaseEstimator):
         self.scoring = np.array(scores)
         return self.scoring
 
-    def __repr__(self):
+    def __repr__(self, N_CHAR_MAX: int = 700) -> str:
         """
         Return a readable snapshot of user-facing attributes.
 
@@ -524,7 +530,7 @@ class NNRegressor(BaseEstimator):
                     self,
                     train_data,
                     test_data,
-                    device='cpu',
+                    device: int | str = 'cpu',
                     prog_bar=True,
                     verbose=False,
                     enable_pruning: bool = False):
@@ -547,7 +553,7 @@ class NNRegressor(BaseEstimator):
                 self.device = device
 
                 self.n_layers = None
-                self.activation = None
+                self.activation: ActivationName | None = None
                 self.learning_rate = None
                 self.dropout = None
                 self.batch_size = None
@@ -557,7 +563,7 @@ class NNRegressor(BaseEstimator):
                 self.verbose = verbose
                 self.enable_pruning = enable_pruning
 
-            def __call__(self, trial):
+            def __call__(self, trial: optuna.trial.Trial) -> float:
                 """
                 This method is called by Optuna to evaluate the objective function.
                 """
@@ -566,8 +572,11 @@ class NNRegressor(BaseEstimator):
                 for i in range(self.n_layers):
                     self.layers.append(
                         trial.suggest_int(f'n_units_l{i}', 1, 182))
-                self.activation = trial.suggest_categorical(
-                    'activation', ['relu', 'selu', 'linear'])
+                self.activation = cast(
+                    ActivationName,
+                    trial.suggest_categorical(
+                        'activation', ['relu', 'selu', 'linear']),
+                )
                 self.learning_rate = trial.suggest_loguniform(
                     'learning_rate', 1e-5, 1e-1)
                 self.dropout = trial.suggest_uniform('dropout', 0.0, 0.5)
@@ -595,6 +604,7 @@ class NNRegressor(BaseEstimator):
                 for target_idx, target in enumerate(
                     list(self.train_data.columns)
                 ):
+                    assert self.models.regressor is not None, f"Fatal! Regressor for target '{target}' not set."
                     model = self.models.regressor[target].model
                     loader = DataLoader(
                         ColumnsDataset(target, self.test_data),
@@ -603,17 +613,17 @@ class NNRegressor(BaseEstimator):
                     avg_loss, _, _ = self.compute_loss(model, loader)
                     loss.append(avg_loss)
                     if self.enable_pruning:
-                        trial.report(np.median(loss), step=target_idx)
+                        trial.report(float(np.median(loss)), step=target_idx)
                         if trial.should_prune():
                             raise optuna.TrialPruned()
 
-                return np.median(loss)
+                return float(np.median(loss))
 
             def compute_loss(
-                    self,
-                    model: torch.nn.Module,
-                    dataloader: torch.utils.data.DataLoader,
-                    n_repeats: int = 10) -> tuple[float, float, np.ndarray[Any] | np.ndarray[Any]]:
+                        self,
+                        model: torch.nn.Module,
+                        dataloader: torch.utils.data.DataLoader,
+                    n_repeats: int = 10) -> tuple[np.floating[Any], np.floating[Any], NDArray[Any] | NDArray[Any]]:
                 """
                 Computes the average MSE loss for a given model and dataloader.
 
@@ -638,13 +648,14 @@ class NNRegressor(BaseEstimator):
                 mse = np.array([])
                 num_batches = 0
                 model = model.to(self.device)
+                loss_fn = cast(torch.nn.Module, getattr(model, "loss_fn"))
                 for _ in range(n_repeats):
                     loss = []
                     for _, (X, y) in enumerate(dataloader):
                         X = X.to(self.device)
                         y = y.to(self.device)
                         yhat = model.forward(X)
-                        loss.append(model.loss_fn(yhat, y).item())
+                        loss.append(loss_fn(yhat, y).item())
                         num_batches += 1
                     if len(mse) == 0:
                         mse = np.array(loss)
@@ -667,6 +678,7 @@ class NNRegressor(BaseEstimator):
             """
             if self.progress is not None:
                 self.progress.update_phase(trial.number + 1)
+            assert trial.value is not None, "Trial value has not been set, fatal."
             if trial.value < min_loss or study.best_value < min_loss:
                 study.stop()
 
@@ -751,7 +763,7 @@ class NNRegressor(BaseEstimator):
     def tune_fit(
             self,
             X: pd.DataFrame,
-            hpo_study_name: str = None,
+            hpo_study_name: str | None = None,
             hpo_min_loss: float = 0.05,
             hpo_storage: str = 'sqlite:///rex_tuning.db',
             hpo_load_if_exists: bool = True,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import math
 
 import networkx as nx
@@ -5,7 +7,7 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from typing import Optional
+from typing import Any, Optional, Protocol
 
 # from causalexplain.common.utils import graph_from_dot_file, load_experiment
 from ...common import utils
@@ -14,6 +16,20 @@ from ...common import utils
 # pylint: disable=C0103:invalid_name, C0116:missing-function-docstring
 # pylint: disable=R0913:too-many-arguments, R1702:too-many-branches
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
+
+
+class RexKnowledgeSource(Protocol):
+    """Typed subset of Rex consumed by Knowledge."""
+
+    hierarchies: Any
+    shaps: Any
+    pi: Any
+    indep: Any
+    feature_names: list[str]
+    models: Any
+    G_shap: nx.DiGraph
+    root_causes: list[str]
+    correlation_th: float | None
 
 
 class Knowledge:
@@ -42,7 +58,7 @@ class Knowledge:
         and the target
     """
 
-    def __init__(self, rex: object, ref_graph: nx.DiGraph):
+    def __init__(self, rex: RexKnowledgeSource, ref_graph: nx.DiGraph):
         """
         Arguments:
         ----------
@@ -109,7 +125,7 @@ class Knowledge:
                     'err_contrib': self.shaps.error_contribution.loc[target, parent],
                     'cond_ind_pval': ci[(target, parent)]
                 })
-        self.results = pd.DataFrame.from_dict(rows)
+        self.results = pd.DataFrame.from_records(rows)
         return self.results
 
     def retrieve(self, origin: str, target: str, what: Optional[str] = None):
