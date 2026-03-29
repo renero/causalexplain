@@ -11,7 +11,7 @@ sys.path.insert(0, project_root)
 project = 'CausalExplain'
 copyright = '2024, J. Renero'
 author = 'J. Renero'
-release = '0.6.3'
+release = '0.9.3'
 
 # Add any Sphinx extension module names here
 extensions = [

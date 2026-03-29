@@ -138,5 +138,5 @@ def render_cytoscape_graph(
     from nicegui import ui
 
     with container:
-        ui.html(container_html, sanitize=False)
+        ui.html(container_html)
         ui.run_javascript(script)

@@ -1,6 +1,12 @@
 causalexplain.estimators.pc package
 ===================================
 
+.. warning::
+
+   The PC implementation is currently unsupported as a public API. It remains
+   in the repository for research/reference purposes, but helper classes and
+   conversion paths are still incomplete.
+
 Submodules
 ----------
 

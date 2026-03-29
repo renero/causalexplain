@@ -30,7 +30,19 @@ def sample_csv(tmp_path):
 def args_factory():
     def _factory(**overrides):
         base = argparse.Namespace(
+            command='run',
             dataset=None,
+            generate_dataset=False,
+            mechanism=None,
+            variables=None,
+            samples=None,
+            generate_output=None,
+            timeout=30,
+            max_retries=50,
+            min_edges=0,
+            max_edges=30,
+            max_parents=3,
+            rescale=True,
             method='rex',
             true_dag=None,
             load_model=None,
@@ -49,7 +61,15 @@ def args_factory():
             cuda=False,
             mps=False,
             parallel_jobs=0,
-            bootstrap_parallel_jobs=0
+            bootstrap_parallel_jobs=0,
+            gui=False,
+            bootstrap_shap_cache=True,
+            precompute_target_matrices=False,
+            hpo_optimization=False,
+            hpo_optimization_limit=None,
+            shap_budget=None,
+            max_shap_samples=None,
+            compat_warning=None,
         )
         for key, value in overrides.items():
             setattr(base, key, value)
@@ -60,11 +80,13 @@ def args_factory():
 def test_parse_args_combine_option(monkeypatch):
     argv = [
         "prog",
+        "run",
         "-d", "data.csv",
         "-c", "intersection",
     ]
     monkeypatch.setattr(sys, "argv", argv)
     args = main_mod.parse_args()
+    assert args.command == "run"
     assert args.combine == "intersection"
     assert args.dataset == "data.csv"
 
@@ -72,6 +94,7 @@ def test_parse_args_combine_option(monkeypatch):
 def test_parse_args_adaptive_shap_sampling(monkeypatch):
     argv = [
         "prog",
+        "run",
         "-d", "data.csv",
         "--no-shap-sampling",
     ]
@@ -83,6 +106,7 @@ def test_parse_args_adaptive_shap_sampling(monkeypatch):
 def test_parse_args_cuda_flag(monkeypatch):
     argv = [
         "prog",
+        "run",
         "-d", "data.csv",
         "--cuda",
     ]
@@ -95,6 +119,7 @@ def test_parse_args_cuda_flag(monkeypatch):
 def test_parse_args_mps_flag(monkeypatch):
     argv = [
         "prog",
+        "run",
         "-d", "data.csv",
         "--mps",
     ]
@@ -107,6 +132,7 @@ def test_parse_args_mps_flag(monkeypatch):
 def test_parse_args_parallel_jobs(monkeypatch):
     argv = [
         "prog",
+        "run",
         "-d", "data.csv",
         "--parallel-jobs", "3",
     ]
@@ -118,6 +144,7 @@ def test_parse_args_parallel_jobs(monkeypatch):
 def test_parse_args_bootstrap_parallel_jobs(monkeypatch):
     argv = [
         "prog",
+        "run",
         "-d", "data.csv",
         "--bootstrap-parallel-jobs", "2",
     ]
@@ -126,9 +153,99 @@ def test_parse_args_bootstrap_parallel_jobs(monkeypatch):
     assert args.bootstrap_parallel_jobs == 2
 
 
+def test_parse_args_no_subcommand(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prog"])
+    args = main_mod.parse_args()
+    assert args.command is None
+    assert args.compat_warning is None
+
+
+def test_parse_args_generate_dataset(monkeypatch):
+    argv = [
+        "prog",
+        "generate",
+        "--mechanism", "linear",
+        "--variables", "5",
+        "--samples", "20",
+        "--output", "generated/toy_dataset",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.command == "generate"
+    assert args.mechanism == "linear"
+    assert args.variables == 5
+    assert args.samples == 20
+    assert args.output == "generated/toy_dataset"
+    assert args.compat_warning is None
+
+
+def test_parse_args_gui_subcommand(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prog", "gui"])
+    args = main_mod.parse_args()
+    assert args.command == "gui"
+    assert args.compat_warning is None
+
+
+def test_parse_args_legacy_run_warns(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prog", "-d", "data.csv"])
+    args = main_mod.parse_args()
+    assert args.command == "run"
+    assert args.dataset == "data.csv"
+    assert "deprecated" in args.compat_warning.lower()
+
+
+def test_parse_args_legacy_generate_warns(monkeypatch):
+    argv = [
+        "prog",
+        "--generate-dataset",
+        "--mechanism", "linear",
+        "--variables", "5",
+        "--samples", "20",
+        "--generate-output", "generated/toy_dataset",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.command == "generate"
+    assert args.output == "generated/toy_dataset"
+    assert "deprecated" in args.compat_warning.lower()
+
+
+def test_parse_args_legacy_gui_warns(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["prog", "--gui"])
+    args = main_mod.parse_args()
+    assert args.command == "gui"
+    assert "deprecated" in args.compat_warning.lower()
+
+
 def test_check_args_requires_dataset_or_model(args_factory):
     args = args_factory()
     with pytest.raises(ValueError):
+        main_mod.check_args_validity(args)
+
+
+def test_check_args_generate_dataset_mode(args_factory):
+    args = args_factory(
+        command="generate",
+        mechanism="linear",
+        variables=5,
+        samples=20,
+        output="outputs/toy_dataset.csv",
+        verbose=True,
+    )
+    run_values = main_mod.check_args_validity(args)
+    assert run_values["mode"] == "generate"
+    assert run_values["mechanism"] == "linear"
+    assert run_values["nodes"] == 5
+    assert run_values["samples"] == 20
+    assert run_values["output_base"] == "outputs/toy_dataset"
+    assert run_values["output_csv_file"].endswith("outputs/toy_dataset.csv")
+    assert run_values["output_dot_file"].endswith("outputs/toy_dataset.dot")
+    assert run_values["verbose"] is True
+
+
+def test_check_args_generate_dataset_requires_mandatory_fields(args_factory):
+    args = args_factory(command="generate", mechanism="linear")
+    with pytest.raises(ValueError, match="`generate` requires"):
         main_mod.check_args_validity(args)
 
 
@@ -296,8 +413,7 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         'parallel_jobs': 0,
         'bootstrap_parallel_jobs': 0,
     }
-    times = iter([100.0, 101.0])
-    monkeypatch.setattr(main_mod.time, "time", lambda: next(times))
+    monkeypatch.setattr(main_mod.time, "time", lambda: 100.0)
     monkeypatch.setattr(main_mod.utils, "format_time",
                         lambda delta: (delta, "seconds"))
     saved_paths = []
@@ -311,7 +427,11 @@ def test_main_trains_and_saves(monkeypatch, tmp_path):
         return inst
 
     monkeypatch.setattr(main_mod, "GraphDiscovery", factory)
-    monkeypatch.setattr(main_mod, "parse_args", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(command="run", compat_warning=None),
+    )
     monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
     main_mod.main()
     dummy = instances[0]
@@ -369,7 +489,11 @@ def test_main_loads_existing_model(monkeypatch):
         return inst
 
     monkeypatch.setattr(main_mod, "GraphDiscovery", factory)
-    monkeypatch.setattr(main_mod, "parse_args", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(command="run", compat_warning=None),
+    )
     monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
     monkeypatch.setattr(main_mod.time, "time", lambda: 0.0)
     monkeypatch.setattr(main_mod.utils, "format_time",
@@ -413,7 +537,11 @@ def test_main_warns_when_adaptive_disabled_large_dataset(monkeypatch, capsys):
         'bootstrap_parallel_jobs': 0,
     }
     monkeypatch.setattr(main_mod, "GraphDiscovery", DummyDiscovery)
-    monkeypatch.setattr(main_mod, "parse_args", lambda: SimpleNamespace())
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(command="run", compat_warning=None),
+    )
     monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
     monkeypatch.setattr(main_mod.time, "time", lambda: 0.0)
     monkeypatch.setattr(main_mod.utils, "format_time",
@@ -421,6 +549,114 @@ def test_main_warns_when_adaptive_disabled_large_dataset(monkeypatch, capsys):
     main_mod.main()
     captured = capsys.readouterr()
     assert "Adaptive SHAP sampling is disabled" in captured.err
+
+
+def test_main_generates_dataset_and_writes_outputs(monkeypatch, tmp_path):
+    output_base = tmp_path / "generated" / "toy_dataset"
+    run_values = {
+        "mode": "generate",
+        "mechanism": "linear",
+        "nodes": 5,
+        "samples": 20,
+        "max_parents": 3,
+        "seed": 7,
+        "rescale": True,
+        "timeout_s": 30.0,
+        "max_retries": 5,
+        "min_edges": 0,
+        "max_edges": 30,
+        "output_base": str(output_base),
+        "output_csv_file": str(output_base) + ".csv",
+        "output_dot_file": str(output_base) + ".dot",
+        "verbose": False,
+    }
+    monkeypatch.setattr(main_mod.time, "time", lambda: 100.0)
+    monkeypatch.setattr(main_mod.utils, "format_time",
+                        lambda delta: (delta, "seconds"))
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(command="generate", compat_warning=None),
+    )
+    monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
+
+    main_mod.main()
+
+    assert os.path.isfile(run_values["output_csv_file"])
+    assert os.path.isfile(run_values["output_dot_file"])
+    generated = pd.read_csv(run_values["output_csv_file"])
+    assert generated.shape == (20, 5)
+
+
+def test_main_shows_help_with_no_subcommand(monkeypatch, capsys):
+    parser = main_mod._build_parser()
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(command=None, compat_warning=None, _parser=parser),
+    )
+    main_mod.main()
+    captured = capsys.readouterr()
+    assert "usage: " in captured.out
+    assert "{run,generate,gui}" in captured.out
+
+
+def test_main_emits_legacy_compat_warning(monkeypatch, capsys, tmp_path):
+    run_values = {
+        'dataset_name': 'sample',
+        'estimator': 'rex',
+        'dataset_filepath': 'data.csv',
+        'true_dag': None,
+        'verbose': False,
+        'seed': 7,
+        'load_model': None,
+        'no_train': False,
+        'hpo_iterations': 3,
+        'bootstrap_iterations': 4,
+        'prior': None,
+        'combine_op': 'union',
+        'output_path': None,
+        'model_filename': None,
+        'output_dag_file': None,
+        'adaptive_shap_sampling': True,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
+    }
+
+    class DummyDiscovery:
+        def __init__(self, **kwargs):
+            self.trainer = {'initial': SimpleNamespace(dag="start", metrics=None)}
+
+        def create_experiments(self):
+            pass
+
+        def fit_experiments(self, *args, **kwargs):
+            pass
+
+        def combine_and_evaluate_dags(self, prior, combine_op='union'):
+            return SimpleNamespace(dag="final_dag", metrics="final_metrics")
+
+        def printout_results(self, dag, metrics, combine_op='union'):
+            pass
+
+    monkeypatch.setattr(main_mod, "GraphDiscovery", DummyDiscovery)
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(
+            command="run",
+            compat_warning="DEPRECATION: legacy flat run CLI is deprecated; use `causalexplain run ...`.",
+        ),
+    )
+    monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
+    monkeypatch.setattr(main_mod.time, "time", lambda: 0.0)
+    monkeypatch.setattr(main_mod.utils, "format_time",
+                        lambda delta: (delta, "seconds"))
+
+    main_mod.main()
+    captured = capsys.readouterr()
+    assert "legacy flat run CLI is deprecated" in captured.err
 
 
 def make_graph_discovery(sample_csv, tmp_path, model_type='rex'):

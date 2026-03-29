@@ -1,3 +1,14 @@
+version 0.9.3
+-------------
+- CLI: added explicit `run`, `generate`, and `gui` subcommands, legacy
+  compatibility warnings, and a dedicated synthetic-data generation mode.
+- Packaging/API: aligned runtime dependencies, added the `causalexplain`
+  console entry point, and lazy-loaded heavy package modules to keep imports
+  lightweight.
+- Reliability/docs: fixed generator edge-case handling for small graphs,
+  clarified that PC and CAM remain unsupported public APIs, and refreshed the
+  README/quickstart/install docs for the current workflow.
+
 version 0.9.2
 -------------
 - ReX: added SHAP budget batching, bootstrap SHAP caching, and HPO
