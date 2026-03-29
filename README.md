@@ -71,17 +71,17 @@ $ pip install causalexplain
 This installs the package together with its core runtime dependencies for the
 CLI, plotting, and bundled causal-discovery methods.
 
-## What's new in v0.9.2
+## What's new in v0.9.3
 
-- Adaptive SHAP sampling with stability checks and an optional SHAP
-  optimization limit knob (`--shap-optimization-limit`, Python: `shap_budget`);
-  GBT defaults to `shap.TreeExplainer`.
-- Parallelization for DNN training and bootstrap runs, plus CLI flags for
-  parallel jobs.
-- Bootstrap SHAP caching and HPO optimization controls for faster ReX runs.
-- CUDA/MPS device selection and float32 enforcement for PyTorch models.
-- Prior handling and diagnostics improvements across ReX, SHAP, and feature
-  selection.
+- CLI: introduced explicit `run`, `generate`, and `gui` subcommands, with
+  backward-compatible warnings for the legacy flat CLI and built-in synthetic
+  dataset generation.
+- Packaging/API: aligned runtime dependencies and console entry points for
+  installable CLI usage, and deferred heavy imports so basic package imports
+  stay lightweight.
+- Reliability/docs: hardened graph generation for small datasets, clarified the
+  unsupported status of the `pc` and `cam` public APIs, and synchronized the
+  README and Sphinx quickstart/install guidance with the current commands.
 
 ## Data
 

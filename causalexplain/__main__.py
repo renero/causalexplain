@@ -846,7 +846,7 @@ def main() -> None:
 
 # TODO
 # [X] Add options to run the 'generators' from the CLI
-# [ ] Make a single progress bar for the entire training process, instead of one per model and stage
+# [X] Make a single progress bar for the entire training process, instead of one per model and stage
 # [ ] Add option to save the regressors' errors to a CSV file
 # [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
 # [ ] Add option to save the SHAP values to a CSV file

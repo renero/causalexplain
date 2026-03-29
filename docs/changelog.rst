@@ -3,6 +3,18 @@ Changelog
 
 All notable changes to this project will be documented in this file.
 
+[0.9.3] - 2026-03-29
+--------------------
+
+Changed
+~~~~~~~
+* Added explicit ``run``, ``generate``, and ``gui`` CLI subcommands, plus
+  compatibility warnings for legacy flat CLI usage.
+* Added a dedicated synthetic-data generation flow and hardened generator setup
+  for small graphs and impossible parent-count requests.
+* Aligned package/runtime metadata for installable CLI usage and clarified that
+  ``pc`` and ``cam`` remain unsupported public APIs in the user docs.
+
 [0.9.2] - 2025
 --------------
 
