@@ -910,13 +910,13 @@ def main() -> None:
 
 
 # TODO
-# [ ] Add option to save the regressors' errors to a CSV file
-# [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
-# [ ] Add option to save the SHAP values to a CSV file
-# [ ] Add option to save the meta-information stored for each edge in `knowledge`
 # [ ] Ensure that the method works with discrete variables (alternative to RMSE and regressors)
 # [ ] Update / Check the Notebook API
 # [ ] Update the debug / logging to use a proper logging service.
+# [X] Add option to save the regressors' errors to a CSV file
+# [X] Add option to save the bootstrapped adjacency matrix to a CSV file
+# [X] Add option to save the SHAP values to a CSV file
+# [X] Add option to save the meta-information stored for each edge in `knowledge`
 # [X] Add options to run the 'generators' from the CLI
 # [X] Make a single progress bar for the entire training process, instead of one per model and stage
 # [?] Get rid of the mlforge pipeline dependency in causalexplain
