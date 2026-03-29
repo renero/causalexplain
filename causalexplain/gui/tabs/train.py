@@ -78,6 +78,10 @@ class TrainTab:
         """Build the dataset/prior input section."""
         with self.ui.element("div").classes("section-card span-full"):
             self.ui.label("Inputs + Prior").classes("section-title")
+            self.ui.label(
+                "Browse uploads a copy into .gui_uploads. "
+                "Paste a full local path manually if you need to keep the original path."
+            ).classes("subtle")
 
             with self.ui.element("div").classes("file-row"):
                 self.ui.label("Dataset CSV").classes("file-label")
@@ -458,12 +462,12 @@ class TrainTab:
 
     def _build_run_section(self) -> None:
         """Build the training action section."""
-        with self.ui.element("div").classes("section-card"):
+        with self.ui.element("div").classes("section-card run-card"):
             self.ui.label("Run").classes("section-title")
             with self.ui.element("div").classes("action-row"):
                 self.run_button = self.ui.button(
                     "Start training", on_click=self.start_training_task
-                )
+                ).classes("primary-pill")
                 self.cancel_button = self.ui.button(
                     "Cancel", on_click=self.cancel_training_task
                 ).props("flat")

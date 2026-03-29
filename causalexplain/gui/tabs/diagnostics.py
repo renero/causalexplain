@@ -28,6 +28,7 @@ class DiagnosticsTab:
         "SHAP Means",
         "Bootstrap Matrix",
     ]
+    _EMPTY_OPTION = [""]
 
     def __init__(
         self,
@@ -74,23 +75,23 @@ class DiagnosticsTab:
                     label="Diagnostic view",
                 ).classes("w-full")
                 self.target_select = self.ui.select(
-                    [],
-                    value=self._select_setting_value("selected_target"),
+                    self._EMPTY_OPTION,
+                    value="",
                     label="Target variable",
                 ).classes("w-full")
                 self.regressor_select = self.ui.select(
-                    [],
-                    value=self._select_setting_value("selected_regressor"),
+                    self._EMPTY_OPTION,
+                    value="",
                     label="Regressor",
                 ).classes("w-full")
                 self.source_select = self.ui.select(
-                    [],
-                    value=self._select_setting_value("selected_source"),
+                    self._EMPTY_OPTION,
+                    value="",
                     label="Source variable",
                 ).classes("w-full")
                 self.pair_target_select = self.ui.select(
-                    [],
-                    value=self._select_setting_value("selected_pair_target"),
+                    self._EMPTY_OPTION,
+                    value="",
                     label="Pair target variable",
                 ).classes("w-full")
             self.pair_value_label = self.ui.label("").classes("subtle")
@@ -153,13 +154,6 @@ class DiagnosticsTab:
             "yAxis": {"type": "value"},
             "series": [],
         }
-
-    def _select_setting_value(self, key: str) -> Optional[str]:
-        """Return a valid initial select value for dynamic choice widgets."""
-        value = self.settings.get(key)
-        if value in ("", None):
-            return None
-        return str(value)
 
     def _bind_render_refresh(self, element: Any) -> None:
         """Attach a change handler in a NiceGUI-version-compatible way."""

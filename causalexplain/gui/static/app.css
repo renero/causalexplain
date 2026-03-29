@@ -230,7 +230,7 @@ body, .nicegui-app {
 
 .file-row {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) 210px;
+  grid-template-columns: 150px minmax(0, 1fr) 140px;
   gap: 10px;
   align-items: center;
 }
@@ -252,7 +252,7 @@ body, .nicegui-app {
 }
 
 .upload-inline {
-  width: 210px;
+  width: 140px;
   min-height: 38px;
   max-height: 38px;
   border: none;
@@ -262,27 +262,99 @@ body, .nicegui-app {
 }
 
 .upload-inline .q-uploader__header {
+  position: relative;
   min-height: 38px;
-  padding: 0 14px;
-  border-radius: 10px;
-  background: color-mix(in srgb, Highlight 75%, Canvas 25%);
+  padding: 0;
+  border-radius: 999px;
+  border: none;
+  background: color-mix(in srgb, Highlight 88%, Canvas 12%);
   color: white;
   width: 100%;
+  opacity: 1;
+  cursor: default;
+  box-shadow: none;
+  transition: filter 160ms ease;
+}
+
+.upload-inline:hover .q-uploader__header {
+  filter: brightness(0.96);
 }
 
 .upload-inline .q-uploader__header-content {
-  justify-content: center;
-  gap: 6px;
+  min-height: 38px;
+  height: 38px;
+  padding: 0 14px;
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.upload-inline .q-uploader__header-content > .flex {
+  width: 100%;
+  height: 100%;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 4px !important;
+}
+
+.upload-inline .q-uploader__header-content .col {
+  flex: 0 0 auto;
+  min-width: 0;
 }
 
 .upload-inline .q-uploader__title {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+  color: white;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  cursor: default;
+  pointer-events: none;
 }
 
 .upload-inline .q-uploader__icon {
   display: none;
+}
+
+.upload-inline .q-uploader__header .q-btn {
+  position: relative;
+  inset: auto;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  min-width: 28px;
+  border-radius: 999px;
+  opacity: 1;
+  cursor: pointer;
+  z-index: auto;
+  display: inline-flex;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.upload-inline .q-uploader__header .q-btn__content {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upload-inline .q-uploader__header .q-btn:before {
+  box-shadow: none;
+}
+
+.upload-inline .q-uploader__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  opacity: 0;
 }
 
 .upload-inline .q-uploader__subtitle,
@@ -363,12 +435,40 @@ body, .nicegui-app {
   background: var(--surface);
 }
 
+.primary-pill {
+  border-radius: 999px;
+  padding: 6px 16px;
+}
+
+.run-card {
+  min-height: 100%;
+}
+
 .nicegui-log {
   background: var(--surface);
 }
 
 .train-log {
-  min-height: 140px;
-  max-height: 220px;
+  flex: 1 1 auto;
+  min-height: 220px;
+  max-height: none;
+  width: 100%;
+}
+
+.run-card .nicegui-log,
+.run-card .nicegui-log textarea {
+  width: 100%;
+  height: 100%;
+  min-height: 220px;
+  box-sizing: border-box;
+}
+
+.run-card .nicegui-log textarea {
+  border: 1px solid var(--separator);
+  border-radius: 12px;
+  padding: 10px 12px;
+  resize: none;
   overflow-y: auto;
+  background: var(--surface);
+  color: var(--text-primary);
 }

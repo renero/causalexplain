@@ -106,7 +106,7 @@ def test_bootstrap_details_for_regressor_returns_matrix_and_edges() -> None:
     assert edges["source"].tolist() == ["A", "B", "B"]
 
 
-def test_diagnostics_tab_uses_none_for_empty_select_defaults() -> None:
+def test_diagnostics_tab_uses_blank_placeholder_option_for_empty_selects() -> None:
     tab = DiagnosticsTab(
         ui=None,
         run=None,
@@ -120,9 +120,7 @@ def test_diagnostics_tab_uses_none_for_empty_select_defaults() -> None:
         active_model_state={},
     )
 
-    assert tab._select_setting_value("selected_target") is None
-    assert tab._select_setting_value("selected_regressor") is None
-    assert tab._select_setting_value("selected_source") == "A"
+    assert tab._EMPTY_OPTION == [""]
 
 
 def test_diagnostics_tab_binds_render_refresh_with_change_fallback() -> None:
