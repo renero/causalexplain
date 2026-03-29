@@ -26,6 +26,7 @@ class LoadTab:
         storage: Any,
         settings: Dict[str, Any],
         upload_dir: str,
+        active_model_state: Dict[str, Any],
     ) -> None:
         """Initialize the load tab with shared GUI dependencies."""
         self.ui = ui
@@ -33,9 +34,21 @@ class LoadTab:
         self.storage = storage
         self.settings = settings
         self.upload_dir = upload_dir
+        self.active_model_state = active_model_state
         self.load_metrics_log: Optional[Any] = None
         self.load_overlay_container: Optional[Any] = None
         self.load_overlay_status: Optional[Any] = None
+
+    def _publish_active_model(
+        self,
+        discoverer: Any,
+        ref_graph: Any,
+        source: str,
+    ) -> None:
+        """Publish the loaded model to shared GUI state."""
+        publisher = self.active_model_state.get("set_active_model")
+        if callable(publisher):
+            publisher(discoverer, ref_graph, source)
 
     def build(self) -> None:
         """Render the Load + Evaluate tab UI."""
@@ -150,6 +163,7 @@ class LoadTab:
         update_metrics_log(self.load_metrics_log, result.get("metrics"))
         discoverer = result.get("discoverer")
         ref_graph = result.get("ref_graph")
+        self._publish_active_model(discoverer, ref_graph, "loaded model")
         render_cytoscape_overlay(
             self.load_overlay_container,
             self.load_overlay_status,

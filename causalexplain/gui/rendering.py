@@ -1,4 +1,4 @@
-"""Rendering helpers for graphs and metrics in the GUI."""
+"""Rendering helpers for graphs, metrics, and diagnostics in the GUI."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 import networkx as nx
+import pandas as pd
 
 from causalexplain.gui import cytoscape as cygui
 
@@ -140,3 +141,95 @@ def render_cytoscape_graph(
     with container:
         ui.html(container_html)
         ui.run_javascript(script)
+
+
+def render_regression_error_chart(
+    errors_for_target: pd.DataFrame,
+    target: str,
+) -> Dict[str, Any]:
+    """Return EChart options for per-regressor regression errors."""
+    regressors = errors_for_target["regressor"].tolist()
+    errors = errors_for_target["error"].astype(float).tolist()
+    return {
+        "title": {"text": f"Regression Error for {target}"},
+        "tooltip": {"trigger": "axis"},
+        "xAxis": {"type": "category", "data": regressors},
+        "yAxis": {"type": "value", "name": "Error"},
+        "series": [{
+            "type": "bar",
+            "name": "Error",
+            "data": errors,
+            "itemStyle": {"color": "#2d6a4f"},
+        }],
+    }
+
+
+def render_shap_mean_chart(
+    shap_for_target: pd.DataFrame,
+    target: str,
+) -> Dict[str, Any]:
+    """Return EChart options for grouped SHAP mean values."""
+    predictors = shap_for_target["predictor"].drop_duplicates().tolist()
+    regressors = shap_for_target["regressor"].drop_duplicates().tolist()
+    pivot = (
+        shap_for_target
+        .pivot(index="predictor", columns="regressor", values="mean_shap")
+        .reindex(predictors)
+        .fillna(0.0)
+    )
+    palette = ["#bc6c25", "#386641", "#1d3557", "#6a4c93"]
+    series = []
+    for idx, regressor in enumerate(regressors):
+        series.append({
+            "type": "bar",
+            "name": regressor.upper(),
+            "data": pivot[regressor].astype(float).tolist(),
+            "itemStyle": {"color": palette[idx % len(palette)]},
+        })
+    return {
+        "title": {"text": f"Mean SHAP Values for {target}"},
+        "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+        "legend": {"data": [name.upper() for name in regressors]},
+        "grid": {"left": 140, "right": 24, "top": 56, "bottom": 24},
+        "xAxis": {"type": "value", "name": "Mean SHAP"},
+        "yAxis": {"type": "category", "data": predictors},
+        "series": series,
+    }
+
+
+def render_bootstrap_heatmap(
+    bootstrap_matrix: pd.DataFrame,
+    regressor: str,
+) -> Dict[str, Any]:
+    """Return EChart options for a regressor-specific bootstrap heatmap."""
+    columns = [str(value) for value in bootstrap_matrix.columns.tolist()]
+    index = [str(value) for value in bootstrap_matrix.index.tolist()]
+    heatmap_values = []
+    max_weight = 0.0
+    for y_idx, row_name in enumerate(index):
+        for x_idx, col_name in enumerate(columns):
+            value = float(bootstrap_matrix.loc[row_name, col_name])
+            heatmap_values.append([x_idx, y_idx, value])
+            max_weight = max(max_weight, value)
+    return {
+        "title": {"text": f"Bootstrapped Adjacency Matrix ({regressor.upper()})"},
+        "tooltip": {"position": "top"},
+        "grid": {"left": 100, "right": 36, "top": 56, "bottom": 72},
+        "xAxis": {"type": "category", "data": columns, "splitArea": {"show": True}},
+        "yAxis": {"type": "category", "data": index, "splitArea": {"show": True}},
+        "visualMap": {
+            "min": 0.0,
+            "max": max(1.0, max_weight),
+            "calculable": True,
+            "orient": "horizontal",
+            "left": "center",
+            "bottom": 10,
+        },
+        "series": [{
+            "name": "Bootstrap weight",
+            "type": "heatmap",
+            "data": heatmap_values,
+            "label": {"show": False},
+            "emphasis": {"itemStyle": {"shadowBlur": 10, "shadowColor": "rgba(0, 0, 0, 0.35)"}},
+        }],
+    }

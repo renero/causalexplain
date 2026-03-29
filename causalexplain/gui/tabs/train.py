@@ -35,6 +35,7 @@ class TrainTab:
         storage: Any,
         settings: Dict[str, Any],
         upload_dir: str,
+        active_model_state: Dict[str, Any],
     ) -> None:
         """Initialize the train tab with shared GUI dependencies."""
         self.ui = ui
@@ -42,6 +43,7 @@ class TrainTab:
         self.storage = storage
         self.settings = settings
         self.upload_dir = upload_dir
+        self.active_model_state = active_model_state
         self.state: Dict[str, Any] = {
             "task": None,
             "running": False,
@@ -561,6 +563,17 @@ class TrainTab:
             self.train_overlay_status.text = ""
             self.train_overlay_status.update()
 
+    def _publish_active_model(
+        self,
+        discoverer: Any,
+        ref_graph: Any,
+        source: str,
+    ) -> None:
+        """Publish the active trained model to shared GUI state."""
+        publisher = self.active_model_state.get("set_active_model")
+        if callable(publisher):
+            publisher(discoverer, ref_graph, source)
+
     def _append_log_lines(self, text: str) -> None:
         """Append text lines to the training log."""
         if self.train_log is None or not text:
@@ -716,6 +729,7 @@ class TrainTab:
         self.state["dag"] = result.get("dag")
         metrics = result.get("metrics")
         ref_graph = result.get("ref_graph")
+        self._publish_active_model(discoverer, ref_graph, "trained model")
         overlay_error = render_cytoscape_overlay(
             self.train_overlay_container,
             self.train_overlay_status,

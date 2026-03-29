@@ -18,7 +18,7 @@ from collections import defaultdict
 from copy import copy, deepcopy
 from functools import partial
 from multiprocessing import get_context
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
@@ -693,6 +693,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             for iter in range(num_iterations):
                 if use_cache and self._bootstrap_shap_cache is not None:
                     # Reuse cached SHAP values and subset them by sampled rows.
+                    assert cache_pool is not None, "Cache_pool is not defined, faltal."
                     data_sample = cache_pool.sample(
                         frac=sampling_split, random_state=iter * random_state)
                     dag = self._bootstrap_shap_cache.predict(
@@ -953,6 +954,207 @@ class Rex(BaseEstimator, ClassifierMixin):
         root_causes = RegQuality.predict(self.models.scoring)
         root_causes = set([self.feature_names[i] for i in root_causes])
         return root_causes
+
+    @staticmethod
+    def _score_to_float(score: Any) -> float:
+        """Normalize tensor-like scores to plain Python floats."""
+        if hasattr(score, "item"):
+            score = score.item()
+        return float(score)
+
+    @staticmethod
+    def _reduce_shap_mean_values(values: Any) -> np.ndarray:
+        """Reduce SHAP means to one scalar per predictor."""
+        reduced = np.asarray(values, dtype=np.float32)
+        if reduced.ndim > 1:
+            reduced = reduced.mean(axis=tuple(range(1, reduced.ndim)))
+        return reduced.reshape(-1)
+
+    def _require_diagnostics_ready(self) -> None:
+        """Ensure the base diagnostics artifacts are already available."""
+        if self.models is None or not hasattr(self.models, "scoring"):
+            raise RuntimeError(
+                "Regressor errors are unavailable. Run fit() before requesting "
+                "diagnostics."
+            )
+        if self.bootstrapped_adjacency_matrix is None:
+            raise RuntimeError(
+                "Bootstrapped adjacency matrix is unavailable. Run predict() "
+                "before requesting diagnostics."
+            )
+        if self.shaps is None or not getattr(self.shaps, "shap_mean_values", None):
+            raise RuntimeError(
+                "SHAP mean values are unavailable. Run predict() before "
+                "requesting diagnostics."
+            )
+
+    def _build_regressor_errors_frame(self) -> pd.DataFrame:
+        """Build a tidy dataframe with one error score per target variable."""
+        assert self.models is not None, "Models is None"
+        scores = np.asarray(self.models.scoring, dtype=object).reshape(-1)
+        normalized_scores = [self._score_to_float(score) for score in scores]
+        return pd.DataFrame({
+            "target": self.feature_names,
+            "error": normalized_scores,
+        })
+
+    def _build_bootstrap_matrix_frame(self) -> pd.DataFrame:
+        """Build the preserved bootstrapped adjacency matrix dataframe."""
+        assert self.bootstrapped_adjacency_matrix is not None, \
+            "Bootstrapped adjacency matrix is unavailable"
+        return pd.DataFrame(
+            self.bootstrapped_adjacency_matrix,
+            index=self.feature_names,
+            columns=self.feature_names,
+        )
+
+    def _build_bootstrap_edges_frame(
+            self,
+            bootstrap_matrix: pd.DataFrame) -> pd.DataFrame:
+        """Build a long-form weighted edge table from the bootstrap matrix."""
+        rows = []
+        for source in bootstrap_matrix.index:
+            for target in bootstrap_matrix.columns:
+                if source == target:
+                    continue
+                weight = float(bootstrap_matrix.loc[source, target])
+                if weight == 0.0:
+                    continue
+                rows.append({
+                    "source": source,
+                    "target": target,
+                    "weight": weight,
+                })
+        return pd.DataFrame.from_records(
+            rows, columns=["source", "target", "weight"])
+
+    def _build_shap_mean_frames(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Build wide and long SHAP-mean diagnostics tables."""
+        assert self.shaps is not None, "ShapEstimator is None"
+        shap_mean_matrix = pd.DataFrame(
+            np.nan,
+            index=self.feature_names,
+            columns=self.feature_names,
+            dtype=np.float32,
+        )
+        rows = []
+        for target in self.feature_names:
+            predictors = [feature for feature in self.feature_names
+                          if feature != target]
+            reduced_values = self._reduce_shap_mean_values(
+                self.shaps.shap_mean_values[target])
+            for predictor, mean_value in zip(predictors, reduced_values):
+                mean_float = float(mean_value)
+                shap_mean_matrix.loc[target, predictor] = mean_float
+                rows.append({
+                    "target": target,
+                    "predictor": predictor,
+                    "mean_shap": mean_float,
+                })
+
+        shap_mean_long = pd.DataFrame.from_records(
+            rows, columns=["target", "predictor", "mean_shap"])
+        return shap_mean_matrix, shap_mean_long
+
+    def _build_metadata_frame(self) -> pd.DataFrame:
+        """Build a readable metadata table for diagnostics exports."""
+        model_type = getattr(self.model_type, "__name__", str(self.model_type))
+        metadata = [
+            ("name", self.name),
+            ("model_type", model_type),
+            ("explainer", self.explainer),
+            ("n_features", len(self.feature_names)),
+            ("feature_names", ", ".join(self.feature_names)),
+            ("bootstrap_trials", self.bootstrap_trials),
+            ("bootstrap_tolerance", getattr(self, "tolerance", None)),
+            ("parallel_jobs", self.parallel_jobs),
+            ("bootstrap_parallel_jobs", self.bootstrap_parallel_jobs),
+        ]
+        return pd.DataFrame(metadata, columns=["field", "value"])
+
+    def get_diagnostics_bundle(
+            self,
+            include_knowledge: bool = False,
+            ref_graph: Optional[nx.DiGraph] = None) -> Dict[str, pd.DataFrame]:
+        """
+        Return a normalized diagnostics bundle after prediction is complete.
+
+        Parameters
+        ----------
+        include_knowledge : bool, optional
+            Whether to include the derived edge-level knowledge table.
+        ref_graph : nx.DiGraph, optional
+            Reference graph required to build the knowledge table.
+
+        Returns
+        -------
+        Dict[str, pd.DataFrame]
+            A dictionary of export-ready dataframes.
+        """
+        self._require_diagnostics_ready()
+
+        bundle: Dict[str, pd.DataFrame] = {}
+        bundle["metadata"] = self._build_metadata_frame()
+        bundle["regressor_errors"] = self._build_regressor_errors_frame()
+        bundle["bootstrap_matrix"] = self._build_bootstrap_matrix_frame()
+        bundle["bootstrap_edges"] = self._build_bootstrap_edges_frame(
+            bundle["bootstrap_matrix"])
+        shap_mean_matrix, shap_mean_long = self._build_shap_mean_frames()
+        bundle["shap_mean_matrix"] = shap_mean_matrix
+        bundle["shap_mean_long"] = shap_mean_long
+
+        if include_knowledge:
+            if ref_graph is None:
+                raise ValueError(
+                    "A reference graph is required to include knowledge "
+                    "diagnostics."
+                )
+            knowledge = self.summarize_knowledge(ref_graph)
+            if knowledge is None:
+                raise RuntimeError("Knowledge diagnostics could not be generated.")
+            bundle["knowledge"] = knowledge
+
+        return bundle
+
+    def export_diagnostics(
+            self,
+            output_file: str,
+            include_knowledge: bool = False,
+            ref_graph: Optional[nx.DiGraph] = None) -> str:
+        """
+        Export the diagnostics bundle to a single Excel workbook.
+
+        Parameters
+        ----------
+        output_file : str
+            Destination path. The `.xlsx` suffix is appended when omitted.
+        include_knowledge : bool, optional
+            Whether to include the derived knowledge sheet.
+        ref_graph : nx.DiGraph, optional
+            Reference graph required to build the knowledge sheet.
+
+        Returns
+        -------
+        str
+            The final output path used for the workbook.
+        """
+        root, ext = os.path.splitext(output_file)
+        if not ext:
+            output_file = f"{output_file}.xlsx"
+        elif ext.lower() != ".xlsx":
+            raise ValueError("Diagnostics export file must use the .xlsx extension.")
+        output_dir = os.path.dirname(output_file)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        bundle = self.get_diagnostics_bundle(
+            include_knowledge=include_knowledge, ref_graph=ref_graph)
+        with pd.ExcelWriter(output_file) as writer:
+            for sheet_name, frame in bundle.items():
+                keep_index = sheet_name in {"bootstrap_matrix", "shap_mean_matrix"}
+                frame.to_excel(writer, sheet_name=sheet_name, index=keep_index)
+
+        return output_file
 
     def summarize_knowledge(self, ref_graph: nx.DiGraph) -> pd.DataFrame:
         """

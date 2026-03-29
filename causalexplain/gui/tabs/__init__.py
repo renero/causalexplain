@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-__all__ = ["TrainTab", "LoadTab", "GenerateTab"]
+__all__ = ["TrainTab", "LoadTab", "GenerateTab", "DiagnosticsTab"]
 
 from .train import TrainTab
 from .load import LoadTab
 from .generate import GenerateTab
+from .diagnostics import DiagnosticsTab

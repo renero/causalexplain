@@ -69,6 +69,7 @@ def args_factory():
             hpo_optimization_limit=None,
             shap_budget=None,
             max_shap_samples=None,
+            export_diagnostics=None,
             compat_warning=None,
         )
         for key, value in overrides.items():
@@ -139,6 +140,18 @@ def test_parse_args_parallel_jobs(monkeypatch):
     monkeypatch.setattr(sys, "argv", argv)
     args = main_mod.parse_args()
     assert args.parallel_jobs == 3
+
+
+def test_parse_args_export_diagnostics(monkeypatch):
+    argv = [
+        "prog",
+        "run",
+        "-d", "data.csv",
+        "--export-diagnostics", "diagnostics/report",
+    ]
+    monkeypatch.setattr(sys, "argv", argv)
+    args = main_mod.parse_args()
+    assert args.export_diagnostics == "diagnostics/report"
 
 
 def test_parse_args_bootstrap_parallel_jobs(monkeypatch):
@@ -266,6 +279,12 @@ def test_check_args_with_dataset_and_save_defaults(
     assert run_values['device'] == "cpu"
     assert run_values['parallel_jobs'] == 0
     assert run_values['bootstrap_parallel_jobs'] == 0
+
+
+def test_check_args_normalizes_export_diagnostics(sample_csv, args_factory):
+    args = args_factory(dataset=sample_csv, export_diagnostics="reports/diag")
+    run_values = main_mod.check_args_validity(args)
+    assert run_values["export_diagnostics"] == "reports/diag.xlsx"
 
 
 def test_check_args_load_model_without_dataset(tmp_path, args_factory, monkeypatch):
@@ -500,6 +519,79 @@ def test_main_loads_existing_model(monkeypatch):
                         lambda delta: (delta, "seconds"))
     main_mod.main()
     assert instances[0].loaded == 'model.pkl'
+
+
+def test_main_exports_diagnostics_when_requested(monkeypatch, tmp_path):
+    class DummyRex:
+        def __init__(self):
+            self.calls = []
+
+        def export_diagnostics(self, path, include_knowledge=False, ref_graph=None):
+            self.calls.append((path, include_knowledge, ref_graph))
+            return path
+
+    class DummyDiscovery:
+        def __init__(self, **kwargs):
+            self.ref_graph = nx.DiGraph([("A", "B")])
+            self.trainer = {"sample_nn": SimpleNamespace(rex=DummyRex())}
+
+        def create_experiments(self):
+            self.created = True
+
+        def fit_experiments(self, *args, **kwargs):
+            self.fit_args = (args, kwargs)
+
+        def combine_and_evaluate_dags(self, prior, combine_op='union'):
+            return SimpleNamespace(dag="final_dag", metrics="final_metrics")
+
+        def printout_results(self, dag, metrics, combine_op='union'):
+            self.printed = (dag, metrics, combine_op)
+
+    export_path = str(tmp_path / "diag.xlsx")
+    run_values = {
+        'dataset_name': 'sample',
+        'estimator': 'rex',
+        'dataset_filepath': 'data.csv',
+        'true_dag': 'truth.dot',
+        'verbose': False,
+        'seed': 7,
+        'load_model': None,
+        'no_train': False,
+        'hpo_iterations': 3,
+        'bootstrap_iterations': 4,
+        'prior': None,
+        'combine_op': 'union',
+        'output_path': None,
+        'model_filename': None,
+        'output_dag_file': None,
+        'adaptive_shap_sampling': True,
+        'device': 'cpu',
+        'parallel_jobs': 0,
+        'bootstrap_parallel_jobs': 0,
+        'export_diagnostics': export_path,
+    }
+    instances = []
+
+    def factory(**kwargs):
+        inst = DummyDiscovery(**kwargs)
+        instances.append(inst)
+        return inst
+
+    monkeypatch.setattr(main_mod, "GraphDiscovery", factory)
+    monkeypatch.setattr(
+        main_mod,
+        "parse_args",
+        lambda: SimpleNamespace(command="run", compat_warning=None),
+    )
+    monkeypatch.setattr(main_mod, "check_args_validity", lambda _: run_values)
+    monkeypatch.setattr(main_mod.time, "time", lambda: 0.0)
+    monkeypatch.setattr(main_mod.utils, "format_time",
+                        lambda delta: (delta, "seconds"))
+
+    main_mod.main()
+
+    rex = instances[0].trainer["sample_nn"].rex
+    assert rex.calls == [(export_path, True, instances[0].ref_graph)]
 
 
 def test_main_warns_when_adaptive_disabled_large_dataset(monkeypatch, capsys):

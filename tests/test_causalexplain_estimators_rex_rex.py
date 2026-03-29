@@ -185,6 +185,116 @@ def test_bootstrapped_adjacency_matrix_survives_save_load(tmp_path):
     assert loaded.feature_names == rex.feature_names
 
 
+def test_get_diagnostics_bundle_requires_predict_artifacts():
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+
+    with pytest.raises(RuntimeError, match="Regressor errors are unavailable"):
+        rex.get_diagnostics_bundle()
+
+
+def test_get_diagnostics_bundle_returns_normalized_frames():
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+    rex.feature_names = ["A", "B", "C"]
+    rex.models = SimpleNamespace(
+        scoring=np.array([0.1, np.float32(0.2), 0.3], dtype=object))
+    rex.bootstrapped_adjacency_matrix = np.array([
+        [0.0, 0.8, 0.0],
+        [0.0, 0.0, 0.4],
+        [0.2, 0.0, 0.0],
+    ], dtype=np.float32)
+    rex.shaps = SimpleNamespace(
+        shap_mean_values={
+            "A": np.array([0.5, 0.6], dtype=np.float32),
+            "B": np.array([0.7, 0.8], dtype=np.float32),
+            "C": np.array([0.9, 1.0], dtype=np.float32),
+        }
+    )
+    rex.tolerance = 0.3
+
+    bundle = rex.get_diagnostics_bundle()
+
+    assert set(bundle) == {
+        "metadata",
+        "regressor_errors",
+        "bootstrap_matrix",
+        "bootstrap_edges",
+        "shap_mean_matrix",
+        "shap_mean_long",
+    }
+    assert bundle["regressor_errors"]["target"].tolist() == ["A", "B", "C"]
+    assert bundle["regressor_errors"]["error"].tolist() == pytest.approx(
+        [0.1, 0.2, 0.3])
+    assert bundle["bootstrap_matrix"].loc["A", "B"] == pytest.approx(0.8)
+    assert bundle["bootstrap_edges"]["source"].tolist() == ["A", "B", "C"]
+    assert bundle["bootstrap_edges"]["target"].tolist() == ["B", "C", "A"]
+    assert bundle["bootstrap_edges"]["weight"].tolist() == pytest.approx(
+        [0.8, 0.4, 0.2])
+    assert np.isnan(bundle["shap_mean_matrix"].loc["A", "A"])
+    assert bundle["shap_mean_matrix"].loc["A", "B"] == pytest.approx(0.5)
+    assert bundle["shap_mean_matrix"].loc["A", "C"] == pytest.approx(0.6)
+    assert len(bundle["shap_mean_long"]) == 6
+
+
+def test_get_diagnostics_bundle_optionally_includes_knowledge(monkeypatch):
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+    rex.feature_names = ["A", "B"]
+    rex.models = SimpleNamespace(scoring=np.array([0.1, 0.2], dtype=object))
+    rex.bootstrapped_adjacency_matrix = np.array([[0.0, 0.3], [0.0, 0.0]])
+    rex.shaps = SimpleNamespace(
+        shap_mean_values={
+            "A": np.array([0.4], dtype=np.float32),
+            "B": np.array([0.5], dtype=np.float32),
+        }
+    )
+
+    knowledge = pd.DataFrame({"origin": ["A"], "target": ["B"]})
+    monkeypatch.setattr(rex, "summarize_knowledge", lambda graph: knowledge)
+
+    bundle = rex.get_diagnostics_bundle(
+        include_knowledge=True, ref_graph=nx.DiGraph([("A", "B")]))
+
+    assert bundle["knowledge"].equals(knowledge)
+
+
+def test_export_diagnostics_writes_workbook(monkeypatch, tmp_path):
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+    bundle = {
+        "metadata": pd.DataFrame({"field": ["name"], "value": ["demo"]}),
+        "bootstrap_matrix": pd.DataFrame(
+            [[0.0, 0.2], [0.0, 0.0]],
+            index=["A", "B"],
+            columns=["A", "B"],
+        ),
+    }
+    monkeypatch.setattr(rex, "get_diagnostics_bundle", lambda **_kwargs: bundle)
+
+    writes = []
+
+    class DummyWriter:
+        def __init__(self, path):
+            self.path = path
+
+        def __enter__(self):
+            writes.append(("writer", self.path))
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def fake_to_excel(self, writer, sheet_name, index=False, **_kwargs):
+        writes.append((sheet_name, index))
+
+    monkeypatch.setattr(rex_module.pd, "ExcelWriter", DummyWriter)
+    monkeypatch.setattr(pd.DataFrame, "to_excel", fake_to_excel)
+
+    exported = rex.export_diagnostics(str(tmp_path / "diag_report"))
+
+    assert exported.endswith(".xlsx")
+    assert ("writer", str(tmp_path / "diag_report.xlsx")) in writes
+    assert ("metadata", False) in writes
+    assert ("bootstrap_matrix", True) in writes
+
+
 def test_find_best_tolerance(monkeypatch):
     rex = Rex(name="demo", model_type="nn", explainer="gradient")
     metric_values = [0.3, 0.6] + [0.4] * 17

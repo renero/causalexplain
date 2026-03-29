@@ -105,6 +105,9 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         '-d', '--dataset', type=str, required=False,
         help='Dataset name. Must be CSV file with headers and comma separated columns')
     parser.add_argument(
+        '--export-diagnostics', type=str, required=False,
+        help='Optional .xlsx path for exporting Rex diagnostics after prediction.')
+    parser.add_argument(
         '-i', '--iterations', type=int, required=False,
         help='Hyper-parameter tuning max. iterations. Default is 20.')
     parser.add_argument(
@@ -509,6 +512,14 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['combine_op'] = args.combine if args.combine is not None else 'union'
     run_values['verbose'] = True if args.verbose else False
     run_values['output_dag_file'] = args.output
+    export_diagnostics = getattr(args, "export_diagnostics", None)
+    if export_diagnostics is not None:
+        _, export_ext = os.path.splitext(export_diagnostics)
+        if not export_ext:
+            export_diagnostics = f"{export_diagnostics}.xlsx"
+        elif export_ext.lower() != ".xlsx":
+            raise ValueError("--export-diagnostics must omit the extension or end in .xlsx.")
+    run_values['export_diagnostics'] = export_diagnostics
     run_values['adaptive_shap_sampling'] = (
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
@@ -709,6 +720,59 @@ def _ensure_dag(result: Experiment) -> "nx.DiGraph":
     return dag
 
 
+def _resolve_rex_for_diagnostics(
+    discoverer: GraphDiscoveryType,
+    result: Experiment
+):
+    """Return the fitted Rex estimator that owns diagnostics artifacts."""
+    rex_estimator = getattr(result, "rex", None)
+    if rex_estimator is not None:
+        return rex_estimator
+
+    rex_candidates = []
+    for trainer_name, trainer in discoverer.trainer.items():
+        candidate = getattr(trainer, "rex", None)
+        if candidate is not None:
+            rex_candidates.append((trainer_name, candidate))
+
+    if not rex_candidates:
+        raise RuntimeError(
+            "No Rex estimator is available for diagnostics export."
+        )
+
+    if len(rex_candidates) > 1:
+        trainer_name, candidate = rex_candidates[0]
+        print(
+            "Multiple Rex estimators are available; exporting diagnostics from "
+            f"the first fitted trainer '{trainer_name}'."
+        )
+        return candidate
+
+    return rex_candidates[0][1]
+
+
+def _export_diagnostics_if_requested(
+    discoverer: GraphDiscoveryType,
+    result: Experiment,
+    run_values: Dict[str, Any],
+) -> None:
+    """Export Rex diagnostics only when explicitly requested via the CLI."""
+    output_file = run_values.get("export_diagnostics")
+    if output_file is None:
+        return
+    if run_values.get("estimator") != "rex":
+        raise ValueError("--export-diagnostics is only supported for method 'rex'.")
+
+    rex_estimator = _resolve_rex_for_diagnostics(discoverer, result)
+    include_knowledge = run_values.get("true_dag") is not None
+    exported_as = rex_estimator.export_diagnostics(
+        output_file,
+        include_knowledge=include_knowledge,
+        ref_graph=getattr(discoverer, "ref_graph", None),
+    )
+    print(f"Saved diagnostics to {exported_as}")
+
+
 def _check_csv_size_warning(
     discoverer: GraphDiscoveryType,
     run_values: dict
@@ -842,6 +906,7 @@ def main() -> None:
     if run_values['output_dag_file'] is not None:
         utils.graph_to_dot_file(dag, run_values['output_dag_file'])
         print(f"Saved DAG to {run_values['output_dag_file']}")
+    _export_diagnostics_if_requested(discoverer, result, run_values)
 
 
 # TODO
@@ -850,6 +915,8 @@ def main() -> None:
 # [ ] Add option to save the SHAP values to a CSV file
 # [ ] Add option to save the meta-information stored for each edge in `knowledge`
 # [ ] Ensure that the method works with discrete variables (alternative to RMSE and regressors)
+# [ ] Update / Check the Notebook API
+# [ ] Update the debug / logging to use a proper logging service.
 # [X] Add options to run the 'generators' from the CLI
 # [X] Make a single progress bar for the entire training process, instead of one per model and stage
 # [?] Get rid of the mlforge pipeline dependency in causalexplain

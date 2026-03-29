@@ -799,6 +799,48 @@ class GraphDiscovery:
         self.metrics = self.trainer[list(self.trainer.keys())[-1]].metrics
         return self.trainer
 
+    def get_rex_diagnostics_by_regressor(
+        self,
+        include_knowledge: bool = False,
+        ref_graph: Optional[nx.DiGraph] = None,
+    ) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """
+        Return normalized diagnostics bundles for each fitted ReX regressor.
+
+        This skips the combined `<dataset>_rex` trainer entry and only returns
+        diagnostics from the underlying per-regressor ReX runs such as `nn` and
+        `gbt`.
+        """
+        if self.estimator != 'rex':
+            raise ValueError("Diagnostics are only available for estimator 'rex'.")
+
+        diagnostics: Dict[str, Dict[str, pd.DataFrame]] = {}
+        resolved_ref_graph = (
+            ref_graph if ref_graph is not None else getattr(self, "ref_graph", None)
+        )
+
+        for trainer_name, experiment in self.trainer.items():
+            if trainer_name.endswith("_rex"):
+                continue
+
+            rex_estimator = getattr(experiment, "rex", None)
+            if rex_estimator is None:
+                continue
+
+            regressor_name = getattr(experiment, "model_type", None)
+            if not isinstance(regressor_name, str) or not regressor_name:
+                regressor_name = trainer_name.rsplit("_", 1)[-1]
+
+            diagnostics[regressor_name] = rex_estimator.get_diagnostics_bundle(
+                include_knowledge=include_knowledge,
+                ref_graph=resolved_ref_graph,
+            )
+
+        if not diagnostics:
+            raise RuntimeError("No fitted ReX regressors are available for diagnostics.")
+
+        return diagnostics
+
     def _sampling_summary(self) -> str:
         """
         Generate a summary string of the SHAP adaptive sampling strategy.
