@@ -2,11 +2,17 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+from causalexplain.gui.app import has_active_model
 from causalexplain.gui.diagnostics import (
     bootstrap_details_for_regressor,
     normalize_rex_diagnostics,
-    regression_errors_for_target,
+    regression_errors_for_all_targets,
     shap_values_for_target,
+)
+from causalexplain.gui.rendering import (
+    render_bootstrap_heatmap,
+    render_regression_error_chart,
+    render_shap_mean_chart,
 )
 from causalexplain.gui.tabs.diagnostics import DiagnosticsTab
 from causalexplain.gui.tabs.load import LoadTab
@@ -66,19 +72,21 @@ def test_normalize_rex_diagnostics_stacks_regressor_frames() -> None:
     assert normalized["feature_names"] == ["A", "B", "C"]
     assert normalized["regressors"] == ["nn", "gbt"]
     assert list(normalized["bootstrap_matrices"].keys()) == ["nn", "gbt"]
-    assert set(normalized["errors_long"]["regressor"]) == {"nn", "gbt"}
-    assert set(normalized["shap_long"]["regressor"]) == {"nn", "gbt"}
-    assert set(normalized["bootstrap_edges_long"]["regressor"]) == {"nn", "gbt"}
+    assert normalized["errors_long"]["regressor"].tolist() == ["nn", "gbt", "nn", "gbt"]
+    assert normalized["shap_long"]["regressor"].tolist() == ["nn", "gbt", "nn", "gbt", "nn", "gbt", "nn", "gbt"]
+    assert normalized["bootstrap_edges_long"]["regressor"].tolist() == ["nn", "nn", "nn", "gbt", "gbt", "gbt"]
 
 
-def test_regression_errors_for_target_filters_target() -> None:
+def test_regression_errors_for_all_targets_keeps_all_variables() -> None:
     normalized = normalize_rex_diagnostics(_diagnostics_by_regressor())
 
-    frame = regression_errors_for_target(normalized["errors_long"], "A")
+    frame = regression_errors_for_all_targets(normalized["errors_long"])
 
-    assert frame.to_dict("records") == [
+    assert frame.head(4).to_dict("records") == [
         {"target": "A", "regressor": "nn", "error": 0.1},
         {"target": "A", "regressor": "gbt", "error": 0.05},
+        {"target": "B", "regressor": "nn", "error": 0.2},
+        {"target": "B", "regressor": "gbt", "error": 0.25},
     ]
 
 
@@ -89,7 +97,7 @@ def test_shap_values_for_target_filters_and_orders_predictors() -> None:
 
     assert frame["target"].tolist() == ["A", "A", "A", "A"]
     assert frame["predictor"].tolist() == ["B", "B", "C", "C"]
-    assert frame["regressor"].tolist() == ["gbt", "nn", "gbt", "nn"]
+    assert frame["regressor"].tolist() == ["nn", "gbt", "nn", "gbt"]
 
 
 def test_bootstrap_details_for_regressor_returns_matrix_and_edges() -> None:
@@ -104,6 +112,48 @@ def test_bootstrap_details_for_regressor_returns_matrix_and_edges() -> None:
     assert float(matrix.loc["B", "A"]) == 0.2
     assert edges["regressor"].unique().tolist() == ["gbt"]
     assert edges["source"].tolist() == ["A", "B", "B"]
+
+
+def test_render_regression_error_chart_uses_nn_then_gbt_and_expected_colors() -> None:
+    normalized = normalize_rex_diagnostics(_diagnostics_by_regressor())
+    frame = regression_errors_for_all_targets(normalized["errors_long"])
+
+    options = render_regression_error_chart(frame)
+
+    assert options["legend"]["data"] == ["NN", "GBT"]
+    assert options["series"][0]["name"] == "NN"
+    assert options["series"][0]["itemStyle"]["color"] == "#2563eb"
+    assert options["series"][1]["name"] == "GBT"
+    assert options["series"][1]["itemStyle"]["color"] == "#16a34a"
+
+
+def test_render_shap_mean_chart_uses_nn_then_gbt_and_expected_colors() -> None:
+    normalized = normalize_rex_diagnostics(_diagnostics_by_regressor())
+    frame = shap_values_for_target(normalized["shap_long"], "A")
+
+    options = render_shap_mean_chart(frame, "A")
+
+    assert options["legend"]["data"] == ["NN", "GBT"]
+    assert options["series"][0]["name"] == "NN"
+    assert options["series"][0]["itemStyle"]["color"] == "#2563eb"
+    assert options["series"][1]["name"] == "GBT"
+    assert options["series"][1]["itemStyle"]["color"] == "#16a34a"
+
+
+def test_render_bootstrap_heatmap_labels_axes_as_parent_and_child() -> None:
+    normalized = normalize_rex_diagnostics(_diagnostics_by_regressor())
+    matrix, _ = bootstrap_details_for_regressor(
+        normalized["bootstrap_matrices"],
+        normalized["bootstrap_edges_long"],
+        "nn",
+    )
+
+    options = render_bootstrap_heatmap(matrix, "nn")
+
+    assert options["xAxis"]["name"] == "Child"
+    assert options["yAxis"]["name"] == "Parent"
+    assert options["visualMap"]["show"] is False
+    assert options["visualMap"]["calculable"] is False
 
 
 def test_diagnostics_tab_uses_blank_placeholder_option_for_empty_selects() -> None:
@@ -121,27 +171,6 @@ def test_diagnostics_tab_uses_blank_placeholder_option_for_empty_selects() -> No
     )
 
     assert tab._EMPTY_OPTION == [""]
-
-
-def test_diagnostics_tab_binds_render_refresh_with_change_fallback() -> None:
-    calls = []
-
-    class DummyElement:
-        def on(self, event_name, handler):
-            calls.append((event_name, handler))
-
-    tab = DiagnosticsTab(
-        ui=None,
-        run=None,
-        storage={},
-        settings={},
-        active_model_state={},
-    )
-
-    tab._bind_render_refresh(DummyElement())
-
-    assert len(calls) == 1
-    assert calls[0][0] == "change"
 
 
 def test_diagnostics_tab_mutates_existing_chart_options() -> None:
@@ -171,6 +200,11 @@ def test_diagnostics_tab_mutates_existing_chart_options() -> None:
 
     assert tab.chart.options == {"title": {"text": "new"}, "series": []}
     assert updated == [True]
+
+
+def test_has_active_model_checks_active_discoverer() -> None:
+    assert has_active_model({"active_discoverer": object()}) is True
+    assert has_active_model({"active_discoverer": None}) is False
 
 
 def test_train_tab_publishes_active_model() -> None:

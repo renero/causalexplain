@@ -83,6 +83,12 @@ body, .nicegui-app {
   background: var(--selected);
 }
 
+.sidebar-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
 .sidebar-icon {
   width: 32px;
   height: 32px;

@@ -12,6 +12,11 @@ import pandas as pd
 
 from causalexplain.gui import cytoscape as cygui
 
+REGRESSOR_COLORS = {
+    "nn": "#2563eb",
+    "gbt": "#16a34a",
+}
+
 
 def update_metrics_log(log_el: Any, metrics: Any) -> None:
     """Render metrics into a NiceGUI log element."""
@@ -144,23 +149,32 @@ def render_cytoscape_graph(
 
 
 def render_regression_error_chart(
-    errors_for_target: pd.DataFrame,
-    target: str,
+    errors_frame: pd.DataFrame,
 ) -> Dict[str, Any]:
-    """Return EChart options for per-regressor regression errors."""
-    regressors = errors_for_target["regressor"].tolist()
-    errors = errors_for_target["error"].astype(float).tolist()
-    return {
-        "title": {"text": f"Regression Error for {target}"},
-        "tooltip": {"trigger": "axis"},
-        "xAxis": {"type": "category", "data": regressors},
-        "yAxis": {"type": "value", "name": "Error"},
-        "series": [{
+    """Return EChart options for grouped regression errors across targets."""
+    targets = errors_frame["target"].drop_duplicates().tolist()
+    regressors = errors_frame["regressor"].drop_duplicates().tolist()
+    pivot = (
+        errors_frame
+        .pivot(index="target", columns="regressor", values="error")
+        .reindex(targets)
+        .fillna(0.0)
+    )
+    series = []
+    for regressor in regressors:
+        series.append({
             "type": "bar",
-            "name": "Error",
-            "data": errors,
-            "itemStyle": {"color": "#2d6a4f"},
-        }],
+            "name": regressor.upper(),
+            "data": pivot[regressor].astype(float).tolist(),
+            "itemStyle": {"color": REGRESSOR_COLORS.get(regressor, "#475569")},
+        })
+    return {
+        "title": {"text": "Regression Errors"},
+        "tooltip": {"trigger": "axis"},
+        "legend": {"data": [name.upper() for name in regressors]},
+        "xAxis": {"type": "category", "data": targets},
+        "yAxis": {"type": "value", "name": "Error"},
+        "series": series,
     }
 
 
@@ -177,14 +191,13 @@ def render_shap_mean_chart(
         .reindex(predictors)
         .fillna(0.0)
     )
-    palette = ["#bc6c25", "#386641", "#1d3557", "#6a4c93"]
     series = []
-    for idx, regressor in enumerate(regressors):
+    for regressor in regressors:
         series.append({
             "type": "bar",
             "name": regressor.upper(),
             "data": pivot[regressor].astype(float).tolist(),
-            "itemStyle": {"color": palette[idx % len(palette)]},
+            "itemStyle": {"color": REGRESSOR_COLORS.get(regressor, "#475569")},
         })
     return {
         "title": {"text": f"Mean SHAP Values for {target}"},
@@ -215,12 +228,27 @@ def render_bootstrap_heatmap(
         "title": {"text": f"Bootstrapped Adjacency Matrix ({regressor.upper()})"},
         "tooltip": {"position": "top"},
         "grid": {"left": 100, "right": 36, "top": 56, "bottom": 72},
-        "xAxis": {"type": "category", "data": columns, "splitArea": {"show": True}},
-        "yAxis": {"type": "category", "data": index, "splitArea": {"show": True}},
+        "xAxis": {
+            "type": "category",
+            "name": "Child",
+            "nameLocation": "middle",
+            "nameGap": 42,
+            "data": columns,
+            "splitArea": {"show": True},
+        },
+        "yAxis": {
+            "type": "category",
+            "name": "Parent",
+            "nameLocation": "middle",
+            "nameGap": 70,
+            "data": index,
+            "splitArea": {"show": True},
+        },
         "visualMap": {
             "min": 0.0,
             "max": max(1.0, max_weight),
-            "calculable": True,
+            "show": False,
+            "calculable": False,
             "orient": "horizontal",
             "left": "center",
             "bottom": 10,

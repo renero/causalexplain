@@ -6,6 +6,15 @@ from typing import Dict, Tuple
 
 import pandas as pd
 
+REGRESSOR_ORDER = ["nn", "gbt"]
+
+
+def ordered_regressors(regressors: list[str]) -> list[str]:
+    """Return regressors in preferred GUI order."""
+    preferred = [name for name in REGRESSOR_ORDER if name in regressors]
+    remaining = sorted(name for name in regressors if name not in REGRESSOR_ORDER)
+    return preferred + remaining
+
 
 def normalize_rex_diagnostics(
     diagnostics_by_regressor: Dict[str, Dict[str, pd.DataFrame]]
@@ -20,7 +29,10 @@ def normalize_rex_diagnostics(
     bootstrap_matrices: Dict[str, pd.DataFrame] = {}
     feature_names: list[str] = []
 
-    for regressor, bundle in diagnostics_by_regressor.items():
+    ordered_names = ordered_regressors(list(diagnostics_by_regressor.keys()))
+
+    for regressor in ordered_names:
+        bundle = diagnostics_by_regressor[regressor]
         errors = bundle["regressor_errors"].copy()
         errors["regressor"] = regressor
         errors_frames.append(errors)
@@ -39,12 +51,24 @@ def normalize_rex_diagnostics(
             feature_names = [str(name) for name in matrix.columns.tolist()]
 
     errors_long = pd.concat(errors_frames, ignore_index=True)
+    errors_long["regressor"] = pd.Categorical(
+        errors_long["regressor"], categories=ordered_names, ordered=True)
+    errors_long = errors_long.sort_values(["target", "regressor"]).reset_index(drop=True)
+
     shap_long = pd.concat(shap_frames, ignore_index=True)
+    shap_long["regressor"] = pd.Categorical(
+        shap_long["regressor"], categories=ordered_names, ordered=True)
+    shap_long = shap_long.sort_values(["target", "predictor", "regressor"]).reset_index(drop=True)
+
     bootstrap_edges_long = pd.concat(bootstrap_edge_frames, ignore_index=True)
+    bootstrap_edges_long["regressor"] = pd.Categorical(
+        bootstrap_edges_long["regressor"], categories=ordered_names, ordered=True)
+    bootstrap_edges_long = bootstrap_edges_long.sort_values(
+        ["regressor", "source", "target"]).reset_index(drop=True)
 
     return {
         "feature_names": feature_names,
-        "regressors": list(diagnostics_by_regressor.keys()),
+        "regressors": ordered_names,
         "errors_long": errors_long,
         "shap_long": shap_long,
         "bootstrap_matrices": bootstrap_matrices,
@@ -52,13 +76,9 @@ def normalize_rex_diagnostics(
     }
 
 
-def regression_errors_for_target(
-    errors_long: pd.DataFrame,
-    target: str,
-) -> pd.DataFrame:
-    """Filter regression errors for a selected target variable."""
-    filtered = errors_long.loc[errors_long["target"] == target].copy()
-    return filtered.loc[:, ["target", "regressor", "error"]].reset_index(drop=True)
+def regression_errors_for_all_targets(errors_long: pd.DataFrame) -> pd.DataFrame:
+    """Return regression errors for all target variables."""
+    return errors_long.loc[:, ["target", "regressor", "error"]].reset_index(drop=True)
 
 
 def shap_values_for_target(

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import pandas as pd
 
 from causalexplain.gui.diagnostics import (
     bootstrap_details_for_regressor,
     normalize_rex_diagnostics,
-    regression_errors_for_target,
+    regression_errors_for_all_targets,
     shap_values_for_target,
 )
 from causalexplain.gui.rendering import (
@@ -49,12 +49,9 @@ class DiagnosticsTab:
             "normalized": None,
         }
         self.status_label: Optional[Any] = None
-        self.pair_value_label: Optional[Any] = None
         self.view_select: Optional[Any] = None
         self.target_select: Optional[Any] = None
         self.regressor_select: Optional[Any] = None
-        self.source_select: Optional[Any] = None
-        self.pair_target_select: Optional[Any] = None
         self.chart: Optional[Any] = None
         self.table: Optional[Any] = None
 
@@ -73,28 +70,20 @@ class DiagnosticsTab:
                     self._VIEWS,
                     value=self.settings.get("view", self._VIEWS[0]),
                     label="Diagnostic view",
+                    on_change=lambda _e: self._render_current_view(),
                 ).classes("w-full")
                 self.target_select = self.ui.select(
                     self._EMPTY_OPTION,
                     value="",
                     label="Target variable",
+                    on_change=lambda _e: self._render_current_view(),
                 ).classes("w-full")
                 self.regressor_select = self.ui.select(
                     self._EMPTY_OPTION,
                     value="",
                     label="Regressor",
+                    on_change=lambda _e: self._render_current_view(),
                 ).classes("w-full")
-                self.source_select = self.ui.select(
-                    self._EMPTY_OPTION,
-                    value="",
-                    label="Source variable",
-                ).classes("w-full")
-                self.pair_target_select = self.ui.select(
-                    self._EMPTY_OPTION,
-                    value="",
-                    label="Pair target variable",
-                ).classes("w-full")
-            self.pair_value_label = self.ui.label("").classes("subtle")
             self.ui.button(
                 "Refresh diagnostics",
                 on_click=self.refresh_from_state,
@@ -124,13 +113,10 @@ class DiagnosticsTab:
                 self.settings,
                 "view",
             )
-            self._bind_render_refresh(self.view_select)
 
         for widget, key in (
             (self.target_select, "selected_target"),
             (self.regressor_select, "selected_regressor"),
-            (self.source_select, "selected_source"),
-            (self.pair_target_select, "selected_pair_target"),
         ):
             if widget is None:
                 continue
@@ -141,7 +127,6 @@ class DiagnosticsTab:
                 self.settings,
                 key,
             )
-            self._bind_render_refresh(widget)
 
         self.refresh_from_state()
 
@@ -155,27 +140,12 @@ class DiagnosticsTab:
             "series": [],
         }
 
-    def _bind_render_refresh(self, element: Any) -> None:
-        """Attach a change handler in a NiceGUI-version-compatible way."""
-        handler: Callable[[Any], None] = lambda _e: self._render_current_view()
-        if hasattr(element, "on_value_change"):
-            element.on_value_change(handler)
-            return
-        element.on("change", handler)
-
     def _set_status(self, message: str) -> None:
         """Update the status label text."""
         if self.status_label is None:
             return
         self.status_label.text = message
         self.status_label.update()
-
-    def _set_pair_value(self, message: str) -> None:
-        """Update the pair-weight label."""
-        if self.pair_value_label is None:
-            return
-        self.pair_value_label.text = message
-        self.pair_value_label.update()
 
     def _set_chart_options(self, options: Dict[str, Any]) -> None:
         """Replace the current chart configuration."""
@@ -222,21 +192,14 @@ class DiagnosticsTab:
             self.target_select, feature_names, "selected_target")
         self._update_select_options(
             self.regressor_select, regressors, "selected_regressor")
-        self._update_select_options(
-            self.source_select, feature_names, "selected_source")
-        self._update_select_options(
-            self.pair_target_select, feature_names, "selected_pair_target")
 
         selected_view = self.view_select.value if self.view_select is not None else self._VIEWS[0]
-        target_visible = selected_view in {"Regression Errors", "SHAP Means"}
+        target_visible = selected_view == "SHAP Means"
         regressor_visible = selected_view == "Bootstrap Matrix"
-        pair_visible = selected_view == "Bootstrap Matrix"
 
         for widget, visible in (
             (self.target_select, target_visible),
             (self.regressor_select, regressor_visible),
-            (self.source_select, pair_visible),
-            (self.pair_target_select, pair_visible),
         ):
             if widget is None:
                 continue
@@ -256,7 +219,6 @@ class DiagnosticsTab:
 
         self.state["cache_key"] = cache_key
         self.state["normalized"] = None
-        self._set_pair_value("")
 
         if discoverer is None:
             self._set_status("Train or load a ReX model to inspect diagnostics.")
@@ -295,16 +257,14 @@ class DiagnosticsTab:
         """Render the currently selected diagnostics view."""
         normalized = self.state.get("normalized")
         self._apply_selector_state()
-        self._set_pair_value("")
 
         if normalized is None:
             return
 
         selected_view = self.view_select.value if self.view_select is not None else self._VIEWS[0]
         if selected_view == "Regression Errors":
-            target = self.target_select.value if self.target_select is not None else ""
-            frame = regression_errors_for_target(normalized["errors_long"], target)
-            self._set_chart_options(render_regression_error_chart(frame, target))
+            frame = regression_errors_for_all_targets(normalized["errors_long"])
+            self._set_chart_options(render_regression_error_chart(frame))
             self._set_table_frame(frame)
             return
 
@@ -323,11 +283,3 @@ class DiagnosticsTab:
         )
         self._set_chart_options(render_bootstrap_heatmap(matrix, regressor))
         self._set_table_frame(edges)
-
-        source = self.source_select.value if self.source_select is not None else ""
-        target = self.pair_target_select.value if self.pair_target_select is not None else ""
-        if source and target and source in matrix.index and target in matrix.columns:
-            weight = float(matrix.loc[source, target])
-            self._set_pair_value(
-                f"Selected edge weight for {source} -> {target}: {weight:.4f}"
-            )

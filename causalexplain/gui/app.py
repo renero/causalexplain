@@ -16,6 +16,11 @@ from causalexplain.gui.styles import register_app_styles
 from causalexplain.gui.tabs import DiagnosticsTab, GenerateTab, LoadTab, TrainTab
 
 
+def has_active_model(active_model_state: Dict[str, Any]) -> bool:
+    """Return whether the GUI currently has a trained or loaded model."""
+    return active_model_state.get("active_discoverer") is not None
+
+
 def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
     """Start the NiceGUI application."""
     try:
@@ -91,9 +96,16 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
 
                 panel_list = ui.column().classes("sidebar-list")
                 panel_rows: Dict[str, Any] = {}
+                tabs: Optional[Any] = None
+                tab_train: Optional[Any] = None
+                tab_load: Optional[Any] = None
+                tab_generate: Optional[Any] = None
+                tab_diagnostics: Optional[Any] = None
 
                 def select_panel(panel_id: str) -> None:
                     """Switch the active panel and update the sidebar."""
+                    if panel_id == "diagnostics" and not has_active_model(active_model_state):
+                        return
                     for key, row in panel_rows.items():
                         if key == panel_id:
                             row.classes(add="selected")
@@ -108,6 +120,23 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                     if panel_id == "diagnostics":
                         tabs.value = tab_diagnostics
                     tabs.update()
+
+                def refresh_panel_access() -> None:
+                    """Toggle diagnostics access based on active-model availability."""
+                    diagnostics_enabled = has_active_model(active_model_state)
+                    diagnostics_row = panel_rows.get("diagnostics")
+                    if diagnostics_row is not None:
+                        if diagnostics_enabled:
+                            diagnostics_row.classes(remove="disabled")
+                        else:
+                            diagnostics_row.classes(add="disabled")
+                    if tab_diagnostics is not None:
+                        if diagnostics_enabled:
+                            tab_diagnostics.enable()
+                        else:
+                            tab_diagnostics.disable()
+                            if tabs is not None and tabs.value == tab_diagnostics:
+                                select_panel("train")
 
                 def add_panel_row(
                     panel_id: str, icon: str, title: str, subtitle: str
@@ -197,6 +226,8 @@ def run_gui(host: str = "127.0.0.1", port: int = 8080) -> None:
                                     active_model_state,
                                 ).build()
 
+                active_model_state.setdefault("_listeners", []).append(refresh_panel_access)
+                refresh_panel_access()
                 select_panel("train")
 
     ui.run(
