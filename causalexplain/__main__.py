@@ -845,13 +845,15 @@ def main() -> None:
 
 
 # TODO
-# [X] Add options to run the 'generators' from the CLI
-# [X] Make a single progress bar for the entire training process, instead of one per model and stage
 # [ ] Add option to save the regressors' errors to a CSV file
 # [ ] Add option to save the bootstrapped adjacency matrix to a CSV file
 # [ ] Add option to save the SHAP values to a CSV file
-# [ ] Get rid of the mlforge pipeline dependency in causalexplain
-# [ ] Get rid of the ProgBar dependency in causalexplain
+# [ ] Add option to save the meta-information stored for each edge in `knowledge`
+# [ ] Ensure that the method works with discrete variables (alternative to RMSE and regressors)
+# [X] Add options to run the 'generators' from the CLI
+# [X] Make a single progress bar for the entire training process, instead of one per model and stage
+# [?] Get rid of the mlforge pipeline dependency in causalexplain
+# [?] Get rid of the ProgBar dependency in causalexplain
 # [X] Ensure that the prior is used in all methods that support it and it works correctly
 # [X] Fix the length of the messages printed by the tqdm progress bars
 # [X] Analyze whether to move to GPU the DNN training for ReX

@@ -132,6 +132,59 @@ def test_build_bootstrapped_adjacency_matrix_requires_fit():
         rex._build_bootstrapped_adjacency_matrix(X)
 
 
+def test_bootstrapped_adjacency_matrix_defaults_to_none():
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+    assert rex.bootstrapped_adjacency_matrix is None
+
+
+def test_bootstrap_preserves_raw_adjacency_matrix(monkeypatch):
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+    rex.feature_names = ["A", "B"]
+    rex.explainer = "gradient"
+    rex.shaps = None
+
+    raw_matrix = np.array([[0.0, 0.6], [0.2, 0.0]])
+
+    def fake_build(*_args, **_kwargs):
+        return raw_matrix.copy()
+
+    def fake_dag_from_bootstrap_adj_matrix(adjacency, tolerance):
+        assert tolerance == 0.3
+        assert np.array_equal(adjacency, raw_matrix)
+        return nx.DiGraph([("A", "B")])
+
+    monkeypatch.setattr(rex, "_build_bootstrapped_adjacency_matrix", fake_build)
+    monkeypatch.setattr(rex, "_dag_from_bootstrap_adj_matrix", fake_dag_from_bootstrap_adj_matrix)
+
+    dag = rex.bootstrap(
+        pd.DataFrame([[1, 2], [3, 4]], columns=rex.feature_names),
+        tolerance=0.3,
+    )
+
+    assert list(dag.edges()) == [("A", "B")]
+    assert np.array_equal(rex.bootstrapped_adjacency_matrix, raw_matrix)
+
+
+def test_bootstrapped_adjacency_matrix_survives_save_load(tmp_path):
+    rex = Rex(name="demo", model_type="nn", explainer="gradient")
+    rex.feature_names = ["A", "B"]
+    rex.bootstrapped_adjacency_matrix = np.array([[0.0, 0.5], [0.5, 0.0]])
+
+    rex_module.utils.save_experiment(
+        "rex_bootstrap",
+        str(tmp_path),
+        rex,
+        overwrite=True,
+    )
+    loaded = rex_module.utils.load_experiment("rex_bootstrap", str(tmp_path))
+
+    assert np.array_equal(
+        loaded.bootstrapped_adjacency_matrix,
+        rex.bootstrapped_adjacency_matrix,
+    )
+    assert loaded.feature_names == rex.feature_names
+
+
 def test_find_best_tolerance(monkeypatch):
     rex = Rex(name="demo", model_type="nn", explainer="gradient")
     metric_values = [0.3, 0.6] + [0.4] * 17

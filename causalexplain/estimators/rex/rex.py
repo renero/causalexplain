@@ -23,8 +23,8 @@ from typing import List, Optional, Tuple, Union
 import networkx as nx
 import numpy as np
 import pandas as pd
-from mlforge.mlforge import Pipeline
-from mlforge.progbar import ProgBar
+from mlforge.mlforge import Pipeline # type: ignore
+from mlforge.progbar import ProgBar # type: ignore
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_random_state
@@ -89,6 +89,7 @@ class Rex(BaseEstimator, ClassifierMixin):
     n_jobs: int = -1
     random_state: Optional[int] = None
     is_fitted_ = False
+    bootstrapped_adjacency_matrix: Optional[np.ndarray] = None
 
     def __init__(
             self,
@@ -212,6 +213,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.bootstrap_shap_cache = bootstrap_shap_cache
         self.bootstrap_shap_cache_full_data = bootstrap_shap_cache_full_data
         self._bootstrap_shap_cache: Optional[ShapEstimator] = None
+        self.bootstrapped_adjacency_matrix = None
         self.shap_budget = shap_budget
         self.precompute_target_matrices = precompute_target_matrices
         self.hpo_optimization = hpo_optimization
@@ -341,6 +343,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             lists. If the prior is not provided, the DAG is built without any prior
             information.
             Example: [['A', 'B'], ['C', 'D']]
+        - pipeline: Optional[list|str]
+            The pipeline with steps to be followed
 
         Returns
         -------
@@ -549,7 +553,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
         if verbose:
             print("· Iteration", iter + 1, "done.")
-        return adjacency_matrix
+        return adjacency_matrix.astype(np.float32, copy=False)
 
     def _build_bootstrapped_adjacency_matrix(
         self,
@@ -597,7 +601,9 @@ class Rex(BaseEstimator, ClassifierMixin):
                 f"iterations, {sampling_split:.2f} split.")
 
         iter_adjacency_matrix = np.zeros(
-            (self.n_features_in_, self.n_features_in_))
+            (self.n_features_in_, self.n_features_in_),
+            dtype=np.float32,
+        )
 
         # Cache SHAP values only when it actually amortizes cost. For a single
         # iteration, caching does extra work with no benefit, so skip it.
@@ -651,7 +657,6 @@ class Rex(BaseEstimator, ClassifierMixin):
             self.progress.start_phase(
                 "Bootstrap", weight=num_iterations, substeps=num_iterations)
 
-        results = []
         if parallel_jobs != 0 and parallel_jobs != 1:
             # Cached SHAP objects are not process-safe; fall back to per-iteration SHAP.
             # Prepare the partial function with fixed arguments
@@ -668,15 +673,18 @@ class Rex(BaseEstimator, ClassifierMixin):
                 nr_processes = min(parallel_jobs, multiprocessing.cpu_count())
 
             # Use multiprocessing Pool
+            completed_iterations = 0
             with get_context('spawn').Pool(processes=nr_processes) as pool:
                 for result in pool.imap_unordered(
                         partial_process_iteration, range(num_iterations)):
-                    results.append(result)
+                    iter_adjacency_matrix += np.asarray(
+                        result, dtype=np.float32)
+                    completed_iterations += 1
                     if pbar:
-                        pbar.update_subtask("Bootstrap", len(results))
+                        pbar.update_subtask("Bootstrap", completed_iterations)
                     if self.progress is not None:
                         self.progress.update_phase(
-                            len(results), total_substeps=num_iterations)
+                            completed_iterations, total_substeps=num_iterations)
                 if pbar:
                     pbar.remove("Bootstrap")
                     pbar = None
@@ -695,7 +703,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                         iter, X=X, models=self.models, sampling_split=sampling_split,
                         feature_names=self.feature_names, prior=prior, random_state=random_state,
                         explainer=explainer, verbose=self.verbose)
-                results.append(result)
+                iter_adjacency_matrix += np.asarray(
+                    result, dtype=np.float32)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
                 if self.progress is not None:
@@ -706,9 +715,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         if self.progress is not None:
             self.progress.finish_phase()
 
-        for result in results:
-            iter_adjacency_matrix += result
-        iter_adjacency_matrix = iter_adjacency_matrix / num_iterations
+        iter_adjacency_matrix /= float(num_iterations)
 
         return iter_adjacency_matrix
 
@@ -742,7 +749,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         key_metric : str, optional
             The key metric to evaluate. Defaults to 'f1'.
             Possible values: 'f1', 'precision', 'recall', 'shd', sid', 'aupr',
-            'Tp', 'Tn', 'Fp', 'Fn'    '
+            'Tp', 'Tn', 'Fp', 'Fn'
         direction : str, optional
             The direction of the key metric. Defaults to 'maximize'.
             Possible values: 'maximize' or 'minimize'
@@ -767,9 +774,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             print(f"> Bootstrapped prediction with {num_iterations} iterations, and "
                   f"{sampling_split:.2f} sampling split.")
 
-        iter_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
+        self.bootstrapped_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
             X, num_iterations, sampling_split, prior, parallel_jobs,
             random_state, explainer=self.explainer)
+        assert self.bootstrapped_adjacency_matrix is not None
 
         if self.shaps is not None:
             self.shaps.fit(X)
@@ -777,7 +785,8 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         if tolerance == 'auto':
             self.tolerance = self._find_best_tolerance(
-                ref_graph, key_metric, direction, iter_adjacency_matrix)
+                ref_graph, key_metric, direction,
+                self.bootstrapped_adjacency_matrix)
         else:
             self.tolerance = tolerance
             try:
@@ -787,7 +796,7 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         # Now, predict with selected tolerance
         return self._dag_from_bootstrap_adj_matrix(
-            iter_adjacency_matrix, tolerance=self.tolerance)
+            self.bootstrapped_adjacency_matrix, tolerance=self.tolerance)
 
     def _find_best_tolerance(
             self,
@@ -961,7 +970,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         if ref_graph is None:
             return None
 
-        self.knowledge = Knowledge(self, ref_graph)
+        self.knowledge = Knowledge(self, ref_graph) # type: ignore
         self.learnings = self.knowledge.info()
 
         return self.learnings
