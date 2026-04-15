@@ -3,6 +3,17 @@ Changelog
 
 All notable changes to this project will be documented in this file.
 
+[0.9.4] - 2026-04-15
+--------------------
+
+Changed
+~~~~~~~
+* The GUI Train tab now reuses the weighted progress tracked by the ReX/CLI
+  pipeline, exposing the active phase in the status legend and using a
+  cleaner visual-only progress bar.
+* Synchronized version metadata across the package, documentation, and
+  citation files for the patch release.
+
 [0.9.3] - 2026-03-29
 --------------------
 

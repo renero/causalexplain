@@ -1,3 +1,11 @@
+version 0.9.4
+-------------
+- GUI: the Train tab now reuses the weighted training progress tracked by the
+  CLI pipeline, showing the active phase in the status legend and a cleaner
+  visual-only progress bar.
+- Metadata/docs: synchronized package version references across the codebase,
+  documentation, and citation metadata for this patch release.
+
 version 0.9.3
 -------------
 - CLI: added explicit `run`, `generate`, and `gui` subcommands, legacy

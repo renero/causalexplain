@@ -3,6 +3,8 @@ Quickstart
 
 This guide will help you get started with CausalExplain.
 
+This documentation set targets release ``0.9.4``.
+
 Basic Usage
 -----------
 
@@ -95,6 +97,10 @@ If you prefer a browser-based interface, launch the local GUI with:
 
 This starts a local app that lets you train models, load/evaluate saved runs,
 and generate synthetic datasets.
+
+For ReX training runs, the Train tab progress indicator mirrors the weighted
+pipeline progress used by the CLI path, and the status legend shows the active
+phase while the bar itself remains visual-only.
 
 
 Input Arguments Information

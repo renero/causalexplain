@@ -1,11 +1,19 @@
 Installation
 ============
 
+This page describes installation for CausalExplain ``0.9.4``.
+
 You can install CausalExplain using pip:
 
 .. code-block:: bash
 
    pip install causalexplain
+
+After installation, the package exposes the ``causalexplain`` console command:
+
+.. code-block:: bash
+
+   causalexplain --help
 
 Requirements
 -------------

@@ -71,17 +71,13 @@ $ pip install causalexplain
 This installs the package together with its core runtime dependencies for the
 CLI, plotting, and bundled causal-discovery methods.
 
-## What's new in v0.9.3
+## What's new in v0.9.4
 
-- CLI: introduced explicit `run`, `generate`, and `gui` subcommands, with
-  backward-compatible warnings for the legacy flat CLI and built-in synthetic
-  dataset generation.
-- Packaging/API: aligned runtime dependencies and console entry points for
-  installable CLI usage, and deferred heavy imports so basic package imports
-  stay lightweight.
-- Reliability/docs: hardened graph generation for small datasets, clarified the
-  unsupported status of the `pc` and `cam` public APIs, and synchronized the
-  README and Sphinx quickstart/install guidance with the current commands.
+- GUI: the Train tab now mirrors the weighted progress tracked by the ReX
+  training pipeline, so the progress legend shows the current phase and the
+  bar stays purely visual.
+- Release hygiene: version references, changelogs, and citation metadata were
+  synchronized for this patch release.
 
 ## Data
 
