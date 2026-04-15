@@ -15,6 +15,7 @@ from causalexplain.common import (
     SUPPORTED_METHODS,
     utils,
 )
+from causalexplain.common.progress import ProgressManager
 from causalexplain.gui.graph_utils import graph_from_dot
 from causalexplain.gui.io_utils import ensure_file, ensure_output_dir
 from causalexplain.gui.rendering import render_cytoscape_overlay
@@ -54,6 +55,7 @@ class TrainTab:
         self.rex_section: Optional[Any] = None
         self.train_log: Optional[Any] = None
         self.train_progress: Optional[Any] = None
+        self.train_progress_status: Optional[Any] = None
         self.run_button: Optional[Any] = None
         self.cancel_button: Optional[Any] = None
         self.train_overlay_container: Optional[Any] = None
@@ -472,9 +474,10 @@ class TrainTab:
                     "Cancel", on_click=self.cancel_training_task
                 ).props("flat")
                 self.cancel_button.disable()
-            self.train_progress = self.ui.linear_progress(value=0).props(
-                "instant-feedback"
-            )
+            self.train_progress = self.ui.linear_progress(value=0)
+            self.train_progress_status = self.ui.label(
+                "Idle"
+            ).classes("subtle")
             self.train_log = self.ui.log(max_lines=200).classes(
                 "w-full train-log"
             )
@@ -558,6 +561,39 @@ class TrainTab:
             self.train_progress.props(remove="indeterminate")
             self.train_progress.value = 0
         self.train_progress.update()
+        if not indeterminate and self.train_progress_status is not None:
+            self.train_progress_status.text = "Idle"
+            self.train_progress_status.update()
+
+    def _update_progress_snapshot(
+        self, snapshot: Optional[Dict[str, Any]], default_label: str = "Preparing training..."
+    ) -> None:
+        """Render a shared progress snapshot into the UI."""
+        if self.train_progress is None:
+            return
+        fraction = 0.0
+        label = default_label
+        if snapshot:
+            fraction = float(snapshot.get("fraction") or 0.0)
+            percent = float(snapshot.get("percent") or 0.0)
+            phase_name = snapshot.get("phase_name") or default_label
+            label = f"{phase_name} ({percent:.0f}%)"
+        self.train_progress.props(remove="indeterminate")
+        self.train_progress.value = max(0.0, min(fraction, 1.0))
+        self.train_progress.update()
+        if self.train_progress_status is not None:
+            self.train_progress_status.text = label
+            self.train_progress_status.update()
+
+    def _mark_progress_complete(self, label: str = "Training completed (100%)") -> None:
+        """Force the UI progress indicator to a completed state."""
+        if self.train_progress is not None:
+            self.train_progress.props(remove="indeterminate")
+            self.train_progress.value = 1.0
+            self.train_progress.update()
+        if self.train_progress_status is not None:
+            self.train_progress_status.text = label
+            self.train_progress_status.update()
 
     def _clear_overlay(self) -> None:
         """Clear the overlay panel and status label."""
@@ -630,7 +666,9 @@ class TrainTab:
             "bootstrap_sampling_split": split,
         }
 
-    def _train_job(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+    def _train_job(
+        self, settings: Dict[str, Any], progress: ProgressManager
+    ) -> Dict[str, Any]:
         """Run the training job in a background worker."""
         output: Dict[str, Any] = {}
         buffer = io.StringIO()
@@ -679,6 +717,9 @@ class TrainTab:
                 prior=prior,
                 bootstrap_tolerance=float(settings["bootstrap_tolerance"]),
                 combine_op=settings.get("combine_op", "union"),
+                progress=progress,
+                prog_bar=False,
+                optuna_prog_bar=False,
                 **self._rex_extra_kwargs(settings),
             )
             elapsed_seconds = time.time() - start_time
@@ -710,7 +751,27 @@ class TrainTab:
         self._set_progress_state(True)
 
         try:
-            result = await self.run.io_bound(self._train_job, self.settings)
+            progress = ProgressManager(total_units=1, enabled=False, render_cli=False)
+            if self.settings["method"] == "rex":
+                total_units = GraphDiscovery._progress_total_units(
+                    hpo_trials=int(self.settings["hpo_iterations"]),
+                    bootstrap_trials=int(self.settings["bootstrap_iterations"]),
+                    regressor_count=len(
+                        self.settings.get("regressors", DEFAULT_REGRESSORS)
+                    ),
+                )
+                progress = ProgressManager(
+                    total_units=total_units,
+                    name="Training",
+                    render_cli=False,
+                )
+            result_task = asyncio.create_task(
+                self.run.io_bound(self._train_job, self.settings, progress)
+            )
+            while not result_task.done():
+                self._update_progress_snapshot(progress.snapshot())
+                await asyncio.sleep(0.2)
+            result = await result_task
         except asyncio.CancelledError:
             if self.train_log is not None:
                 self.train_log.push("Training canceled.")
@@ -725,7 +786,11 @@ class TrainTab:
             self.state["task"] = None
             self._set_run_state(False)
 
-        self._set_progress_state(False)
+        snapshot = progress.snapshot()
+        if float(snapshot.get("fraction") or 0.0) > 0.0:
+            self._update_progress_snapshot(snapshot, "Training completed")
+        else:
+            self._mark_progress_complete()
         self._append_log_lines(result.get("log") or "")
 
         discoverer = result.get("discoverer")
