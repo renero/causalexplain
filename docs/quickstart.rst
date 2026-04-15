@@ -3,6 +3,8 @@ Quickstart
 
 This guide will help you get started with CausalExplain.
 
+This documentation set targets release ``0.9.4``.
+
 Basic Usage
 -----------
 
@@ -12,23 +14,34 @@ Here's a simple example of how to get CausalExplain help from the command line:
 
    python -m causalexplain --help
 
-In order to run CausalExplain from the command line, you need to have Python 3.10
-or later installed on your system. To install CausalExplain, run the following
+In order to run CausalExplain from the command line, you need to have Python
+3.10+ installed on your system. To install CausalExplain, run the following
 command:
 
 .. code-block:: bash
 
    pip install causalexplain
 
-Once CausalExplain is installed, you can run it from the command line by typing
-``python -m causalexplain``.
+Once CausalExplain is installed, use the top-level help to inspect the
+available subcommands:
+
+.. code-block:: bash
+
+   python -m causalexplain --help
+
+.. warning::
+
+   The ``pc`` and ``cam`` methods are still exposed for reproducibility and
+   internal comparison, but they are currently unsupported as public APIs.
+   Their helper surface is incomplete, so they should not be treated as
+   release-ready user-facing methods.
 
 To run a simple case with a ``toy_dataset.csv`` file using ReX model, you can
 use the following command, assuming default parameters:
 
 .. code-block:: bash
 
-   python -m causalexplain -d /path/to/toy_dataset.csv
+   python -m causalexplain run -d /path/to/toy_dataset.csv
 
 That will generate the ReX model and run the model on the dataset, and print
 the results to the terminal, like this:
@@ -44,6 +57,35 @@ the results to the terminal, like this:
 
 which is the true graph expected.
 
+Synthetic data generation
+-------------------------
+
+The CLI can also generate a synthetic dataset and save both the data matrix and
+the ground-truth DAG in one step:
+
+.. code-block:: bash
+
+   python -m causalexplain generate \
+       --mechanism linear \
+       --variables 10 \
+       --samples 500 \
+       --output /path/to/generated/toy_dataset
+
+This writes ``/path/to/generated/toy_dataset.csv`` and
+``/path/to/generated/toy_dataset.dot``.
+
+Generation mode requires these arguments:
+
+* ``--mechanism``: one of ``linear``, ``polynomial``, ``sigmoid_add``,
+  ``sigmoid_mix``, ``gp_add``, or ``gp_mix``.
+* ``--variables``: number of variables to generate.
+* ``--samples``: number of rows to generate.
+* ``--output``: output base path; the CLI appends ``.csv`` and ``.dot``.
+
+The remaining generation controls default to the same values as the GUI:
+``--timeout 30``, ``--max-retries 50``, ``--min-edges 0``,
+``--max-edges 30``, ``--max-parents 3``, ``--seed 1234``, and ``--rescale``.
+
 GUI Mode
 --------
 
@@ -51,10 +93,14 @@ If you prefer a browser-based interface, launch the local GUI with:
 
 .. code-block:: bash
 
-   python -m causalexplain --gui
+   python -m causalexplain gui
 
 This starts a local app that lets you train models, load/evaluate saved runs,
 and generate synthetic datasets.
+
+For ReX training runs, the Train tab progress indicator mirrors the weighted
+pipeline progress used by the CLI path, and the status legend shows the active
+phase while the bar itself remains visual-only.
 
 
 Input Arguments Information
@@ -66,6 +112,11 @@ The basic arguments are:
 * ``-t`` or ``--true_dag``: The path to the true DAG file in DOT format.
 * ``-m`` or ``--method``: The method to use to infer the causal graph.
 * ``-p`` or ``--prior``: JSON file with prior knowledge for ReX (optional).
+* ``generate``: Subcommand for synthetic-data generation.
+* ``gui``: Subcommand that launches the local GUI.
+
+The stable, supported path is ReX. Other bundled methods are mainly present
+for comparison. In particular, ``pc`` and ``cam`` are currently unsupported.
 
 These options allow you to specify the dataset, true DAG, and method to be used.
 In case you don't have a true DAG, the result is the plausible causal graph,
@@ -102,7 +153,7 @@ Use it from the CLI like this:
 
 .. code-block:: bash
 
-   python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+   python -m causalexplain run -d /path/to/data.csv -p /path/to/prior.json
 
 Adaptive SHAP sampling
 ----------------------
@@ -126,14 +177,16 @@ CLI example
 
 .. code-block:: bash
 
-   python -m causalexplain --shap-sampling
-   python -m causalexplain --no-shap-sampling
+   python -m causalexplain run --shap-sampling
+   python -m causalexplain run --no-shap-sampling
 
 Available SHAP backends are ``kernel``, ``gradient``, ``explainer``, and
 ``tree``. ReX defaults to ``tree`` when running the GBT regressor.
 
-When adaptive sampling is enabled, the key knobs are ``max_shap_samples``,
-``K_max``, ``max_explain_samples``, and ``stratify``.
+When adaptive sampling is enabled, the key knob is the SHAP optimization limit
+(``--shap-optimization-limit``, Python: ``shap_budget``). It controls both SHAP
+background size and the number of rows explained; omit it to disable the limit.
+The legacy ``max_shap_samples`` name is deprecated.
 
 If ``adaptive_shap_sampling=False`` and ``m > 2000``, the tool emits a warning
 about potential non-termination (the threshold is conservative).
@@ -173,6 +226,10 @@ represent edges that appear less frequently in the bootstrap samples, while high
 values represent edges that appear more frequently. So, a higher threshold
 represents a more conservative approach to the inference of the causal graph.
 
+The option ``-gbt-optimization`` (disabled by default) caches per-target feature
+matrices for the ReX GBT regressor to avoid repeated dataframe slicing. Use
+``--no-gbt-optimization`` to disable the cache when memory is tight.
+
 The option ``-r`` or ``--regressor`` allows you to specify a list of comma-separated
 names of the regressors to be used. The default value is ``dnn,gbt``, but you can
 change it to a different list of regressors. Current implementation only supports
@@ -189,6 +246,10 @@ The option ``-i`` or ``--iterations`` allows you to specify the number of iterat
 that the hyper-parameter optimization will perform in the ReX method. The default
 value is 100, but you can change it to a different value, to test the effect of
 the number of iterations on the performance of the method.
+
+The option ``--hpo-optimization`` enables Optuna pruning and downsampled HPO
+objectives to speed up tuning runs. You can cap rows with
+``--hpo-optimization-limit`` (disabled by default).
 
 The option ``-S`` or ``--seed`` allows you to specify a seed for the random number
 generator. The default value is 1234, but you can change it to a different value,

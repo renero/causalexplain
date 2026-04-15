@@ -717,10 +717,10 @@ def valid_candidates_from_prior(feature_names: list[str], effect: str, prior: li
         return [c for c in feature_names if c != effect]
 
     # identify in what list is the effect, from the list of lists defined in prior
-    # If effect is not found in prior, raise an error.
+    # If effect is not found in prior, fall back to unconstrained candidates.
     idx = [i for i, sublist in enumerate(prior) if effect in sublist]
     if not idx:
-        raise ValueError(f"Effect '{effect}' not found in prior")
+        return [c for c in feature_names if c != effect]
 
     # candidates are elements in the list 'idx' and all the lists before it
     candidates = [item for sublist in prior[:idx[0] + 1]

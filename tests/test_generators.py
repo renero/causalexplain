@@ -64,6 +64,22 @@ def test_generate_rescales_columns(deterministic_graph):
     assert pytest.approx(data.iloc[:, 0].mean(), abs=1e-6) == 0
 
 
+def test_init_variables_handles_small_graphs_without_recursion():
+    gen = generators.AcyclicGraphGenerator("linear", nodes=5, parents_max=3, points=20)
+    gen.init_variables()
+    assert isinstance(gen.g, nx.DiGraph)
+    indegrees = gen.adjacency_matrix.sum(axis=0)
+    assert indegrees.max() <= 3
+
+
+def test_init_variables_clamps_impossible_parent_counts():
+    gen = generators.AcyclicGraphGenerator("linear", nodes=2, parents_max=5, points=10)
+    gen.init_variables()
+    assert gen.parents_max == 1
+    indegrees = gen.adjacency_matrix.sum(axis=0)
+    assert indegrees.max() <= 1
+
+
 def test_to_csv_requires_generated_data(tmp_path):
     gen = generators.AcyclicGraphGenerator("linear")
     gen.data = None

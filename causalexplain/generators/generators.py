@@ -31,16 +31,17 @@ class AcyclicGraphGenerator(object):
                           'sigmoid_mix': SigmoidMix_Mechanism,
                           'gp_add': GaussianProcessAdd_Mechanism,
                           'gp_mix': GaussianProcessMix_Mechanism}[causal_mechanism]
+        self.nodes = int(nodes)
         self.data = pd.DataFrame(
-            None, columns=[f"V{i}" for i in range(nodes)])
-        self.nodes = nodes
+            None, columns=[f"V{i}" for i in range(self.nodes)])
         if timesteps == 0:
             self.timesteps = np.inf
         else:
             self.timesteps = timesteps
-        self.points = points
-        self.adjacency_matrix = np.zeros((nodes, nodes))
-        self.parents_max = parents_max
+        self.points = int(points)
+        self.adjacency_matrix = np.zeros((self.nodes, self.nodes), dtype=int)
+        # "max parents" is an upper bound, so clamp impossible requests.
+        self.parents_max = max(0, min(int(parents_max), max(0, self.nodes - 1)))
         self.initial_generator = initial_variable_generator
         self.cfunctions = None
         self.g = None
@@ -48,25 +49,21 @@ class AcyclicGraphGenerator(object):
 
     def init_variables(self):
         """Redefine the causes of the graph."""
-        # Resetting adjacency matrix
-        for i in range(self.nodes-1):
-            for j in np.random.choice(range(i+1, self.nodes),
-                                      np.random.randint(0, min([self.parents_max,
-                                                                self.nodes-i])),
-                                      replace=False):
-                if i != j:
-                    self.adjacency_matrix[i, j] = 1
+        self.adjacency_matrix = np.zeros((self.nodes, self.nodes), dtype=int)
+        self.data = pd.DataFrame(None, columns=[f"V{i}" for i in range(self.nodes)])
 
-        try:
-            assert any([sum(self.adjacency_matrix[:, i]) ==
-                        self.parents_max for i in range(self.nodes)])
-            self.g = nx.DiGraph(self.adjacency_matrix)
-            assert not list(nx.simple_cycles(self.g))
+        for i in range(self.nodes - 1):
+            successors = list(range(i + 1, self.nodes))
+            max_children = min(self.parents_max, len(successors))
+            if max_children <= 0:
+                continue
+            num_children = np.random.randint(0, max_children + 1)
+            if num_children == 0:
+                continue
+            for j in np.random.choice(successors, num_children, replace=False):
+                self.adjacency_matrix[i, j] = 1
 
-        except AssertionError:
-            if self.verbose:
-                print("Regenerating, graph non valid...")
-            self.init_variables()
+        self.g = nx.DiGraph(self.adjacency_matrix)
 
         # Mechanisms
         if self.verbose:

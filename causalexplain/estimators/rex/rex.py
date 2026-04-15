@@ -18,13 +18,13 @@ from collections import defaultdict
 from copy import copy, deepcopy
 from functools import partial
 from multiprocessing import get_context
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import networkx as nx
 import numpy as np
 import pandas as pd
-from mlforge.mlforge import Pipeline
-from mlforge.progbar import ProgBar
+from mlforge.mlforge import Pipeline # type: ignore
+from mlforge.progbar import ProgBar # type: ignore
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_random_state
@@ -32,6 +32,7 @@ from sklearn.utils.validation import check_random_state
 from ...common import (DEFAULT_BOOTSTRAP_SAMPLING_SPLIT,
                        DEFAULT_BOOTSTRAP_TOLERANCE, DEFAULT_BOOTSTRAP_TRIALS,
                        DEFAULT_HPO_TRIALS, utils)
+from ...common.progress import ProgressManager
 from ...explainability.regression_quality import RegQuality
 from ...explainability.shapley import ShapEstimator
 from ...metrics.compare_graphs import Metrics, evaluate_graph
@@ -88,6 +89,7 @@ class Rex(BaseEstimator, ClassifierMixin):
     n_jobs: int = -1
     random_state: Optional[int] = None
     is_fitted_ = False
+    bootstrapped_adjacency_matrix: Optional[np.ndarray] = None
 
     def __init__(
             self,
@@ -112,6 +114,14 @@ class Rex(BaseEstimator, ClassifierMixin):
             verbose: bool = False,
             prog_bar=True,
             silent: bool = False,
+            bootstrap_shap_cache: bool = True,
+            bootstrap_shap_cache_full_data: bool = True,
+            shap_budget: Optional[int] = None,
+            precompute_target_matrices: bool = False,
+            hpo_optimization: bool = False,
+            hpo_optimization_limit: Optional[int] = None,
+            progress: Optional[ProgressManager] = None,
+            use_global_pbar: bool = False,
             shap_fsize: Tuple[int, int] = (10, 10),
             dpi: int = 75,
             pdf_filename: Optional[str] = None,
@@ -146,6 +156,19 @@ class Rex(BaseEstimator, ClassifierMixin):
                 is False.
             silent (bool): Whether to print anything. Default is False. This overrides
                 the verbose argument and the prog_bar argument.
+            bootstrap_shap_cache (bool): Cache SHAP values once for bootstrap
+                iterations to reduce runtime. Default is True.
+            bootstrap_shap_cache_full_data (bool): If True, compute cached SHAP
+                values on the full dataset to enable row-subsetting. Default is True.
+            shap_budget (int, optional): Single SHAP budget for background and
+                explained rows, used to keep SHAP runs bounded.
+            precompute_target_matrices (bool): Precompute per-target feature
+                matrices in regressors to reduce repeated slicing. Default is False.
+            hpo_optimization (bool): Enable HPO pruning and downsampled objective.
+                Default is False.
+            hpo_optimization_limit (int, optional): Row cap for HPO downsampling.
+            progress (ProgressManager, optional): Global progress manager.
+            use_global_pbar (bool): Disable pipeline-owned progress bars.
             random_state (int): The seed for the random number generator.
                 Default is 1234.
 
@@ -165,6 +188,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.verbose = verbose
         self.silent = silent
         self.random_state = random_state
+        self.progress = progress
+        self.use_global_pbar = use_global_pbar or progress is not None
 
         self.model_type = NNRegressor if model_type == "nn" else GBTRegressor
         self.explainer = explainer
@@ -185,6 +210,14 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.bootstrap_tolerance = bootstrap_tolerance
         self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
         self.parallel_jobs = parallel_jobs
+        self.bootstrap_shap_cache = bootstrap_shap_cache
+        self.bootstrap_shap_cache_full_data = bootstrap_shap_cache_full_data
+        self._bootstrap_shap_cache: Optional[ShapEstimator] = None
+        self.bootstrapped_adjacency_matrix = None
+        self.shap_budget = shap_budget
+        self.precompute_target_matrices = precompute_target_matrices
+        self.hpo_optimization = hpo_optimization
+        self.hpo_optimization_limit = hpo_optimization_limit
 
         self.condlen = condlen
         self.condsize = condsize
@@ -204,6 +237,9 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         for k, v in kwargs.items():
             setattr(self, k, v)
+        if self.shap_budget is None and hasattr(self, "max_shap_samples"):
+            # Backward-compat: allow deprecated max_shap_samples to drive budget.
+            self.shap_budget = getattr(self, "max_shap_samples")
 
         self._fit_desc = "Running Causal Discovery pipeline"
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -238,10 +274,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         # Create the pipeline for the training stages.
         self._set_fit_pipeline(pipeline)
 
-        n_steps = self.fit_pipeline.len()
-        n_steps += (self._steps_from_hpo(self.fit_pipeline) * 2) - 1
-
-        self.fit_pipeline.run(n_steps)
+        self.fit_pipeline.run()
         self.fit_pipeline.close()
         self.is_fitted_ = True
 
@@ -262,7 +295,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.fit_pipeline = Pipeline(
             self,  # type: ignore
             description=f"{'Fitting models':<26s}", prog_bar=self.prog_bar,
-            verbose=self.verbose, silent=self.silent, subtask=True)
+            verbose=self.verbose, silent=self.silent, subtask=True,
+            external_pbar=self.use_global_pbar)  # global bar managed upstream
         if pipeline is not None:
             if isinstance(pipeline, list):
                 self.fit_pipeline.from_list(pipeline)
@@ -272,7 +306,11 @@ class Rex(BaseEstimator, ClassifierMixin):
             # This is the final set of steps in default mode.
             steps = [
                 ('models', self.model_type),
-                ('models.tune_fit', {'hpo_n_trials': self.hpo_n_trials}),
+                ('models.tune_fit', {
+                    'hpo_n_trials': self.hpo_n_trials,
+                    'hpo_optimization': self.hpo_optimization,
+                    'hpo_optimization_limit': self.hpo_optimization_limit,
+                }),
                 ('models.score', {})
             ]
             self.fit_pipeline.from_list(steps)
@@ -305,6 +343,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             lists. If the prior is not provided, the DAG is built without any prior
             information.
             Example: [['A', 'B'], ['C', 'D']]
+        - pipeline: Optional[list|str]
+            The pipeline with steps to be followed
 
         Returns
         -------
@@ -350,19 +390,19 @@ class Rex(BaseEstimator, ClassifierMixin):
             prog_bar=self.prog_bar,
             verbose=self.verbose,
             silent=self.silent,
-            subtask=True)
+            subtask=True,
+            external_pbar=self.use_global_pbar)  # global bar managed upstream
 
         # Overwrite values for prog_bar and verbosity with current pipeline
         # values, in case predict is called from a loaded experiment
         if hasattr(self, "shaps") and self.shaps is not None:
             self.shaps.prog_bar = self.prog_bar
             self.shaps.verbose = self.verbose
+            self.shaps.progress = self.progress
 
         # Load a pipeline if specified, or create the default one.
         self._set_predict_pipeline(ref_graph, pipeline)
-        n_steps = self._get_steps_predict_pipeline()
-
-        self.predict_pipeline.run(n_steps)
+        self.predict_pipeline.run()
 
         # Check if "G_final" exists in this object (self)
         if 'G_final' in self.__dict__ and self.G_final is not None:
@@ -420,7 +460,8 @@ class Rex(BaseEstimator, ClassifierMixin):
                     'parallel_jobs': self.parallel_jobs,
                     'explainer': self.explainer,
                     'prog_bar': self.prog_bar,
-                    'verbose': self.verbose
+                    'verbose': self.verbose,
+                    'shap_budget': self.shap_budget,
                 }),
                 ('G_final', 'bootstrap', {
                     'num_iterations': self.bootstrap_trials,
@@ -512,7 +553,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
         if verbose:
             print("· Iteration", iter + 1, "done.")
-        return adjacency_matrix
+        return adjacency_matrix.astype(np.float32, copy=False)
 
     def _build_bootstrapped_adjacency_matrix(
         self,
@@ -560,15 +601,64 @@ class Rex(BaseEstimator, ClassifierMixin):
                 f"iterations, {sampling_split:.2f} split.")
 
         iter_adjacency_matrix = np.zeros(
-            (self.n_features_in_, self.n_features_in_))
+            (self.n_features_in_, self.n_features_in_),
+            dtype=np.float32,
+        )
+
+        # Cache SHAP values only when it actually amortizes cost. For a single
+        # iteration, caching does extra work with no benefit, so skip it.
+        # Also, multiprocessing requires per-process objects, so caching is
+        # disabled for parallel bootstrap.
+        use_cache = (
+            self.bootstrap_shap_cache
+            and num_iterations > 1
+            and parallel_jobs in (0, 1)
+            and getattr(self.models, "regressor", None) is not None
+        )
+        cache_pool = X
+        if use_cache and self._bootstrap_shap_cache is None:
+            # Cache SHAP values once to avoid recomputing them per iteration.
+            # This speeds up bootstrap significantly while preserving the
+            # per-iteration sampling for graph orientation.
+            try:
+                cache_fit_data = X
+                if self.bootstrap_shap_cache_full_data:
+                    # Limit cache size to avoid full-dataset SHAP blowups.
+                    max_rows = self.shap_budget
+                    if isinstance(max_rows, int) and max_rows > 0 and len(X) > max_rows:
+                        cache_fit_data = X.sample(n=max_rows, random_state=random_state)
+                self._bootstrap_shap_cache = ShapEstimator(
+                    models=self.models,
+                    explainer=explainer or "explainer",
+                    parallel_jobs=0,
+                    prog_bar=False,
+                    verbose=self.verbose,
+                    shap_budget=self.shap_budget,
+                )
+                self._bootstrap_shap_cache.fit(
+                    cache_fit_data, use_full_data=self.bootstrap_shap_cache_full_data)
+            except (AssertionError, AttributeError, TypeError, ValueError) as exc:
+                # Keep bootstrap compatible with lightweight/internal callers
+                # that do not expose a full regressors container.
+                self._bootstrap_shap_cache = None
+                use_cache = False
+                if self.verbose:
+                    print(f"  > Disabling bootstrap SHAP cache: {exc}")
+        if use_cache and self._bootstrap_shap_cache is not None:
+            # Sample from the cached rows so sample indices map to SHAP values.
+            cache_pool = self._bootstrap_shap_cache.X_test
 
         if self.prog_bar and not self.verbose:
             pbar = ProgBar().start_subtask("Bootstrap", num_iterations)
         else:
             pbar = None
+        if self.progress is not None:
+            # Bootstrap iterations are treated as macro-units.
+            self.progress.start_phase(
+                "Bootstrap", weight=num_iterations, substeps=num_iterations)
 
-        results = []
         if parallel_jobs != 0 and parallel_jobs != 1:
+            # Cached SHAP objects are not process-safe; fall back to per-iteration SHAP.
             # Prepare the partial function with fixed arguments
             partial_process_iteration = partial(
                 Rex._bootstrap_iteration, X=X, models=self.models,
@@ -583,31 +673,50 @@ class Rex(BaseEstimator, ClassifierMixin):
                 nr_processes = min(parallel_jobs, multiprocessing.cpu_count())
 
             # Use multiprocessing Pool
+            completed_iterations = 0
             with get_context('spawn').Pool(processes=nr_processes) as pool:
                 for result in pool.imap_unordered(
                         partial_process_iteration, range(num_iterations)):
-                    results.append(result)
+                    iter_adjacency_matrix += np.asarray(
+                        result, dtype=np.float32)
+                    completed_iterations += 1
                     if pbar:
-                        pbar.update_subtask("Bootstrap", len(results))
+                        pbar.update_subtask("Bootstrap", completed_iterations)
+                    if self.progress is not None:
+                        self.progress.update_phase(
+                            completed_iterations, total_substeps=num_iterations)
                 if pbar:
                     pbar.remove("Bootstrap")
                     pbar = None
         else:
             # Sequential processing
             for iter in range(num_iterations):
-                result = Rex._bootstrap_iteration(
-                    iter, X=X, models=self.models, sampling_split=sampling_split,
-                    feature_names=self.feature_names, prior=prior, random_state=random_state,
-                    explainer=explainer, verbose=self.verbose)
-                results.append(result)
+                if use_cache and self._bootstrap_shap_cache is not None:
+                    # Reuse cached SHAP values and subset them by sampled rows.
+                    assert cache_pool is not None, "Cache_pool is not defined, faltal."
+                    data_sample = cache_pool.sample(
+                        frac=sampling_split, random_state=iter * random_state)
+                    dag = self._bootstrap_shap_cache.predict(
+                        data_sample, prior=prior, sample_idx=data_sample.index)
+                    result = utils.graph_to_adjacency(dag, self.feature_names)
+                else:
+                    result = Rex._bootstrap_iteration(
+                        iter, X=X, models=self.models, sampling_split=sampling_split,
+                        feature_names=self.feature_names, prior=prior, random_state=random_state,
+                        explainer=explainer, verbose=self.verbose)
+                iter_adjacency_matrix += np.asarray(
+                    result, dtype=np.float32)
                 if self.prog_bar and not self.verbose and pbar is not None:
                     pbar.update_subtask("Bootstrap", iter)
+                if self.progress is not None:
+                    self.progress.update_phase(
+                        iter + 1, total_substeps=num_iterations)
             if self.prog_bar and not self.verbose and pbar is not None:
                 pbar.remove("Bootstrap")
+        if self.progress is not None:
+            self.progress.finish_phase()
 
-        for result in results:
-            iter_adjacency_matrix += result
-        iter_adjacency_matrix = iter_adjacency_matrix / num_iterations
+        iter_adjacency_matrix /= float(num_iterations)
 
         return iter_adjacency_matrix
 
@@ -641,7 +750,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         key_metric : str, optional
             The key metric to evaluate. Defaults to 'f1'.
             Possible values: 'f1', 'precision', 'recall', 'shd', sid', 'aupr',
-            'Tp', 'Tn', 'Fp', 'Fn'    '
+            'Tp', 'Tn', 'Fp', 'Fn'
         direction : str, optional
             The direction of the key metric. Defaults to 'maximize'.
             Possible values: 'maximize' or 'minimize'
@@ -666,9 +775,10 @@ class Rex(BaseEstimator, ClassifierMixin):
             print(f"> Bootstrapped prediction with {num_iterations} iterations, and "
                   f"{sampling_split:.2f} sampling split.")
 
-        iter_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
+        self.bootstrapped_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
             X, num_iterations, sampling_split, prior, parallel_jobs,
             random_state, explainer=self.explainer)
+        assert self.bootstrapped_adjacency_matrix is not None
 
         if self.shaps is not None:
             self.shaps.fit(X)
@@ -676,7 +786,8 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         if tolerance == 'auto':
             self.tolerance = self._find_best_tolerance(
-                ref_graph, key_metric, direction, iter_adjacency_matrix)
+                ref_graph, key_metric, direction,
+                self.bootstrapped_adjacency_matrix)
         else:
             self.tolerance = tolerance
             try:
@@ -686,7 +797,7 @@ class Rex(BaseEstimator, ClassifierMixin):
 
         # Now, predict with selected tolerance
         return self._dag_from_bootstrap_adj_matrix(
-            iter_adjacency_matrix, tolerance=self.tolerance)
+            self.bootstrapped_adjacency_matrix, tolerance=self.tolerance)
 
     def _find_best_tolerance(
             self,
@@ -844,6 +955,207 @@ class Rex(BaseEstimator, ClassifierMixin):
         root_causes = set([self.feature_names[i] for i in root_causes])
         return root_causes
 
+    @staticmethod
+    def _score_to_float(score: Any) -> float:
+        """Normalize tensor-like scores to plain Python floats."""
+        if hasattr(score, "item"):
+            score = score.item()
+        return float(score)
+
+    @staticmethod
+    def _reduce_shap_mean_values(values: Any) -> np.ndarray:
+        """Reduce SHAP means to one scalar per predictor."""
+        reduced = np.asarray(values, dtype=np.float32)
+        if reduced.ndim > 1:
+            reduced = reduced.mean(axis=tuple(range(1, reduced.ndim)))
+        return reduced.reshape(-1)
+
+    def _require_diagnostics_ready(self) -> None:
+        """Ensure the base diagnostics artifacts are already available."""
+        if self.models is None or not hasattr(self.models, "scoring"):
+            raise RuntimeError(
+                "Regressor errors are unavailable. Run fit() before requesting "
+                "diagnostics."
+            )
+        if self.bootstrapped_adjacency_matrix is None:
+            raise RuntimeError(
+                "Bootstrapped adjacency matrix is unavailable. Run predict() "
+                "before requesting diagnostics."
+            )
+        if self.shaps is None or not getattr(self.shaps, "shap_mean_values", None):
+            raise RuntimeError(
+                "SHAP mean values are unavailable. Run predict() before "
+                "requesting diagnostics."
+            )
+
+    def _build_regressor_errors_frame(self) -> pd.DataFrame:
+        """Build a tidy dataframe with one error score per target variable."""
+        assert self.models is not None, "Models is None"
+        scores = np.asarray(self.models.scoring, dtype=object).reshape(-1)
+        normalized_scores = [self._score_to_float(score) for score in scores]
+        return pd.DataFrame({
+            "target": self.feature_names,
+            "error": normalized_scores,
+        })
+
+    def _build_bootstrap_matrix_frame(self) -> pd.DataFrame:
+        """Build the preserved bootstrapped adjacency matrix dataframe."""
+        assert self.bootstrapped_adjacency_matrix is not None, \
+            "Bootstrapped adjacency matrix is unavailable"
+        return pd.DataFrame(
+            self.bootstrapped_adjacency_matrix,
+            index=self.feature_names,
+            columns=self.feature_names,
+        )
+
+    def _build_bootstrap_edges_frame(
+            self,
+            bootstrap_matrix: pd.DataFrame) -> pd.DataFrame:
+        """Build a long-form weighted edge table from the bootstrap matrix."""
+        rows = []
+        for source in bootstrap_matrix.index:
+            for target in bootstrap_matrix.columns:
+                if source == target:
+                    continue
+                weight = float(bootstrap_matrix.loc[source, target])
+                if weight == 0.0:
+                    continue
+                rows.append({
+                    "source": source,
+                    "target": target,
+                    "weight": weight,
+                })
+        return pd.DataFrame.from_records(
+            rows, columns=["source", "target", "weight"])
+
+    def _build_shap_mean_frames(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Build wide and long SHAP-mean diagnostics tables."""
+        assert self.shaps is not None, "ShapEstimator is None"
+        shap_mean_matrix = pd.DataFrame(
+            np.nan,
+            index=self.feature_names,
+            columns=self.feature_names,
+            dtype=np.float32,
+        )
+        rows = []
+        for target in self.feature_names:
+            predictors = [feature for feature in self.feature_names
+                          if feature != target]
+            reduced_values = self._reduce_shap_mean_values(
+                self.shaps.shap_mean_values[target])
+            for predictor, mean_value in zip(predictors, reduced_values):
+                mean_float = float(mean_value)
+                shap_mean_matrix.loc[target, predictor] = mean_float
+                rows.append({
+                    "target": target,
+                    "predictor": predictor,
+                    "mean_shap": mean_float,
+                })
+
+        shap_mean_long = pd.DataFrame.from_records(
+            rows, columns=["target", "predictor", "mean_shap"])
+        return shap_mean_matrix, shap_mean_long
+
+    def _build_metadata_frame(self) -> pd.DataFrame:
+        """Build a readable metadata table for diagnostics exports."""
+        model_type = getattr(self.model_type, "__name__", str(self.model_type))
+        metadata = [
+            ("name", self.name),
+            ("model_type", model_type),
+            ("explainer", self.explainer),
+            ("n_features", len(self.feature_names)),
+            ("feature_names", ", ".join(self.feature_names)),
+            ("bootstrap_trials", self.bootstrap_trials),
+            ("bootstrap_tolerance", getattr(self, "tolerance", None)),
+            ("parallel_jobs", self.parallel_jobs),
+            ("bootstrap_parallel_jobs", self.bootstrap_parallel_jobs),
+        ]
+        return pd.DataFrame(metadata, columns=["field", "value"])
+
+    def get_diagnostics_bundle(
+            self,
+            include_knowledge: bool = False,
+            ref_graph: Optional[nx.DiGraph] = None) -> Dict[str, pd.DataFrame]:
+        """
+        Return a normalized diagnostics bundle after prediction is complete.
+
+        Parameters
+        ----------
+        include_knowledge : bool, optional
+            Whether to include the derived edge-level knowledge table.
+        ref_graph : nx.DiGraph, optional
+            Reference graph required to build the knowledge table.
+
+        Returns
+        -------
+        Dict[str, pd.DataFrame]
+            A dictionary of export-ready dataframes.
+        """
+        self._require_diagnostics_ready()
+
+        bundle: Dict[str, pd.DataFrame] = {}
+        bundle["metadata"] = self._build_metadata_frame()
+        bundle["regressor_errors"] = self._build_regressor_errors_frame()
+        bundle["bootstrap_matrix"] = self._build_bootstrap_matrix_frame()
+        bundle["bootstrap_edges"] = self._build_bootstrap_edges_frame(
+            bundle["bootstrap_matrix"])
+        shap_mean_matrix, shap_mean_long = self._build_shap_mean_frames()
+        bundle["shap_mean_matrix"] = shap_mean_matrix
+        bundle["shap_mean_long"] = shap_mean_long
+
+        if include_knowledge:
+            if ref_graph is None:
+                raise ValueError(
+                    "A reference graph is required to include knowledge "
+                    "diagnostics."
+                )
+            knowledge = self.summarize_knowledge(ref_graph)
+            if knowledge is None:
+                raise RuntimeError("Knowledge diagnostics could not be generated.")
+            bundle["knowledge"] = knowledge
+
+        return bundle
+
+    def export_diagnostics(
+            self,
+            output_file: str,
+            include_knowledge: bool = False,
+            ref_graph: Optional[nx.DiGraph] = None) -> str:
+        """
+        Export the diagnostics bundle to a single Excel workbook.
+
+        Parameters
+        ----------
+        output_file : str
+            Destination path. The `.xlsx` suffix is appended when omitted.
+        include_knowledge : bool, optional
+            Whether to include the derived knowledge sheet.
+        ref_graph : nx.DiGraph, optional
+            Reference graph required to build the knowledge sheet.
+
+        Returns
+        -------
+        str
+            The final output path used for the workbook.
+        """
+        root, ext = os.path.splitext(output_file)
+        if not ext:
+            output_file = f"{output_file}.xlsx"
+        elif ext.lower() != ".xlsx":
+            raise ValueError("Diagnostics export file must use the .xlsx extension.")
+        output_dir = os.path.dirname(output_file)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        bundle = self.get_diagnostics_bundle(
+            include_knowledge=include_knowledge, ref_graph=ref_graph)
+        with pd.ExcelWriter(output_file) as writer:
+            for sheet_name, frame in bundle.items():
+                keep_index = sheet_name in {"bootstrap_matrix", "shap_mean_matrix"}
+                frame.to_excel(writer, sheet_name=sheet_name, index=keep_index)
+
+        return output_file
+
     def summarize_knowledge(self, ref_graph: nx.DiGraph) -> pd.DataFrame:
         """
         Returns a dataframe with the knowledge about each edge in the graph
@@ -860,7 +1172,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         if ref_graph is None:
             return None
 
-        self.knowledge = Knowledge(self, ref_graph)
+        self.knowledge = Knowledge(self, ref_graph) # type: ignore
         self.learnings = self.knowledge.info()
 
         return self.learnings
@@ -1176,7 +1488,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             prog_bar=self.prog_bar,
             verbose=self.verbose,
             silent=self.silent,
-            subtask=True)
+            subtask=True,
+            external_pbar=self.use_global_pbar)
         pipeline.from_list(steps)
         pipeline.run()
         pipeline.close()

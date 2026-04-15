@@ -11,11 +11,11 @@ from typing import Any, Dict, Optional
 
 from causalexplain.causalexplainer import GraphDiscovery
 from causalexplain.common import (
-    DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     SUPPORTED_METHODS,
     utils,
 )
+from causalexplain.common.progress import ProgressManager
 from causalexplain.gui.graph_utils import graph_from_dot
 from causalexplain.gui.io_utils import ensure_file, ensure_output_dir
 from causalexplain.gui.rendering import render_cytoscape_overlay
@@ -36,6 +36,7 @@ class TrainTab:
         storage: Any,
         settings: Dict[str, Any],
         upload_dir: str,
+        active_model_state: Dict[str, Any],
     ) -> None:
         """Initialize the train tab with shared GUI dependencies."""
         self.ui = ui
@@ -43,6 +44,7 @@ class TrainTab:
         self.storage = storage
         self.settings = settings
         self.upload_dir = upload_dir
+        self.active_model_state = active_model_state
         self.state: Dict[str, Any] = {
             "task": None,
             "running": False,
@@ -53,6 +55,7 @@ class TrainTab:
         self.rex_section: Optional[Any] = None
         self.train_log: Optional[Any] = None
         self.train_progress: Optional[Any] = None
+        self.train_progress_status: Optional[Any] = None
         self.run_button: Optional[Any] = None
         self.cancel_button: Optional[Any] = None
         self.train_overlay_container: Optional[Any] = None
@@ -77,6 +80,10 @@ class TrainTab:
         """Build the dataset/prior input section."""
         with self.ui.element("div").classes("section-card span-full"):
             self.ui.label("Inputs + Prior").classes("section-title")
+            self.ui.label(
+                "Browse uploads a copy into .gui_uploads. "
+                "Paste a full local path manually if you need to keep the original path."
+            ).classes("subtle")
 
             with self.ui.element("div").classes("file-row"):
                 self.ui.label("Dataset CSV").classes("file-label")
@@ -256,9 +263,17 @@ class TrainTab:
                         "Adaptive SHAP sampling",
                         value=self.settings.get("adaptive_shap_sampling", True),
                     )
+                    precompute_switch = self.ui.switch(
+                        "GBT optimization (feature cache)",
+                        value=self.settings.get("precompute_target_matrices", False),
+                    )
+                    shap_budget_value = self.settings.get(
+                        "shap_budget",
+                        self.settings.get("max_shap_samples", 0),
+                    )
                     max_shap_input = self.ui.number(
-                        "Max SHAP samples",
-                        value=self.settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES),
+                        "SHAP optimization limit (0 = off)",
+                        value=shap_budget_value,
                     ).props("dense")
                     regressors_input = self.ui.select(
                         ["nn", "gbt"],
@@ -266,6 +281,15 @@ class TrainTab:
                         label="Regressors",
                         multiple=True,
                     )
+                with self.ui.element("div").classes("field-row"):
+                    hpo_opt_switch = self.ui.switch(
+                        "HPO optimization (pruning + downsample)",
+                        value=self.settings.get("hpo_optimization", False),
+                    )
+                    hpo_opt_limit_input = self.ui.number(
+                        "HPO optimization limit (rows, 0 = auto)",
+                        value=self.settings.get("hpo_optimization_limit", 0),
+                    ).props("dense")
 
                 bind_setting(
                     device_select,
@@ -296,11 +320,18 @@ class TrainTab:
                     "adaptive_shap_sampling",
                 )
                 bind_setting(
+                    precompute_switch,
+                    self.storage,
+                    "train_settings",
+                    self.settings,
+                    "precompute_target_matrices",
+                )
+                bind_setting(
                     max_shap_input,
                     self.storage,
                     "train_settings",
                     self.settings,
-                    "max_shap_samples",
+                    "shap_budget",
                 )
                 bind_setting(
                     regressors_input,
@@ -308,6 +339,20 @@ class TrainTab:
                     "train_settings",
                     self.settings,
                     "regressors",
+                )
+                bind_setting(
+                    hpo_opt_switch,
+                    self.storage,
+                    "train_settings",
+                    self.settings,
+                    "hpo_optimization",
+                )
+                bind_setting(
+                    hpo_opt_limit_input,
+                    self.storage,
+                    "train_settings",
+                    self.settings,
+                    "hpo_optimization_limit",
                 )
 
                 with self.ui.expansion("Advanced ReX settings", value=False):
@@ -419,19 +464,20 @@ class TrainTab:
 
     def _build_run_section(self) -> None:
         """Build the training action section."""
-        with self.ui.element("div").classes("section-card"):
+        with self.ui.element("div").classes("section-card run-card"):
             self.ui.label("Run").classes("section-title")
             with self.ui.element("div").classes("action-row"):
                 self.run_button = self.ui.button(
                     "Start training", on_click=self.start_training_task
-                )
+                ).classes("primary-pill")
                 self.cancel_button = self.ui.button(
                     "Cancel", on_click=self.cancel_training_task
                 ).props("flat")
                 self.cancel_button.disable()
-            self.train_progress = self.ui.linear_progress(value=0).props(
-                "instant-feedback"
-            )
+            self.train_progress = self.ui.linear_progress(value=0)
+            self.train_progress_status = self.ui.label(
+                "Idle"
+            ).classes("subtle")
             self.train_log = self.ui.log(max_lines=200).classes(
                 "w-full train-log"
             )
@@ -515,6 +561,39 @@ class TrainTab:
             self.train_progress.props(remove="indeterminate")
             self.train_progress.value = 0
         self.train_progress.update()
+        if not indeterminate and self.train_progress_status is not None:
+            self.train_progress_status.text = "Idle"
+            self.train_progress_status.update()
+
+    def _update_progress_snapshot(
+        self, snapshot: Optional[Dict[str, Any]], default_label: str = "Preparing training..."
+    ) -> None:
+        """Render a shared progress snapshot into the UI."""
+        if self.train_progress is None:
+            return
+        fraction = 0.0
+        label = default_label
+        if snapshot:
+            fraction = float(snapshot.get("fraction") or 0.0)
+            percent = float(snapshot.get("percent") or 0.0)
+            phase_name = snapshot.get("phase_name") or default_label
+            label = f"{phase_name} ({percent:.0f}%)"
+        self.train_progress.props(remove="indeterminate")
+        self.train_progress.value = max(0.0, min(fraction, 1.0))
+        self.train_progress.update()
+        if self.train_progress_status is not None:
+            self.train_progress_status.text = label
+            self.train_progress_status.update()
+
+    def _mark_progress_complete(self, label: str = "Training completed (100%)") -> None:
+        """Force the UI progress indicator to a completed state."""
+        if self.train_progress is not None:
+            self.train_progress.props(remove="indeterminate")
+            self.train_progress.value = 1.0
+            self.train_progress.update()
+        if self.train_progress_status is not None:
+            self.train_progress_status.text = label
+            self.train_progress_status.update()
 
     def _clear_overlay(self) -> None:
         """Clear the overlay panel and status label."""
@@ -523,6 +602,17 @@ class TrainTab:
         if self.train_overlay_status is not None:
             self.train_overlay_status.text = ""
             self.train_overlay_status.update()
+
+    def _publish_active_model(
+        self,
+        discoverer: Any,
+        ref_graph: Any,
+        source: str,
+    ) -> None:
+        """Publish the active trained model to shared GUI state."""
+        publisher = self.active_model_state.get("set_active_model")
+        if callable(publisher):
+            publisher(discoverer, ref_graph, source)
 
     def _append_log_lines(self, text: str) -> None:
         """Append text lines to the training log."""
@@ -538,13 +628,31 @@ class TrainTab:
         split = settings.get("bootstrap_sampling_split", "auto")
         if isinstance(split, str) and split.lower() != "auto":
             split = float(split)
+        raw_budget = settings.get(
+            "shap_budget", settings.get("max_shap_samples", 0)
+        )
+        if raw_budget in ("", None):
+            raw_budget = 0
+        shap_budget = int(raw_budget)
+        if shap_budget <= 0:
+            shap_budget = None
+        hpo_optimization = settings.get("hpo_optimization", False)
+        raw_hpo_limit = settings.get("hpo_optimization_limit", 0)
+        if raw_hpo_limit in ("", None):
+            raw_hpo_limit = 0
+        hpo_limit = int(raw_hpo_limit)
+        if hpo_limit <= 0:
+            hpo_limit = None
         return {
             "adaptive_shap_sampling": settings.get(
                 "adaptive_shap_sampling", True
             ),
-            "max_shap_samples": int(
-                settings.get("max_shap_samples", DEFAULT_MAX_SAMPLES)
+            "precompute_target_matrices": settings.get(
+                "precompute_target_matrices", False
             ),
+            "shap_budget": shap_budget,
+            "hpo_optimization": hpo_optimization,
+            "hpo_optimization_limit": hpo_limit,
             "explainer": settings.get("explainer", "gradient"),
             "corr_method": settings.get("corr_method", "spearman"),
             "corr_alpha": float(settings.get("corr_alpha", 0.6)),
@@ -558,7 +666,9 @@ class TrainTab:
             "bootstrap_sampling_split": split,
         }
 
-    def _train_job(self, settings: Dict[str, Any]) -> Dict[str, Any]:
+    def _train_job(
+        self, settings: Dict[str, Any], progress: ProgressManager
+    ) -> Dict[str, Any]:
         """Run the training job in a background worker."""
         output: Dict[str, Any] = {}
         buffer = io.StringIO()
@@ -573,6 +683,14 @@ class TrainTab:
                 prior_path = ensure_file(prior_path, ".json")
                 prior = utils.read_json_file(prior_path)
             dataset_name = os.path.splitext(os.path.basename(dataset_path))[0]
+            raw_budget = settings.get(
+                "shap_budget", settings.get("max_shap_samples", 0)
+            )
+            if raw_budget in ("", None):
+                raw_budget = 0
+            shap_budget = int(raw_budget)
+            if shap_budget <= 0:
+                shap_budget = None
             discoverer = GraphDiscovery(
                 experiment_name=dataset_name,
                 model_type=settings["method"],
@@ -585,7 +703,7 @@ class TrainTab:
                 bootstrap_parallel_jobs=int(
                     settings["bootstrap_parallel_jobs"]
                 ),
-                max_shap_samples=int(settings["max_shap_samples"]),
+                max_shap_samples=shap_budget,
             )
             if settings["method"] == "rex":
                 regressors = settings.get("regressors", DEFAULT_REGRESSORS)
@@ -599,6 +717,9 @@ class TrainTab:
                 prior=prior,
                 bootstrap_tolerance=float(settings["bootstrap_tolerance"]),
                 combine_op=settings.get("combine_op", "union"),
+                progress=progress,
+                prog_bar=False,
+                optuna_prog_bar=False,
                 **self._rex_extra_kwargs(settings),
             )
             elapsed_seconds = time.time() - start_time
@@ -630,7 +751,27 @@ class TrainTab:
         self._set_progress_state(True)
 
         try:
-            result = await self.run.io_bound(self._train_job, self.settings)
+            progress = ProgressManager(total_units=1, enabled=False, render_cli=False)
+            if self.settings["method"] == "rex":
+                total_units = GraphDiscovery._progress_total_units(
+                    hpo_trials=int(self.settings["hpo_iterations"]),
+                    bootstrap_trials=int(self.settings["bootstrap_iterations"]),
+                    regressor_count=len(
+                        self.settings.get("regressors", DEFAULT_REGRESSORS)
+                    ),
+                )
+                progress = ProgressManager(
+                    total_units=total_units,
+                    name="Training",
+                    render_cli=False,
+                )
+            result_task = asyncio.create_task(
+                self.run.io_bound(self._train_job, self.settings, progress)
+            )
+            while not result_task.done():
+                self._update_progress_snapshot(progress.snapshot())
+                await asyncio.sleep(0.2)
+            result = await result_task
         except asyncio.CancelledError:
             if self.train_log is not None:
                 self.train_log.push("Training canceled.")
@@ -645,7 +786,11 @@ class TrainTab:
             self.state["task"] = None
             self._set_run_state(False)
 
-        self._set_progress_state(False)
+        snapshot = progress.snapshot()
+        if float(snapshot.get("fraction") or 0.0) > 0.0:
+            self._update_progress_snapshot(snapshot, "Training completed")
+        else:
+            self._mark_progress_complete()
         self._append_log_lines(result.get("log") or "")
 
         discoverer = result.get("discoverer")
@@ -653,6 +798,7 @@ class TrainTab:
         self.state["dag"] = result.get("dag")
         metrics = result.get("metrics")
         ref_graph = result.get("ref_graph")
+        self._publish_active_model(discoverer, ref_graph, "trained model")
         overlay_error = render_cytoscape_overlay(
             self.train_overlay_container,
             self.train_overlay_status,

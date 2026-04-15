@@ -1,4 +1,5 @@
 import os
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -321,3 +322,44 @@ def test_validate_prior_columns_requires_dataset_columns():
     with pytest.raises(ValueError) as exc_info:
         gd._validate_prior_columns([["A"]])
     assert "Dataset columns are not available" in str(exc_info.value)
+
+
+def test_get_rex_diagnostics_by_regressor_skips_combined_entry():
+    gd = GraphDiscovery()
+    gd.estimator = "rex"
+    nn_bundle = {"regressor_errors": pd.DataFrame({"target": ["A"], "error": [0.1]})}
+    gbt_bundle = {"regressor_errors": pd.DataFrame({"target": ["A"], "error": [0.2]})}
+    gd.trainer = {
+        "sample_nn": SimpleNamespace(
+            model_type="nn",
+            rex=SimpleNamespace(get_diagnostics_bundle=lambda **_kwargs: nn_bundle),
+        ),
+        "sample_gbt": SimpleNamespace(
+            model_type="gbt",
+            rex=SimpleNamespace(get_diagnostics_bundle=lambda **_kwargs: gbt_bundle),
+        ),
+        "sample_rex": SimpleNamespace(model_type="rex", rex=None),
+    }
+
+    diagnostics = gd.get_rex_diagnostics_by_regressor()
+
+    assert list(diagnostics.keys()) == ["nn", "gbt"]
+    assert diagnostics["nn"] is nn_bundle
+    assert diagnostics["gbt"] is gbt_bundle
+
+
+def test_get_rex_diagnostics_by_regressor_requires_rex_estimator():
+    gd = GraphDiscovery()
+    gd.estimator = "lingam"
+
+    with pytest.raises(ValueError, match="only available for estimator 'rex'"):
+        gd.get_rex_diagnostics_by_regressor()
+
+
+def test_get_rex_diagnostics_by_regressor_requires_bundles():
+    gd = GraphDiscovery()
+    gd.estimator = "rex"
+    gd.trainer = {"sample_rex": SimpleNamespace(model_type="rex", rex=None)}
+
+    with pytest.raises(RuntimeError, match="No fitted ReX regressors"):
+        gd.get_rex_diagnostics_by_regressor()

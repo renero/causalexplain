@@ -1,4 +1,32 @@
-version 0.9.1
+version 0.9.4
+-------------
+- GUI: the Train tab now reuses the weighted training progress tracked by the
+  CLI pipeline, showing the active phase in the status legend and a cleaner
+  visual-only progress bar.
+- Metadata/docs: synchronized package version references across the codebase,
+  documentation, and citation metadata for this patch release.
+
+version 0.9.3
+-------------
+- CLI: added explicit `run`, `generate`, and `gui` subcommands, legacy
+  compatibility warnings, and a dedicated synthetic-data generation mode.
+- Packaging/API: aligned runtime dependencies, added the `causalexplain`
+  console entry point, and lazy-loaded heavy package modules to keep imports
+  lightweight.
+- Reliability/docs: fixed generator edge-case handling for small graphs,
+  clarified that PC and CAM remain unsupported public APIs, and refreshed the
+  README/quickstart/install docs for the current workflow.
+
+version 0.9.2
+-------------
+- ReX: added SHAP budget batching, bootstrap SHAP caching, and HPO
+  optimization controls.
+- CLI/GUI: renamed optimization options and exposed the new settings in the
+  Train tab and command line.
+- Stability: fixed the bootstrap-cache and gradient SHAP regressions found
+  during merge validation.
+
+version 0.9.0
 -------------
 - GUI: refactored NiceGUI app into tab modules with shared helpers, extracted
   CSS to static assets, and smoothed Train tab resizing behavior.

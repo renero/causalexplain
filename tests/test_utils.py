@@ -954,8 +954,9 @@ class TestValidCandidatesFromPrior:
         effect = 'E'
         prior = [['A'], ['B', 'C'], ['D']]
 
-        with pytest.raises(ValueError, match="Effect 'E' not found in prior"):
-            utils.valid_candidates_from_prior(feature_names, effect, prior)
+        candidates = utils.valid_candidates_from_prior(
+            feature_names, effect, prior)
+        assert candidates == feature_names
 
     def test_valid_candidates_without_prior(self):
         feature_names = ['A', 'B', 'C', 'D']

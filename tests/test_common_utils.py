@@ -88,8 +88,9 @@ def test_prior_helpers_and_cycles():
     feature_names = ["x", "y", "z"]
     prior = [["x"], ["y"], ["z"]]
     assert utils.valid_candidates_from_prior(feature_names, "y", prior) == ["x"]
-    with pytest.raises(ValueError):
-        utils.valid_candidates_from_prior(feature_names, "missing", prior)
+    assert utils.valid_candidates_from_prior(
+        feature_names, "missing", prior
+    ) == feature_names
 
     dag = nx.DiGraph([("z", "y"), ("y", "x"), ("x", "z")])
     broken = utils.break_cycles_using_prior(dag, prior, verbose=False)

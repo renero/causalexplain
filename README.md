@@ -1,7 +1,7 @@
 ![logo](https://raw.githubusercontent.com/renero/causalexplain/main/docs/_static/logo-light.png)
 
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://www.python.org/downloads/release/python-31311/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey.svg)](https://github.com/renero/causalexplain)
 [![PyPI version](https://badge.fury.io/py/causalexplain.svg)](https://badge.fury.io/py/causalexplain)
 [![Build Status](https://github.com/renero/causalexplain/actions/workflows/build.yaml/badge.svg)](https://github.com/renero/causalexplain/actions/workflows/build.yaml)
@@ -13,7 +13,10 @@
 
 '**CausalExplain**' is a library that implements methods to extract the causal
 graph, from tabular data, specifically the **ReX** method, and other compared
-methods like GES, PC, FCI, LiNGAM, CAM, and NOTEARS.
+methods like GES, PC, FCI, LiNGAM, CAM, and NOTEARS. At present, the public,
+supported path is centered on ReX and the more complete comparison methods;
+the PC and CAM implementations remain in the repository for research/reference
+purposes but are not supported as production-ready public APIs.
 
 This repository contains the implementation of **ReX** and all necessary tools
 to reproduce the results presented in our accompanying paper. **ReX** supports
@@ -54,7 +57,7 @@ datasets, highlighting its robustness across different types of data.
 
 - Operating System: Linux or macOS
 - Environment Manager: PyEnv or Conda
-- Programming Language: Python 3.13.11 or higher
+- Programming Language: Python 3.10+
 - Hardware: CPU (CUDA/MPS optional)
 
 ## Installation
@@ -65,12 +68,16 @@ The project can be installed using pip:
 $ pip install causalexplain
 ```
 
-## What's new in v0.9.1
+This installs the package together with its core runtime dependencies for the
+CLI, plotting, and bundled causal-discovery methods.
 
-- GUI refactor: split the NiceGUI app into tab modules with shared helpers.
-- GUI styling: extracted CSS into static assets and smoothed Train tab resizing.
-- GUI tests: added coverage for helper utilities and Cytoscape layouts.
-- Packaging: include GUI CSS assets in package data.
+## What's new in v0.9.4
+
+- GUI: the Train tab now mirrors the weighted progress tracked by the ReX
+  training pipeline, so the progress legend shows the current phase and the
+  bar stays purely visual.
+- Release hygiene: version references, changelogs, and citation metadata were
+  synchronized for this patch release.
 
 ## Data
 
@@ -83,9 +90,11 @@ the datasets in the `data` folder.
 
 ### Option 1: Command Line
 
-To run `causalexplain` on your data, you can use the `causalexplain` command:
+After installation, you can use either the installed `causalexplain` command
+or the module entry point:
 
-```
+``` 
+$ causalexplain --help
 $ python -m causalexplain --help
    ___                      _                 _       _
   / __\__ _ _   _ ___  __ _| | _____  ___ __ | | __ _(_)_ __
@@ -93,35 +102,58 @@ $ python -m causalexplain --help
 / /__| (_| | |_| \__ \ (_| | |  __/>  <| |_) | | (_| | | | | |
 \____/\__,_|\__,_|___/\__,_|_|\___/_/\_\ .__/|_|\__,_|_|_| |_|
                                        |_|
-usage: causalexplain [-h] [-a | --shap-sampling | --no-shap-sampling]
-                     [-b BOOTSTRAP] [-B BOOTSTRAP_PARALLEL_JOBS]
-                     [-c {union,intersection}] [-C]
-                     [-d DATASET] [--gui] [-H MAX_SHAP_SAMPLES]
-                     [-i ITERATIONS] [-l LOAD_MODEL]
-                     [-m {rex,pc,fci,ges,lingam,cam,notears}]
-                     [-M] [-n] [-o OUTPUT] [-P PARALLEL_JOBS] [-p PRIOR]
-                     [-q] [-s [SAVE_MODEL]] [-S SEED] [-T THRESHOLD]
-                     [-t TRUE_DAG] [-v]```
+usage: causalexplain [-h] {run,generate,gui} ...
 ```
 
-that will present you with a menu to choose the dataset you want to use, the
-method you want to use to infer the causal graph, and the hyperparameters you
-want to use.
+The top-level help lists the available subcommands. Use
+`causalexplain run --help`, `causalexplain generate --help`, and
+`causalexplain gui --help` for mode-specific options.
 
-The minimum required to run `causalexplain` is a dataset file in CSV format,
-with the first row containing the names of the variables, and the rest of
-the rows containing the values of the variables. The method selected by default
-is ReX, but you can also choose between PC, FCI, GES, LiNGAM, CAM, NOTEARS.
-At the end of the execution, the edges of the plausible causal graph will be
-displayed along with the metrics obtained, if the true dag is provided
+The minimum required to run `causalexplain run` is a dataset file in CSV
+format, with the first row containing the names of the variables, and the rest
+of the rows containing the values of the variables. The method selected by
+default is ReX, but you can also choose between PC, FCI, GES, LiNGAM, CAM, and
+NOTEARS. At the end of the execution, the edges of the plausible causal graph
+will be displayed along with the metrics obtained, if the true DAG is provided
 (argument `-t`).
+
+PC and CAM are still exposed in the CLI for reproducibility and internal
+comparison, but they are currently unsupported: parts of their helper API are
+unfinished, and they should not be treated as stable public interfaces.
+
+#### Generate synthetic data from the CLI
+
+The CLI can also generate a synthetic dataset and save both the `.csv` data
+file and the `.dot` ground-truth DAG from a single output base path:
+
+```bash
+$ python -m causalexplain generate \
+    --mechanism linear \
+    --variables 10 \
+    --samples 500 \
+    --output /path/to/generated/toy_dataset
+```
+
+This writes `/path/to/generated/toy_dataset.csv` and
+`/path/to/generated/toy_dataset.dot`.
+
+The required arguments for generation mode are:
+
+- `--mechanism`
+- `--variables`
+- `--samples`
+- `--output`
+
+The remaining generation controls default to the same values used by the GUI:
+`--timeout 30`, `--max-retries 50`, `--min-edges 0`, `--max-edges 30`,
+`--max-parents 3`, `--seed 1234`, and `--rescale`.
 
 #### GUI mode
 
 To use the local GUI, run:
 
 ```bash
-$ python -m causalexplain --gui
+$ python -m causalexplain gui
 ```
 
 This launches a browser-based app for training models, loading/evaluating saved
@@ -185,17 +217,25 @@ res, diag = compute_shap(X, model, backend="kernel", adaptive_shap_sampling=Fals
 CLI example (same executable shown above):
 
 ```bash
-python -m causalexplain --shap-sampling
-python -m causalexplain --no-shap-sampling
+python -m causalexplain run --shap-sampling
+python -m causalexplain run --no-shap-sampling
 ```
+
+For GBT-based ReX runs, `-gbt-optimization` controls whether per-target
+feature matrices are cached to reduce repeated slicing. Use
+`--no-gbt-optimization` to disable and lower memory usage (disabled by default).
+
+To speed up hyperparameter tuning, use `--hpo-optimization` to enable Optuna
+pruning and a downsampled HPO objective. You can cap rows with
+`--hpo-optimization-limit` (disabled by default).
 
 Available SHAP backends are `kernel`, `gradient`, `explainer`, and `tree`.
 ReX defaults to `tree` when running the GBT regressor.
 
-When adaptive sampling is enabled, the key knobs are `max_shap_samples`,
-`K_max`, `max_explain_samples`, and `stratify`. These
-control background size, repeated sampling for stability, and how many rows
-are explained.
+When adaptive sampling is enabled, the key knob is the SHAP optimization
+limit (`--shap-optimization-limit`, Python: `shap_budget`). It controls both
+SHAP background size and the number of rows explained; omit it to disable the
+limit. The legacy `max_shap_samples` name is deprecated.
 
 Note on large datasets: if `adaptive_shap_sampling=False` and `m > 2000`, the
 tool warns about potential non-termination (the threshold is conservative).
@@ -255,15 +295,12 @@ The following command illustrates how to run `causalexplain` on the toy dataset
 using the ReX method:
 
 ```bash
-$ python -m causalexplain -d /path/to/toy_dataset.csv -t /path/to/toy_dataset.dot
+$ python -m causalexplain run -d /path/to/toy_dataset.csv -t /path/to/toy_dataset.dot
 ```
 
-The same command can be used to run `causalexplain` on the toy dataset using the
-CAM method:
-
-```bash
-$ python -m causalexplain -d /path/to/toy_dataset.csv -m cam -t /path/to/toy_dataset.dot
-```
+The CLI still exposes `-m pc` and `-m cam` for research/reference workflows,
+but those two methods are currently unsupported and are not considered
+release-ready public interfaces.
 
 For more information on command line options, run `causalexplain -h` or go to
 the [Quickstart](https://renero.github.io/causalexplain/quickstart.html)
@@ -272,7 +309,7 @@ section in the documentation.
 You can also launch the GUI locally:
 
 ```bash
-$ python -m causalexplain --gui
+$ python -m causalexplain gui
 ```
 
 ### Prior knowledge (ReX)
@@ -298,7 +335,7 @@ Example JSON file:
 Use it from the CLI with `-p`/`--prior` (ReX only):
 
 ```bash
-$ python -m causalexplain -d /path/to/data.csv -p /path/to/prior.json
+$ python -m causalexplain run -d /path/to/data.csv -p /path/to/prior.json
 ```
 
 Or from a notebook:
@@ -313,7 +350,7 @@ experiment.run(prior=prior, hpo_iterations=10, bootstrap_iterations=10)
 If you use **CausalExplain**, please cite the **software** and/or the **related publication** below.
 
 ### Software
-> Renero, J. (2026). *CausalExplain* (Version 0.9.1).
+> Renero, J. (2026). *CausalExplain* (Version 0.8.0).
 > Available at: [https://github.com/renero/causalexplain](https://github.com/renero/causalexplain)
 
 **BibTeX**
@@ -321,7 +358,7 @@ If you use **CausalExplain**, please cite the **software** and/or the **related 
 @software{causalexplain_software,
   author  = {Jesús Renero},
   title   = {CausalExplain},
-  version = {0.9.1},
+  version = {0.8.0},
   url     = {https://github.com/renero/causalexplain},
   date    = {2026-01-04}
 }

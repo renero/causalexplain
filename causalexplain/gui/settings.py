@@ -8,7 +8,6 @@ from causalexplain.common import (
     DEFAULT_BOOTSTRAP_TOLERANCE,
     DEFAULT_BOOTSTRAP_TRIALS,
     DEFAULT_HPO_TRIALS,
-    DEFAULT_MAX_SAMPLES,
     DEFAULT_REGRESSORS,
     DEFAULT_SEED,
 )
@@ -22,6 +21,8 @@ def default_train_settings() -> Dict[str, Any]:
         "prior_path": "",
         "method": "rex",
         "hpo_iterations": DEFAULT_HPO_TRIALS,
+        "hpo_optimization": False,
+        "hpo_optimization_limit": 0,
         "bootstrap_iterations": DEFAULT_BOOTSTRAP_TRIALS,
         "bootstrap_tolerance": DEFAULT_BOOTSTRAP_TOLERANCE,
         "combine_op": "union",
@@ -29,7 +30,8 @@ def default_train_settings() -> Dict[str, Any]:
         "parallel_jobs": 0,
         "bootstrap_parallel_jobs": 0,
         "adaptive_shap_sampling": True,
-        "max_shap_samples": DEFAULT_MAX_SAMPLES,
+        "shap_budget": 0,
+        "precompute_target_matrices": False,
         "seed": DEFAULT_SEED,
         "regressors": DEFAULT_REGRESSORS[:],
         "explainer": "gradient",
@@ -69,6 +71,17 @@ def default_generate_settings() -> Dict[str, Any]:
         "max_edges": 30,
         "output_dir": "",
         "output_name": "generated_dataset",
+    }
+
+
+def default_diagnostics_settings() -> Dict[str, Any]:
+    """Return default settings for the diagnostics tab."""
+    return {
+        "view": "Regression Errors",
+        "selected_target": "",
+        "selected_regressor": "",
+        "selected_source": "",
+        "selected_pair_target": "",
     }
 
 

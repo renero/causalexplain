@@ -4,12 +4,14 @@ import math
 import numpy as np
 import pytorch_lightning as pl
 import torch
+from pytorch_lightning.utilities.types import OptimizerLRScheduler
 from torch import Tensor, nn
 from torch.autograd import Variable
 from torch.distributions import Categorical
 from torch.nn.functional import softmax
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from typing import cast
 
 from ._loss import MMDLoss
 from ..common import utils
@@ -25,8 +27,6 @@ DEVICE = "cpu"
 
 
 class MLP(pl.LightningModule):
-
-    device = utils.select_device(DEVICE)
 
     class Block(nn.Module):
         """The main building block of `MLP`."""
@@ -99,7 +99,9 @@ class MLP(pl.LightningModule):
 
         if isinstance(self.dropout, float):
             dropouts = [self.dropout] * len(layers_dimensions)
-            assert len(layers_dimensions) == len(dropouts)
+        else:
+            dropouts = list(self.dropout)
+        assert len(layers_dimensions) == len(dropouts)
         self.net = nn.Sequential(
             *[
                 MLP.Block(
@@ -199,7 +201,7 @@ class DFF(pl.LightningModule):
         elif loss == "mae":
             self.loss_fn = nn.L1Loss()
         elif loss == "mmd":
-            self.loss_fn = MMDLoss(mmd_type="quadratic")
+            self.loss_fn = MMDLoss()
         else:
             raise ValueError("Unknown loss function.")
         self.float()
@@ -290,16 +292,19 @@ class MDN(pl.LightningModule):
         self.mu = nn.Linear(hidden_size, num_gaussians)
         self.float()
 
-    def configure_optimizers(self):
-        optimizer = Adam(self.parameters(), lr=(self.lr or self.learning_rate))
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = Adam(self.parameters(), lr=self.lr)
         lr_scheduler = ReduceLROnPlateau(
             optimizer,
         )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": lr_scheduler,
-            "monitor": "val_loss",
-        }
+        return cast(
+            OptimizerLRScheduler,
+            {
+                "optimizer": optimizer,
+                "lr_scheduler": lr_scheduler,
+                "monitor": "val_loss",
+            },
+        )
 
     def training_step(self, batch, batch_idx):
         loss = self.common_step(batch)

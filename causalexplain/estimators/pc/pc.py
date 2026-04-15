@@ -1,3 +1,11 @@
+"""PC estimator.
+
+Warning:
+    This implementation is currently unsupported as a public API. It remains in
+    the repository for research/reference purposes, but related helper classes
+    and PDAG/independencies paths are not yet complete.
+"""
+
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
 # pylint: disable=C0103:invalid-name
 # pylint: disable=C0116:missing-function-docstring
@@ -31,6 +39,12 @@ class PC(StructureEstimator):
     set using chi_square dependency test and uses the PC algorithm to
     estimate a DAG pattern that satisfies the identified dependencies. The
     DAG pattern can then be completed to a faithful DAG, if possible.
+
+    Warning
+    -------
+    This estimator is currently unsupported as a public API. It is available
+    for research/reference usage, but some supporting classes and conversion
+    helpers remain incomplete.
 
     References
     ----------

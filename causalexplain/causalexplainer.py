@@ -1,26 +1,71 @@
+from __future__ import annotations
+
 """
 This module contains the GraphDiscovery class which is responsible for
 creating, fitting, and evaluating causal discovery experiments.
 """
+import importlib
 import os
 import pickle
 import re
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, cast
 
 import pandas as pd
-from matplotlib.axes import Axes
 import networkx as nx
 
 from causalexplain.common import (
-    DEFAULT_MAX_SAMPLES,
+    DEFAULT_BOOTSTRAP_TRIALS,
+    DEFAULT_HPO_TRIALS,
     DEFAULT_REGRESSORS,
     utils,
 )
-from causalexplain.common import plot
-from causalexplain.common.notebook import Experiment
-from causalexplain.metrics.compare_graphs import Metrics, evaluate_graph
-from causalexplain.gui import cytoscape as cygui
+from causalexplain.common.progress import ProgressManager
+
+if TYPE_CHECKING:
+    from matplotlib.axes import Axes
+    from causalexplain.common.notebook import Experiment
+    from causalexplain.metrics.compare_graphs import Metrics
+
+
+class _LazyModuleProxy:
+    """Resolve a heavy module only when one of its attributes is used."""
+
+    def __init__(self, module_name: str) -> None:
+        self._module_name = module_name
+        self._module: Any = None
+
+    def _load(self) -> Any:
+        if self._module is None:
+            self._module = importlib.import_module(self._module_name)
+        return self._module
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
+
+
+plot = _LazyModuleProxy("causalexplain.common.plot")
+cygui = _LazyModuleProxy("causalexplain.gui.cytoscape")
+Experiment = None
+evaluate_graph = None
+
+
+def _resolve_experiment_class() -> Any:
+    """Return the Experiment class, honoring monkeypatched module globals."""
+    global Experiment
+    if Experiment is None:
+        from causalexplain.common.notebook import Experiment as _Experiment
+        Experiment = _Experiment
+    return Experiment
+
+
+def _resolve_evaluate_graph() -> Any:
+    """Return evaluate_graph, honoring monkeypatched module globals."""
+    global evaluate_graph
+    if evaluate_graph is None:
+        from causalexplain.metrics.compare_graphs import evaluate_graph as _evaluate_graph
+        evaluate_graph = _evaluate_graph
+    return evaluate_graph
 
 
 class GraphDiscovery:
@@ -58,7 +103,9 @@ class GraphDiscovery:
             device (Optional[str], optional): Device selection for regressors.
             parallel_jobs (int, optional): Number of parallel jobs for CPU training.
             bootstrap_parallel_jobs (int, optional): Number of parallel jobs for bootstrap.
-            max_shap_samples (Optional[int], optional): Cap for SHAP background samples.
+            max_shap_samples (Optional[int], optional): Deprecated name for the SHAP
+                workload budget; use --shap-optimization-limit in the CLI. A
+                non-positive or missing value disables the budget.
 
         Returns:
             None: This method does not return a value.
@@ -70,7 +117,7 @@ class GraphDiscovery:
         resolved_max_shap = (
             max_shap_samples
             if isinstance(max_shap_samples, int) and max_shap_samples > 0
-            else DEFAULT_MAX_SAMPLES
+            else None
         )
 
         if normalized_experiment is None and normalized_csv is None:
@@ -134,7 +181,7 @@ class GraphDiscovery:
         device: str,
         parallel_jobs: int,
         bootstrap_parallel_jobs: int,
-        max_shap_samples: int
+        max_shap_samples: Optional[int]
     ) -> None:
         """
         Initialize the instance with placeholder state for deferred configuration.
@@ -424,10 +471,11 @@ class GraphDiscovery:
 
         csv_filename = cast(str, self.csv_filename)
         dot_filename = cast(str, self.dot_filename)
+        experiment_class = _resolve_experiment_class()
         self.trainer: Dict[str, Experiment] = {}
         for model_type in self.regressors:
             trainer_name = f"{self.dataset_name}_{model_type}"
-            self.trainer[trainer_name] = Experiment(
+            self.trainer[trainer_name] = experiment_class(
                 experiment_name=self.dataset_name,
                 csv_filename=csv_filename,
                 dot_filename=dot_filename,
@@ -482,7 +530,8 @@ class GraphDiscovery:
                 'bootstrap_parallel_jobs': self.bootstrap_parallel_jobs
             }
             if self.max_shap_samples is not None:
-                xargs['max_shap_samples'] = self.max_shap_samples
+                # Use a single SHAP budget to control background/explain rows.
+                xargs['shap_budget'] = self.max_shap_samples
             if hpo_iterations is not None:
                 xargs['hpo_n_trials'] = hpo_iterations
             if bootstrap_iterations is not None:
@@ -505,9 +554,46 @@ class GraphDiscovery:
                 xargs['prog_bar'] = False
                 xargs['silent'] = True
 
-        for trainer_name, experiment in self.trainer.items():
-            if not trainer_name.endswith("_rex"):
-                experiment.fit_predict(estimator=self.estimator, **xargs)
+        progress = None
+        if self.estimator == 'rex' and not quiet and \
+                not xargs.get('verbose', False) and \
+                xargs.get('prog_bar', True):
+            # Macro units for main bar; phases advance it fractionally.
+            hpo_trials = hpo_iterations if hpo_iterations is not None \
+                else DEFAULT_HPO_TRIALS
+            bootstrap_trials = bootstrap_iterations if bootstrap_iterations is not None \
+                else DEFAULT_BOOTSTRAP_TRIALS
+            total_units = self._progress_total_units(
+                hpo_trials=hpo_trials,
+                bootstrap_trials=bootstrap_trials,
+                regressor_count=len(self.regressors),
+            )
+            progress = ProgressManager(total_units=total_units, name="Training")
+            xargs['progress'] = progress
+            xargs['use_global_pbar'] = True
+            xargs['optuna_prog_bar'] = False
+
+        try:
+            for trainer_name, experiment in self.trainer.items():
+                if not trainer_name.endswith("_rex"):
+                    experiment.fit_predict(estimator=self.estimator, **xargs)
+        finally:
+            if progress is not None:
+                progress.close()
+
+    @staticmethod
+    def _progress_total_units(
+        hpo_trials: int,
+        bootstrap_trials: int,
+        regressor_count: int
+    ) -> int:
+        per_regressor = 0
+        if hpo_trials > 0:
+            per_regressor += hpo_trials
+        per_regressor += 3  # fit + SHAP fit + SHAP predict
+        if bootstrap_trials > 0:
+            per_regressor += bootstrap_trials
+        return max(per_regressor * max(regressor_count, 1), 1)
 
     def combine_and_evaluate_dags(
         self,
@@ -535,7 +621,7 @@ class GraphDiscovery:
             estimator_obj = getattr(self.trainer[trainer_key], self.estimator)
             self.trainer[trainer_key].dag = estimator_obj.dag
             if self.ref_graph is not None and self.data_columns is not None:
-                self.trainer[trainer_key].metrics = evaluate_graph(
+                self.trainer[trainer_key].metrics = _resolve_evaluate_graph()(
                     self.ref_graph, estimator_obj.dag, self.data_columns)
             else:
                 self.trainer[trainer_key].metrics = None
@@ -561,10 +647,11 @@ class GraphDiscovery:
             dag = inter_cycles_removed
 
         # Create a new Experiment object for the combined DAG
+        experiment_class = _resolve_experiment_class()
         new_trainer = f"{self.dataset_name}_rex"
         if new_trainer in self.trainer:
             del self.trainer[new_trainer]
-        self.trainer[new_trainer] = Experiment(
+        self.trainer[new_trainer] = experiment_class(
             experiment_name=self.dataset_name,
             model_type='rex',
             data=self.data,
@@ -579,7 +666,7 @@ class GraphDiscovery:
         self.trainer[new_trainer].ref_graph = self.ref_graph
         self.trainer[new_trainer].dag = dag
         if self.ref_graph is not None and self.data_columns is not None:
-            self.trainer[new_trainer].metrics = evaluate_graph(
+            self.trainer[new_trainer].metrics = _resolve_evaluate_graph()(
                 self.ref_graph, dag, self.data_columns)
         else:
             self.trainer[new_trainer].metrics = None
@@ -712,6 +799,48 @@ class GraphDiscovery:
         self.metrics = self.trainer[list(self.trainer.keys())[-1]].metrics
         return self.trainer
 
+    def get_rex_diagnostics_by_regressor(
+        self,
+        include_knowledge: bool = False,
+        ref_graph: Optional[nx.DiGraph] = None,
+    ) -> Dict[str, Dict[str, pd.DataFrame]]:
+        """
+        Return normalized diagnostics bundles for each fitted ReX regressor.
+
+        This skips the combined `<dataset>_rex` trainer entry and only returns
+        diagnostics from the underlying per-regressor ReX runs such as `nn` and
+        `gbt`.
+        """
+        if self.estimator != 'rex':
+            raise ValueError("Diagnostics are only available for estimator 'rex'.")
+
+        diagnostics: Dict[str, Dict[str, pd.DataFrame]] = {}
+        resolved_ref_graph = (
+            ref_graph if ref_graph is not None else getattr(self, "ref_graph", None)
+        )
+
+        for trainer_name, experiment in self.trainer.items():
+            if trainer_name.endswith("_rex"):
+                continue
+
+            rex_estimator = getattr(experiment, "rex", None)
+            if rex_estimator is None:
+                continue
+
+            regressor_name = getattr(experiment, "model_type", None)
+            if not isinstance(regressor_name, str) or not regressor_name:
+                regressor_name = trainer_name.rsplit("_", 1)[-1]
+
+            diagnostics[regressor_name] = rex_estimator.get_diagnostics_bundle(
+                include_knowledge=include_knowledge,
+                ref_graph=resolved_ref_graph,
+            )
+
+        if not diagnostics:
+            raise RuntimeError("No fitted ReX regressors are available for diagnostics.")
+
+        return diagnostics
+
     def _sampling_summary(self) -> str:
         """
         Generate a summary string of the SHAP adaptive sampling strategy.
@@ -731,11 +860,12 @@ class GraphDiscovery:
             return "SHAP adaptive sampling: unavailable"
 
         adaptive = getattr(rex_estimator, 'adaptive_shap_sampling', True)
-        max_shap_samples = getattr(
-            rex_estimator, 'max_shap_samples', DEFAULT_MAX_SAMPLES)
+        shap_budget = getattr(rex_estimator, 'shap_budget', None)
+        if shap_budget is None:
+            shap_budget = getattr(rex_estimator, 'max_shap_samples', None)
+        if not isinstance(shap_budget, int) or shap_budget <= 0:
+            shap_budget = None
         k_max = getattr(rex_estimator, 'K_max', 5)
-        if not isinstance(max_shap_samples, int) or max_shap_samples <= 0:
-            max_shap_samples = DEFAULT_MAX_SAMPLES
         if not isinstance(k_max, int) or k_max <= 0:
             k_max = 5
 
@@ -758,17 +888,19 @@ class GraphDiscovery:
                 "SHAP adaptive sampling: disabled "
                 f"({mode}, K={k_target}, samples={n_background})"
             )
-        if n_rows <= max_shap_samples:
+        if shap_budget is None:
+            return "SHAP adaptive sampling: enabled (optimization limit: disabled)"
+        if n_rows <= shap_budget:
             mode = "no_sampling"
             n_background = n_rows
             k_target = 1
-        elif n_rows <= 2 * max_shap_samples:
+        elif n_rows <= 2 * shap_budget:
             mode = "single_sample"
-            n_background = max_shap_samples
+            n_background = shap_budget
             k_target = 1
         else:
             mode = "multi_sample"
-            n_background = min(max_shap_samples, n_rows)
+            n_background = min(shap_budget, n_rows)
             k_target = min(int(k_max), 5)
 
         return f"SHAP adaptive sampling: {mode} (K={k_target}, samples={n_background})"
@@ -906,6 +1038,7 @@ class GraphDiscovery:
             ref_graph = model.ref_graph
         else:
             ref_graph = None
+
         plot.dag(
             graph=model.dag, reference=ref_graph, show_metrics=show_metrics,
             show_node_fill=show_node_fill, title=title or "",
@@ -1061,13 +1194,13 @@ class GraphDiscovery:
         if ui_parent is None or ui_parent is ui:
             if title:
                 ui.label(title)
-            ui.html(container_html, sanitize=False)
+            ui.html(container_html)
             ui.run_javascript(script)
         else:
             with ui_parent:
                 if title:
                     ui.label(title)
-                ui.html(container_html, sanitize=False)
+                ui.html(container_html)
                 ui.run_javascript(script)
 
         return self._cy_positions
