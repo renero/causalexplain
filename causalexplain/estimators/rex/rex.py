@@ -294,9 +294,9 @@ class Rex(BaseEstimator, ClassifierMixin):
         """
         self.fit_pipeline = Pipeline(
             self,  # type: ignore
-            description=f"{'Fitting models':<26s}", prog_bar=self.prog_bar,
-            verbose=self.verbose, silent=self.silent, subtask=True,
-            external_pbar=self.use_global_pbar)  # global bar managed upstream
+            description=f"{'Fitting models':<26s}",
+            prog_bar=self.prog_bar and not self.use_global_pbar,
+            verbose=self.verbose, silent=self.silent, subtask=True)
         if pipeline is not None:
             if isinstance(pipeline, list):
                 self.fit_pipeline.from_list(pipeline)
@@ -387,11 +387,10 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.predict_pipeline = Pipeline(
             self,  # type: ignore
             description=f"{'Predicting causal graph':<26s}",
-            prog_bar=self.prog_bar,
+            prog_bar=self.prog_bar and not self.use_global_pbar,
             verbose=self.verbose,
             silent=self.silent,
-            subtask=True,
-            external_pbar=self.use_global_pbar)  # global bar managed upstream
+            subtask=True)
 
         # Overwrite values for prog_bar and verbosity with current pipeline
         # values, in case predict is called from a loaded experiment
@@ -648,7 +647,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             # Sample from the cached rows so sample indices map to SHAP values.
             cache_pool = self._bootstrap_shap_cache.X_test
 
-        if self.prog_bar and not self.verbose:
+        if self.prog_bar and not self.verbose and not self.use_global_pbar:
             pbar = ProgBar().start_subtask("Bootstrap", num_iterations)
         else:
             pbar = None
@@ -1485,11 +1484,10 @@ class Rex(BaseEstimator, ClassifierMixin):
         pipeline = Pipeline(
             self,                                           # type: ignore
             description="Custom pipeline",
-            prog_bar=self.prog_bar,
+            prog_bar=self.prog_bar and not self.use_global_pbar,
             verbose=self.verbose,
             silent=self.silent,
-            subtask=True,
-            external_pbar=self.use_global_pbar)
+            subtask=True)
         pipeline.from_list(steps)
         pipeline.run()
         pipeline.close()
