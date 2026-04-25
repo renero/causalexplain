@@ -178,7 +178,7 @@ class SigmoidMix_Mechanism(object):
             pre_add_effect = 0
             for c in range(causes.shape[1]):
                 pre_add_effect += causes[i, c]
-            pre_add_effect += self.noise[i]
+            pre_add_effect += self.noise[i, 0]
 
             result[i, 0] = self.a * self.b * \
                 (pre_add_effect + self.c)/(1 + abs(self.b*(pre_add_effect + self.c)))

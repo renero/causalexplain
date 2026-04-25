@@ -35,7 +35,6 @@ class ProgressManager:
                 name=self.name,
                 num_steps=total_units,
                 verbose=False,
-                propagate=False,
             )
             self.pbar.propagate = False
 

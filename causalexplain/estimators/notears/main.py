@@ -35,7 +35,7 @@ def notears_standard(
     d = np.shape(data)[1]
 
     data = np.array(data).astype(dtype=np.float64)
-    cov = np.cov(data.T)
+    cov = np.cov(data.T, ddof=min(1, n - 1))
 
     if rnd_W_init:
         W = np.random.randn(d, d)

@@ -171,8 +171,9 @@ def _plot_clusters(X: pd.DataFrame, K: DBSCAN, target: str, counts: Dict, min_co
     colors = [mpl.cm.tab20(i) for i in range(20)]
     fig, ax = plt.subplots(1, 3, figsize=(8, 2), sharey=True)
     minX, maxX = X.min().min(), X.max().max()
-    minX -= (maxX - minX) * 0.1
-    maxX += (maxX - minX) * 0.1
+    span = maxX - minX if maxX != minX else 1.0
+    minX -= span * 0.1
+    maxX += span * 0.1
     for i in range(X.shape[0]):
         ax[0].scatter(X.iloc[i, 0], X.iloc[i, 1],
                       color=colors[K.labels_[i]], alpha=0.5)

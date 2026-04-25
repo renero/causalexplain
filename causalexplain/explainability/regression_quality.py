@@ -60,6 +60,8 @@ class RegQuality(BaseEstimator):
         median = np.median(scores)
         ad = [np.abs(score-median) for score in scores]
         mad = np.median(ad)
+        if mad == 0:
+            return {idx for idx, score in enumerate(scores) if score != median}
         M = [np.abs(.6745 * (score-median) / mad) for score in scores]
         mad_indices = [idx for idx, m in enumerate(M) if m > 3.5]
 
