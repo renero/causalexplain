@@ -1442,6 +1442,14 @@ class ShapEstimator(BaseEstimator):
         self.prior: list[list[str]] | None = None
         self.is_fitted_ = False
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for key in ('X_train', 'X_test', 'shap_explainer',
+                    'corr_matrix', 'all_mean_shap_values'):
+            if key in state:
+                state[key] = None
+        return state
+
     def _select_background(
             self,
             X_train: np.ndarray,

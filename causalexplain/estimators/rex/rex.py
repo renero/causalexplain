@@ -244,6 +244,14 @@ class Rex(BaseEstimator, ClassifierMixin):
         self._fit_desc = "Running Causal Discovery pipeline"
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for key in ('X', 'y', '_bootstrap_shap_cache',
+                    'fit_pipeline', 'predict_pipeline'):
+            if key in state:
+                state[key] = None
+        return state
+
     def fit(self, X, y=None, pipeline: Optional[Union[list, str]] = None):
         """Fit the model according to the given training data.
 
