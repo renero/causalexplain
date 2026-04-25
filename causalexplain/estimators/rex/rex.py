@@ -20,11 +20,15 @@ from functools import partial
 from multiprocessing import get_context
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import logging
+
 import networkx as nx
 import numpy as np
 import pandas as pd
 from mlforge.mlforge import Pipeline # type: ignore
 from mlforge.progbar import ProgBar # type: ignore
+
+log = logging.getLogger(__name__)
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_random_state
@@ -558,8 +562,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         shaps_instance.fit(data_sample)
         dag = shaps_instance.predict(data_sample, prior=prior)
         adjacency_matrix = utils.graph_to_adjacency(dag, feature_names)
-        if verbose:
-            print("· Iteration", iter + 1, "done.")
+        log.debug("· Iteration %d done.", iter + 1)
         return adjacency_matrix.astype(np.float32, copy=False)
 
     def _build_bootstrapped_adjacency_matrix(
@@ -602,10 +605,8 @@ class Rex(BaseEstimator, ClassifierMixin):
             raise ValueError("This Rex instance is not fitted yet. \
                 Call 'fit' with appropriate arguments before using this estimator.")
 
-        if self.verbose:
-            print(
-                f"  > Building iterative adjacency matrix with {num_iterations} "
-                f"iterations, {sampling_split:.2f} split.")
+        log.debug("Building iterative adjacency matrix with %d iterations, %.2f split.",
+                  num_iterations, sampling_split)
 
         iter_adjacency_matrix = np.zeros(
             (self.n_features_in_, self.n_features_in_),
@@ -650,7 +651,7 @@ class Rex(BaseEstimator, ClassifierMixin):
                 self._bootstrap_shap_cache = None
                 use_cache = False
                 if self.verbose:
-                    print(f"  > Disabling bootstrap SHAP cache: {exc}")
+                    log.debug("Disabling bootstrap SHAP cache: %s", exc)
         if use_cache and self._bootstrap_shap_cache is not None:
             # Sample from the cached rows so sample indices map to SHAP values.
             cache_pool = self._bootstrap_shap_cache.X_test
@@ -769,8 +770,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         nx.DiGraph : The best DAG found by the iterative predict method.
         """
         if ref_graph is None and tolerance == 'auto':
-            print(f"Setting tolerance to {DEFAULT_BOOTSTRAP_TOLERANCE}, as no "
-                  f"true_graph was provided.")
+            log.warning("Setting tolerance to %s, as no true_graph was provided.",
+                        DEFAULT_BOOTSTRAP_TOLERANCE)
             tolerance = DEFAULT_BOOTSTRAP_TOLERANCE
         if direction != 'maximize' and direction != 'minimize':
             raise ValueError("direction must be 'maximize' or 'minimize'")
@@ -778,9 +779,8 @@ class Rex(BaseEstimator, ClassifierMixin):
         if sampling_split == 'auto':
             sampling_split = self._set_sampling_split()
 
-        if self.verbose:
-            print(f"> Bootstrapped prediction with {num_iterations} iterations, and "
-                  f"{sampling_split:.2f} sampling split.")
+        log.debug("Bootstrapped prediction: %d iterations, %.2f sampling split.",
+                  num_iterations, sampling_split)
 
         self.bootstrapped_adjacency_matrix = self._build_bootstrapped_adjacency_matrix(
             X, num_iterations, sampling_split, prior, parallel_jobs,
@@ -835,8 +835,7 @@ class Rex(BaseEstimator, ClassifierMixin):
         -------
         float : The best tolerance value.
         """
-        if self.verbose:
-            print("Finding best tolerance value for iterative prediction...")
+        log.debug("Finding best tolerance value for iterative prediction...")
 
             # This lambda expression is used to compare values, depending on the direction
         _is_better_value = {
@@ -858,13 +857,11 @@ class Rex(BaseEstimator, ClassifierMixin):
             if _is_better_value(value_obtained, reference_key_metric):
                 reference_key_metric = value_obtained
                 best_tolerance = tol_value
-                if self.verbose:
-                    print(f"· · Better tolerance found: {best_tolerance:.2f}, "
-                          f"{key_metric}: {reference_key_metric:.4f}")
+                log.debug("· · Better tolerance found: %.2f, %s: %.4f",
+                          best_tolerance, key_metric, reference_key_metric)
 
-        if self.verbose:
-            print(f"Best tolerance: {best_tolerance:.2f}, "
-                  f"{key_metric}: {reference_key_metric:.4f}")
+        log.debug("Best tolerance: %.2f, %s: %.4f",
+                  best_tolerance, key_metric, reference_key_metric)
 
         return best_tolerance
 
@@ -1238,8 +1235,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             input_path, ref_graph_file))
 
         if ref_graph is None:
-            print(
-                f"WARNING: The reference graph '{ref_graph_file}' was not found.")
+            log.warning("The reference graph '%s' was not found.", ref_graph_file)
             return None
 
         root_nodes = [node for node,
@@ -1342,16 +1338,12 @@ class Rex(BaseEstimator, ClassifierMixin):
     def _check_model_and_explainer(self, model_type, explainer):
         """ Check that the explainer is supported for the model type. """
         if (model_type == "nn" and explainer != "gradient"):
-            if self.verbose:
-                print(
-                    f"WARNING: SHAP '{explainer}' not supported for model "
-                    f"'{model_type}'. Using 'gradient' instead.")
+            log.warning("SHAP '%s' not supported for model '%s'. Using 'gradient' instead.",
+                        explainer, model_type)
             self.explainer = "gradient"
         if (model_type == "gbt" and explainer != "tree"):
-            if self.verbose:
-                print(
-                    f"WARNING: SHAP '{explainer}' not supported for model "
-                    f"'{model_type}'. Using 'tree' instead.")
+            log.warning("SHAP '%s' not supported for model '%s'. Using 'tree' instead.",
+                        explainer, model_type)
             self.explainer = "tree"
 
     def _more_tags(self):
@@ -1543,7 +1535,7 @@ def main(dataset_name,
 
     if save:
         where_to = utils.save_experiment(rex.name, output_path, rex)
-        print(f"Saved '{rex.name}' to '{where_to}'")
+        log.info("Saved '%s' to '%s'", rex.name, where_to)
 
 
 if __name__ == "__main__":
