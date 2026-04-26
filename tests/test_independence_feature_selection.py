@@ -69,27 +69,33 @@ def test_select_features_stops_after_max_iterations(monkeypatch):
     assert select_features(values, ["a", "b"], exhaustive=True, threshold=0.05) == []
 
 
-def test_select_features_emits_useful_verbose_output(capsys):
+def test_select_features_emits_useful_verbose_output(caplog):
+    import logging
     values = np.array([0.1, 0.3, 1.0])
-    select_features(values, ["a", "b", "c"], threshold=0.05, verbose=True)
+    with caplog.at_level(logging.DEBUG, logger="causalexplain.independence.feature_selection"):
+        select_features(values, ["a", "b", "c"], threshold=0.05, verbose=True)
 
-    output = capsys.readouterr().out
-    assert "Feature order" in output
-    assert "Selected_features" in output
+    messages = " ".join(r.message for r in caplog.records)
+    assert "Feature_order" in messages
+    assert "Selected_features" in messages
 
 
-def test_select_features_verbose_matrix_output_lists_sums(capsys):
+def test_select_features_verbose_matrix_output_lists_sums(caplog):
+    import logging
     values = np.array([[0.0, 0.2], [0.1, 0.3]])
-    select_features(values, ["a", "b"], verbose=True)
-    output = capsys.readouterr().out
-    assert "Sum values" in output
-    assert "(a:" in output
+    with caplog.at_level(logging.DEBUG, logger="causalexplain.independence.feature_selection"):
+        select_features(values, ["a", "b"], verbose=True)
+    messages = " ".join(r.message for r in caplog.records)
+    assert "Sum values" in messages
+    assert "(a:" in messages
 
 
-def test_find_cluster_change_point_handles_identical_values_and_logs(capsys):
-    assert find_cluster_change_point([0, 0, 0], verbose=True) is None
-    captured = capsys.readouterr()
-    assert "** No clusters generated" in captured.out
+def test_find_cluster_change_point_handles_identical_values_and_logs(caplog):
+    import logging
+    with caplog.at_level(logging.DEBUG, logger="causalexplain.independence.feature_selection"):
+        assert find_cluster_change_point([0, 0, 0], verbose=True) is None
+    messages = " ".join(r.message for r in caplog.records)
+    assert "No clusters generated" in messages
 
 
 def test_find_cluster_change_point_returns_none_for_short_series():
@@ -102,18 +108,22 @@ def test_find_cluster_change_point_detects_gap_between_clusters():
     assert find_cluster_change_point(values) == 2
 
 
-def test_find_cluster_change_point_reports_cluster_estimates_verbose(capsys):
+def test_find_cluster_change_point_reports_cluster_estimates_verbose(caplog):
+    import logging
     values = [0.1, 0.2, 0.8, 0.9]
-    assert find_cluster_change_point(values, verbose=True) == 2
-    output = capsys.readouterr().out
-    assert "Est.clusters/noise" in output
+    with caplog.at_level(logging.DEBUG, logger="causalexplain.independence.feature_selection"):
+        assert find_cluster_change_point(values, verbose=True) == 2
+    messages = " ".join(r.message for r in caplog.records)
+    assert "clusters" in messages.lower()
 
 
-def test_module_main_runs_and_logs(capsys):
-    feature_selection.main()
-    output = capsys.readouterr().out
-    assert "Feature order" in output
-    assert "threshold" in output
+def test_module_main_runs_and_logs(caplog):
+    import logging
+    with caplog.at_level(logging.DEBUG, logger="causalexplain.independence.feature_selection"):
+        feature_selection.main()
+    messages = " ".join(r.message for r in caplog.records)
+    assert "Feature_order" in messages
+    assert "threshold" in messages
 
 
 def test_embedded_test_function_is_intentionally_failing():

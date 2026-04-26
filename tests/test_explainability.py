@@ -126,15 +126,16 @@ def test_connect_isolated_nodes_skips_large_clusters():
     assert isinstance(result, nx.DiGraph)
 
 
-def test_regression_quality_predict_and_verbose(capsys):
+def test_regression_quality_predict_and_verbose(caplog):
+    import logging
     assert isinstance(rqmod.RegQuality(), rqmod.RegQuality)
     scores = [0.1, 0.2, 5.0, 6.0]
     outliers = rqmod.RegQuality.predict(scores, gamma_shape=1, gamma_scale=1, threshold=0.9)
     assert outliers == set()
 
-    _ = rqmod.RegQuality._mad_criteria(scores, verbose=True)
-    verbose_out = capsys.readouterr().out
-    assert "Median" in verbose_out
+    with caplog.at_level(logging.DEBUG, logger="causalexplain.explainability.regression_quality"):
+        _ = rqmod.RegQuality._mad_criteria(scores, verbose=True)
+    assert any("median" in r.message.lower() for r in caplog.records)
 
     gamma_indices = rqmod.RegQuality._gamma_criteria(scores, threshold=0.2, verbose=True)
     assert gamma_indices == {2, 3}

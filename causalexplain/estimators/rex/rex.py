@@ -1429,33 +1429,28 @@ class Rex(BaseEstimator, ClassifierMixin):
         """
         assert self.shaps is not None, "ShapEstimator is None"
 
-        if verbose:
-            print("-----\ndag_from_discrepancies()")
+        log.debug("dag_from_discrepancies()")
 
         # Find out what pairs of features have low discrepancy, and add them as edges.
         # A low discrepancy means that 1.0 - GoodnesOfFit is lower than the threshold.
         low_discrepancy_edges = defaultdict(list)
-        if verbose:
-            print('    ' + ' '.join([f"{f:^5s}" for f in self.feature_names]))
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug('    ' + ' '.join([f"{f:^5s}" for f in self.feature_names]))
         for child in self.feature_names:
-            if verbose:
-                print(f"{child}: ", end="")
+            row_parts = []
             for parent in self.feature_names:
                 if child == parent:
-                    if verbose:
-                        print("  X  ", end=" ")
+                    row_parts.append("  X  ")
                     continue
                 discrepancy = 1. - \
                     self.shaps.shap_discrepancies[child][parent].shap_gof
-                if verbose:
-                    print(f"{discrepancy:+.2f}", end=" ")
+                row_parts.append(f"{discrepancy:+.2f}")
                 if discrepancy < discrepancy_upper_threshold:
                     if low_discrepancy_edges[child]:
                         low_discrepancy_edges[child].append(parent)
                     else:
                         low_discrepancy_edges[child] = [parent]
-            if verbose:
-                print()
+            log.debug("%s: %s", child, " ".join(row_parts))
 
         # Build a DAG from the connected features.
         self.G_rho = utils.digraph_from_connected_features(

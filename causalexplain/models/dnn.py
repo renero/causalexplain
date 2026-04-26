@@ -15,6 +15,7 @@ source of random noise.
 # pylint: disable=W0102:dangerous-default-value
 
 import inspect
+import logging
 import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
@@ -39,6 +40,8 @@ from ._optuna_storage import (
 )
 
 warnings.filterwarnings("ignore")
+
+log = logging.getLogger(__name__)
 
 
 class NNRegressor(BaseEstimator):
@@ -716,10 +719,8 @@ class NNRegressor(BaseEstimator):
                 raise
             if fallback_storage == resolved_storage:
                 raise
-            if self.verbose and not self.silent:
-                print(
-                    "Optuna storage is read-only; retrying with "
-                    f"storage={fallback_storage}")
+            log.warning("Optuna storage is read-only; retrying with storage=%s",
+                        fallback_storage)
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
                 storage=fallback_storage, load_if_exists=load_if_exists,
@@ -743,11 +744,10 @@ class NNRegressor(BaseEstimator):
         self.best_params = best_trials[0].params
         self.min_tunned_loss = best_trials[0].values[0]
 
-        if self.verbose and not self.silent:
-            print(
-                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("Best params (min loss:%.6f):", self.min_tunned_loss)
             for k, v in self.best_params.items():
-                print(f"            > {k:<15s}: {v}")
+                log.debug("  > %-15s: %s", k, v)
 
         regressor_args = {
             'hidden_dim': [self.best_params[f'n_units_l{i}']
@@ -786,11 +786,10 @@ class NNRegressor(BaseEstimator):
             hpo_optimization=hpo_optimization,
             hpo_optimization_limit=hpo_optimization_limit)
 
-        if self.verbose and not self.silent:
-            print(
-                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("Best params (min loss:%.6f):", self.min_tunned_loss)
             for k, v in regressor_args.items():
-                print(f"            > {k:<15s}: {v}")
+                log.debug("  > %-15s: %s", k, v)
 
         # Set the object parameters to the best parameters found.
         for k, v in regressor_args.items():

@@ -632,8 +632,6 @@ def connect_hierarchies(G, linkage_mat, feature_names, verbose=False):
             if pair is not None:
                 target = pair[0]
             else:
-                if verbose:
-                    print()
                 continue
         else:
             continue

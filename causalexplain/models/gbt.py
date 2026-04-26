@@ -53,6 +53,7 @@ Example:
 
 
 import inspect
+import logging
 import os
 
 import numpy as np
@@ -71,6 +72,8 @@ from ._optuna_storage import (
     _fallback_optuna_storage,
     _is_readonly_storage_error,
 )
+
+log = logging.getLogger(__name__)
 
 
 class GBTRegressor(GradientBoostingRegressor):
@@ -699,10 +702,8 @@ class GBTRegressor(GradientBoostingRegressor):
                 raise
             if fallback_storage == resolved_storage:
                 raise
-            if self.verbose and not self.silent:
-                print(
-                    "Optuna storage is read-only; retrying with "
-                    f"storage={fallback_storage}")
+            log.warning("Optuna storage is read-only; retrying with storage=%s",
+                        fallback_storage)
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
                 storage=fallback_storage, load_if_exists=load_if_exists,
@@ -727,11 +728,10 @@ class GBTRegressor(GradientBoostingRegressor):
         self.best_params = best_trials[0].params
         self.min_tunned_loss = best_trials[0].values[0]
 
-        if self.verbose and not self.silent:
-            print(
-                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("Best params (min loss:%.6f):", self.min_tunned_loss)
             for k, v in self.best_params.items():
-                print(f"            > {k:<15s}: {v}")
+                log.debug("  > %-15s: %s", k, v)
 
         regressor_args = {
             'learning_rate': self.best_params['learning_rate'],
@@ -773,11 +773,10 @@ class GBTRegressor(GradientBoostingRegressor):
             hpo_optimization=hpo_optimization,
             hpo_optimization_limit=hpo_optimization_limit)
 
-        if self.verbose and not self.silent:
-            print(
-                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("Best params (min loss:%.6f):", self.min_tunned_loss)
             for k, v in regressor_args.items():
-                print(f"            > {k:<15s}: {v}")
+                log.debug("  > %-15s: %s", k, v)
 
         # Set the object parameters to the best parameters found.
         for k, v in regressor_args.items():

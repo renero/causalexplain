@@ -2,6 +2,7 @@
 # This file contains the methods used to estimate the effect of a treatment in
 # an outcome, given a graph.
 #
+import logging
 from typing import Tuple
 
 import networkx as nx
@@ -12,6 +13,8 @@ from dowhy.causal_refuter import CausalRefuter
 from sklearn.preprocessing import StandardScaler
 
 from causalexplain.common import utils
+
+log = logging.getLogger(__name__)
 
 
 def estimate(
@@ -51,7 +54,7 @@ def estimate(
         ate, refute_pval = estimate_edge(graph, t, o, data, verbose)
         graph.add_edge(t, o, ate=ate, refute_pval=refute_pval)
 
-    print(graph.edges(data=True)) if verbose else None
+    log.debug("%s", graph.edges(data=True))
 
     return graph
 
@@ -94,7 +97,7 @@ def estimate_edge(
     # Identificar el efecto causal
     identified_estimand = model.identify_effect(
         proceed_when_unidentifiable=True)
-    print(identified_estimand) if verbose else None
+    log.debug("%s", identified_estimand)
 
     # Estimar el efecto causal
     estimate = model.estimate_effect(
@@ -102,7 +105,7 @@ def estimate_edge(
         target_units="ate",
         method_name="backdoor.linear_regression"
     )
-    print(estimate) if verbose else None
+    log.debug("%s", estimate)
 
     # Pruebas de refutación
     refute = model.refute_estimate(
@@ -110,7 +113,7 @@ def estimate_edge(
         estimate,
         method_name="random_common_cause"
     )
-    print(refute) if verbose else None
+    log.debug("%s", refute)
     return (estimate.value, refute.refutation_result['p_value'])
 
 
@@ -138,7 +141,7 @@ def main(exp_name,
     # Split the dataframe into train and test
 
     rex = utils.load_experiment(f"{exp_name}_nn", output_path)
-    print(f"Loaded experiment {exp_name}")
+    log.info("Loaded experiment %s", exp_name)
 
     n_dag = estimate(rex.G_shap, data, verbose=True)
 
