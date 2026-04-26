@@ -55,6 +55,7 @@ Example:
 import inspect
 import logging
 import os
+from typing import Any, Protocol
 
 import numpy as np
 import optuna  # type: ignore
@@ -76,7 +77,33 @@ from ._optuna_storage import (
 log = logging.getLogger(__name__)
 
 
-class GBTRegressor(GradientBoostingRegressor):
+class GBTBackend(Protocol):
+    """Minimal interface a GBT backend must satisfy."""
+
+    def make_regressor(self, **hparams: Any) -> Any: ...
+    def make_classifier(self, **hparams: Any) -> Any: ...
+    def is_classifier(self, model: Any) -> bool: ...
+
+
+class SklearnGBTBackend:
+    """Sklearn GradientBoosting backend (default).
+
+    Methods reference GradientBoostingRegressor/GradientBoostingClassifier via
+    module-level names so that monkeypatching gbt.GradientBoostingRegressor in
+    tests continues to work as expected.
+    """
+
+    def make_regressor(self, **hparams: Any) -> Any:
+        return GradientBoostingRegressor(**hparams)
+
+    def make_classifier(self, **hparams: Any) -> Any:
+        return GradientBoostingClassifier(**hparams)
+
+    def is_classifier(self, model: Any) -> bool:
+        return model.__class__.__name__ == "GradientBoostingClassifier"
+
+
+class GBTRegressor:
 
     random_state = 42
 
@@ -111,7 +138,8 @@ class GBTRegressor(GradientBoostingRegressor):
             precompute_target_matrices: bool = False,
             hpo_optimization: bool = False,
             hpo_optimization_limit: int | None = None,
-            progress: ProgressManager | None = None):
+            progress: ProgressManager | None = None,
+            backend: "GBTBackend | None" = None):
         """
         Initialize the gradient boosting regressor wrapper.
 
@@ -183,6 +211,7 @@ class GBTRegressor(GradientBoostingRegressor):
         self.hpo_optimization = hpo_optimization
         self.hpo_optimization_limit = hpo_optimization_limit
         self.progress = progress
+        self.backend = backend if backend is not None else SklearnGBTBackend()
         self.regressor = None
         self._estimator_name = 'gbt'
         self._estimator_class = GradientBoostingRegressor
@@ -265,14 +294,14 @@ class GBTRegressor(GradientBoostingRegressor):
 
         self._setup_feature_columns(X_original)
 
-        model_class_by_target = {}
+        use_classifier_by_target = {}
         loss_by_target = {}
         for target_name in self.feature_names:
             if self.feature_types[target_name] in {'categorical', 'binary'}:
-                model_class_by_target[target_name] = GradientBoostingClassifier
+                use_classifier_by_target[target_name] = True
                 loss_by_target[target_name] = 'log_loss'
             else:
-                model_class_by_target[target_name] = GradientBoostingRegressor
+                use_classifier_by_target[target_name] = False
                 loss_by_target[target_name] = 'squared_error'
 
         # Who is calling me?
@@ -307,8 +336,8 @@ class GBTRegressor(GradientBoostingRegressor):
                 for target in self.feature_names
             }
 
-        def _fit_target(target_name: str, loss_value: str, gbt_model):
-            model = gbt_model(
+        def _fit_target(target_name: str, loss_value: str, use_cls: bool):
+            hparams = dict(
                 loss=loss_value,
                 learning_rate=self.learning_rate,
                 n_estimators=self.n_estimators,
@@ -329,8 +358,10 @@ class GBTRegressor(GradientBoostingRegressor):
                 validation_fraction=self.validation_fraction,
                 n_iter_no_change=self.n_iter_no_change,
                 tol=self.tol,
-                ccp_alpha=self.ccp_alpha
+                ccp_alpha=self.ccp_alpha,
             )
+            model = (self.backend.make_classifier(**hparams)
+                     if use_cls else self.backend.make_regressor(**hparams))
             if X_by_target is not None:
                 X_target = X_by_target[target_name]
             else:
@@ -350,7 +381,7 @@ class GBTRegressor(GradientBoostingRegressor):
                         _fit_target,
                         name,
                         loss_by_target[name],
-                        model_class_by_target[name],
+                        use_classifier_by_target[name],
                     )
                     for name in self.feature_names
                 ]
@@ -371,7 +402,7 @@ class GBTRegressor(GradientBoostingRegressor):
                 target_name, model = _fit_target(
                     target_name,
                     loss_by_target[target_name],
-                    model_class_by_target[target_name],
+                    use_classifier_by_target[target_name],
                 )
                 self.regressor[target_name] = model
                 pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
@@ -512,7 +543,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     prog_bar=True,
                     verbose=False,
                     precompute_target_matrices: bool = False,
-                    enable_pruning: bool = False):
+                    enable_pruning: bool = False,
+                    backend=None):
                 """
                 Initialize the Optuna objective.
 
@@ -537,6 +569,7 @@ class GBTRegressor(GradientBoostingRegressor):
                 self.verbose = verbose
                 self.precompute_target_matrices = precompute_target_matrices
                 self.enable_pruning = enable_pruning
+                self.backend = backend if backend is not None else SklearnGBTBackend()
                 self._feature_cols_by_target = {
                     target: [
                         col for col in train_data.columns if col != target
@@ -599,7 +632,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     tol=self.tol,
                     prog_bar=True & (not self.verbose) & (self.prog_bar),
                     silent=True,
-                    precompute_target_matrices=self.precompute_target_matrices)
+                    precompute_target_matrices=self.precompute_target_matrices,
+                    backend=self.backend)
 
                 self.models.fit(self.train_data)
 
@@ -611,33 +645,20 @@ class GBTRegressor(GradientBoostingRegressor):
                 ):
                     model = self.models.regressor[target_name]
                     # For regressors, this is R2, for classifiers this is accuracy
-                    if model.__class__.__name__ == "GradientBoostingClassifier":
-                        # Get the F1 score of the model
-                        X_features = (
-                            self._X_test_by_target[target_name]
-                            if self._X_test_by_target is not None
-                            else X_test.loc[
-                                :, self._feature_cols_by_target[target_name]
-                            ]
-                        )
+                    X_features = (
+                        self._X_test_by_target[target_name]
+                        if self._X_test_by_target is not None
+                        else X_test.loc[
+                            :, self._feature_cols_by_target[target_name]
+                        ]
+                    )
+                    if self.backend.is_classifier(model):
                         goodness_of_fit = f1_score(
                             X_test[target_name],
                             model.predict(X_features))
-                    elif model.__class__.__name__ == "GradientBoostingRegressor":
-                        X_features = (
-                            self._X_test_by_target[target_name]
-                            if self._X_test_by_target is not None
-                            else X_test.loc[
-                                :, self._feature_cols_by_target[target_name]
-                            ]
-                        )
+                    else:
                         goodness_of_fit = model.score(
                             X_features, X_test[target_name])
-                    else:
-                        raise ValueError(
-                            f"Model {model.__class__.__name__} is not supported."
-                            f"Only GradientBoostingClassifier and"
-                            f"GradientBoostingRegressor are supported.")
 
                     # Append 1.0 if R2 is negative, or 1.0 - R2 otherwise since we're
                     # in the minimization mode of the error function.
@@ -691,7 +712,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     hpo_train, hpo_test, prog_bar=self.prog_bar,
                     verbose=self.verbose,
                     precompute_target_matrices=self.precompute_target_matrices,
-                    enable_pruning=use_optimization),
+                    enable_pruning=use_optimization,
+                    backend=self.backend),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (
@@ -713,7 +735,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     hpo_train, hpo_test, prog_bar=self.prog_bar,
                     verbose=self.verbose,
                     precompute_target_matrices=self.precompute_target_matrices,
-                    enable_pruning=use_optimization),
+                    enable_pruning=use_optimization,
+                    backend=self.backend),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (

@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(python -c \"import causalexplain.models.gbt as g; print\\(g.GBTRegressor.__bases__\\); b = g.SklearnGBTBackend\\(\\); print\\(b\\); m = g.GBTRegressor\\(n_estimators=2, prog_bar=False\\); print\\(m.backend\\)\")"
     ]
   }
 }
