@@ -2,7 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(python3 -c ' *)",
-      "Bash(python -c \"import causalexplain.models.gbt as g; print\\(g.GBTRegressor.__bases__\\); b = g.SklearnGBTBackend\\(\\); print\\(b\\); m = g.GBTRegressor\\(n_estimators=2, prog_bar=False\\); print\\(m.backend\\)\")"
+      "Bash(python -c \"import causalexplain.models.gbt as g; print\\(g.GBTRegressor.__bases__\\); b = g.SklearnGBTBackend\\(\\); print\\(b\\); m = g.GBTRegressor\\(n_estimators=2, prog_bar=False\\); print\\(m.backend\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline.from_list\\); print\\(src[:3000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._get_step_components\\); print\\(src[:4000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._run_stage\\); print\\(src[:4000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._run_step\\); print\\(src[:5000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._parse_step\\); print\\(src\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline.run\\); print\\(src[:5000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._build_params\\); print\\(src\\)\")",
+      "Bash(python -c \"import xgboost; print\\(xgboost.__version__\\)\")",
+      "Bash(pip install *)"
     ]
   }
 }

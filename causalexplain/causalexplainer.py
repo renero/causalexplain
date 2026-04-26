@@ -83,7 +83,8 @@ class GraphDiscovery:
         device: Optional[str] = None,
         parallel_jobs: int = 0,
         bootstrap_parallel_jobs: int = 0,
-        max_shap_samples: Optional[int] = None
+        max_shap_samples: Optional[int] = None,
+        gbt_backend: str = 'sklearn',
     ) -> None:
         """
         Initialize a graph discovery workflow and optionally load dataset metadata.
@@ -127,6 +128,7 @@ class GraphDiscovery:
             self._init_empty_state(
                 seed, resolved_device, parallel_jobs, bootstrap_parallel_jobs,
                 resolved_max_shap)
+            self.gbt_backend = gbt_backend
             return
 
         self._validate_experiment_inputs(normalized_experiment, normalized_csv)
@@ -142,6 +144,7 @@ class GraphDiscovery:
         self.parallel_jobs = parallel_jobs
         self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
         self.max_shap_samples = resolved_max_shap
+        self.gbt_backend = gbt_backend
         self.train_size = 0.9
         self.random_state = seed
 
@@ -530,7 +533,8 @@ class GraphDiscovery:
                 'prior': prior,
                 'device': self.device,
                 'parallel_jobs': self.parallel_jobs,
-                'bootstrap_parallel_jobs': self.bootstrap_parallel_jobs
+                'bootstrap_parallel_jobs': self.bootstrap_parallel_jobs,
+                'gbt_backend': self.gbt_backend,
             }
             if self.max_shap_samples is not None:
                 # Use a single SHAP budget to control background/explain rows.

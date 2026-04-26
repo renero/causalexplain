@@ -40,7 +40,7 @@ from ...common.progress import ProgressManager
 from ...explainability.regression_quality import RegQuality
 from ...explainability.shapley import ShapEstimator
 from ...metrics.compare_graphs import Metrics, evaluate_graph
-from ...models import GBTRegressor, NNRegressor
+from ...models import GBTRegressor, NNRegressor, SklearnGBTBackend, XGBoostGBTBackend
 from .knowledge import Knowledge
 
 np.set_printoptions(precision=4, linewidth=120)
@@ -130,6 +130,7 @@ class Rex(BaseEstimator, ClassifierMixin):
             dpi: int = 75,
             pdf_filename: Optional[str] = None,
             random_state=1234,
+            gbt_backend: str = 'sklearn',
             **kwargs):
         """
         Arguments:
@@ -198,6 +199,9 @@ class Rex(BaseEstimator, ClassifierMixin):
         self.model_type = NNRegressor if model_type == "nn" else GBTRegressor
         self.explainer = explainer
         self._check_model_and_explainer(model_type, explainer)
+        self.backend = (
+            XGBoostGBTBackend() if gbt_backend == 'xgboost' else SklearnGBTBackend()
+        )
 
         # Get a copy of kwargs
         self.kwargs = deepcopy(kwargs)

@@ -99,6 +99,13 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         help='Enable the GBT optimization that caches per-target feature '
              'matrices. Use --no-gbt-optimization to disable (default).')
     parser.add_argument(
+        '--gbt-backend',
+        dest='gbt_backend',
+        type=str,
+        choices=['sklearn', 'xgboost'],
+        default='sklearn',
+        help='GBT model backend: "sklearn" (default) or "xgboost".')
+    parser.add_argument(
         '-c', '--combine', type=str, required=False,
         choices=['union', 'intersection'],
         help='Combine ReX DAGs using the specified operation: union or intersection.')
@@ -541,6 +548,7 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['parallel_jobs'] = getattr(args, "parallel_jobs", 0)
     run_values['bootstrap_parallel_jobs'] = getattr(
         args, "bootstrap_parallel_jobs", 0)
+    run_values['gbt_backend'] = getattr(args, "gbt_backend", 'sklearn')
     if getattr(args, "cuda", False):
         requested_device = "cuda"
     elif getattr(args, "mps", False):
@@ -617,7 +625,8 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscoveryType:
         parallel_jobs=run_values['parallel_jobs'],
         bootstrap_parallel_jobs=run_values['bootstrap_parallel_jobs'],
         device=run_values['device'],
-        max_shap_samples=run_values.get('shap_budget')
+        max_shap_samples=run_values.get('shap_budget'),
+        gbt_backend=run_values.get('gbt_backend', 'sklearn'),
     )
     _check_csv_size_warning(discoverer, run_values)
 
