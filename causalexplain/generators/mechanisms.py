@@ -2,12 +2,15 @@
 Defining a set of classes that represent causal functions/ mechanisms.
 """
 
+import logging
 import random
 import numpy as np
 from scipy.stats import bernoulli
 from sklearn.mixture import GaussianMixture as GMM
 from sklearn.metrics.pairwise import euclidean_distances
 from sklearn.gaussian_process import GaussianProcessRegressor
+
+log = logging.getLogger(__name__)
 
 
 def gmm_cause(n, k=4, p1=2, p2=2, verbose=False):
@@ -17,8 +20,7 @@ def gmm_cause(n, k=4, p1=2, p2=2, verbose=False):
     g.weights_ = abs(np.random.rand(k, 1))
     g.weights_ = g.weights_ / sum(g.weights_)
 
-    if(verbose):
-        print(f"  GMM cause initialized with {k} components and {n} points")
+    log.debug("  GMM cause initialized with %d components and %d points", k, n)
     return np.random.uniform(-1, 1, n)
 
 
@@ -70,8 +72,7 @@ class Polynomial_Mechanism(object):
 
         self.ber = bernoulli.rvs(0.5)
         self.noise = 0.1*np.random.randn(points, 1)
-        if self.verbose:
-            print(f"Polynomial Mechanism Initialized w {ncauses} causes + {points} p")
+        log.debug("Polynomial Mechanism Initialized w %d causes + %d p", ncauses, points)
 
 
     def mechanism(self, x, par):
@@ -85,21 +86,16 @@ class Polynomial_Mechanism(object):
             # result[i, 0] = min(result[i, 0], 1)
             # result[i, 0] = max(result[i, 0], -1)
 
-        if self.verbose:
-            print(f"    Coeffs: ", end="", sep="")
-            for j in range(self.d+1):
-                print(f"{list_coeff[j]:.2f}, ", end="", sep="")
-            print("")
-            print(f"    {par}th cause = ", end="", sep="")
-            for j in range(self.d+1):
-                print(f"{list_coeff[j]:.2f}*x^{j} + ", end="", sep="")
-            print(f"noise")
+        if log.isEnabledFor(logging.DEBUG):
+            coeffs = ", ".join(f"{list_coeff[j]:.2f}" for j in range(self.d+1))
+            poly = " + ".join(f"{list_coeff[j]:.2f}*x^{j}" for j in range(self.d+1))
+            log.debug("    Coeffs: %s", coeffs)
+            log.debug("    %dth cause = %s + noise", par, poly)
         return result
 
     def __call__(self, causes, verbose=False):
         """Run the mechanism."""
-        if verbose:
-            print("  Polynomial Mechanism Called")
+        log.debug("  Polynomial Mechanism Called")
         effect = np.zeros((self.points, 1))
         # Compute each cause's contribution
         for par in range(causes.shape[1]):
@@ -112,11 +108,9 @@ class Polynomial_Mechanism(object):
         #         print("    Noise **multiplied** to effect")
         # else:
         effect[:, 0] = effect[:, 0] + self.noise[:, 0]
-        if verbose:
-            print(f"    Noise added: [", end="")
-            for i in range(self.noise.shape[0]):
-                print(f"{self.noise[i, 0]:.2f}, ", end="")
-            print("]")
+        if log.isEnabledFor(logging.DEBUG):
+            noise_vals = ", ".join(f"{self.noise[i, 0]:.2f}" for i in range(self.noise.shape[0]))
+            log.debug("    Noise added: [%s]", noise_vals)
 
         return effect
 

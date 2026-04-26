@@ -189,6 +189,14 @@ class BaseModel(object):
             batch_size=self.batch_size,
         )
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for key in ('dataframe', 'train_loader', 'val_loader',
+                    'logger', 'callbacks', 'trainer'):
+            if key in state:
+                state[key] = None
+        return state
+
     def override_extras(self, **kwargs):
         """
         Override the extra trainer arguments.

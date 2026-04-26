@@ -7,6 +7,8 @@ Minor update: J. Renero (due to pandas changes to as_matrix()), and bug fix in
 polynomial mechanism.
 """
 
+import logging
+
 import numpy as np
 import pandas as pd
 import networkx as nx
@@ -15,6 +17,8 @@ from sklearn.preprocessing import scale
 
 from causalexplain.generators.mechanisms import *
 from causalexplain.common.plot import dag2dot
+
+log = logging.getLogger(__name__)
 
 
 class AcyclicGraphGenerator(object):
@@ -66,8 +70,7 @@ class AcyclicGraphGenerator(object):
         self.g = nx.DiGraph(self.adjacency_matrix)
 
         # Mechanisms
-        if self.verbose:
-            print("Generating mechanisms...")
+        log.debug("Generating mechanisms...")
         self.cfunctions = [
             self.mechanism(int(sum(self.adjacency_matrix[:, i])), self.points,
                            verbose=self.verbose)
@@ -78,24 +81,19 @@ class AcyclicGraphGenerator(object):
     def generate(self, rescale=True) -> (nx.DiGraph, pd.DataFrame):
         """Generate data from an FCM containing cycles."""
         if self.cfunctions is None:
-            if self.verbose:
-                print("CFunctions empty, initializing...")
+            log.debug("CFunctions empty, initializing...")
             self.init_variables()
 
         for i in nx.topological_sort(self.g):
-            if self.verbose:
-                print(f"Generating V{i}")
+            log.debug("Generating V%s", i)
             # Root cause
             if not sum(self.adjacency_matrix[:, i]):
-                if self.verbose:
-                    print(f"  V{i} is a root cause")
+                log.debug("  V%s is a root cause", i)
                 self.data[f'V{i}'] = self.cfunctions[i](
                     self.points, verbose=self.verbose)
             # Generating causes
             else:
-                if self.verbose:
-                    print(
-                        f"  V{i} parents: {self.adjacency_matrix[:, i].nonzero()[0]}")
+                log.debug("  V%s parents: %s", i, self.adjacency_matrix[:, i].nonzero()[0])
                 column = self.adjacency_matrix[:, i].nonzero()[0]
                 self.data[f'V{i}'] = self.cfunctions[i](
                     np.stack(self.data.iloc[:, column].values),

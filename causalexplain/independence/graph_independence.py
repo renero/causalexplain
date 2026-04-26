@@ -6,6 +6,7 @@ an existing graph in order to prune potentially spurious edges.
 """
 
 import itertools
+import logging
 from collections import defaultdict
 
 import networkx as nx
@@ -20,6 +21,9 @@ from mlforge.progbar import ProgBar
 # pylint: disable=C0103:invalid_name, C0116:missing-function-docstring, R0913:too-many-arguments
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements, R1702:too-many-branches
 # pylint: disable=W0106:expression-not-assigned
+
+
+log = logging.getLogger(__name__)
 
 
 class GraphIndependence(object):
@@ -230,8 +234,7 @@ class GraphIndependence(object):
         return indep, stat, pval
 
     def _update_graph(self, x, y, cs):
-        print(
-            f"    ! {x}⫫{y}|({','.join(cs)}) ❌ Independent!") if self.verbose else None
+        log.debug("    ! %s⫫%s|(%s) Independent!", x, y, ','.join(cs))
         self.G_skl.remove_edge(x, y)
         self.sepset[(x, y)] = cs
         self.sepset[(y, x)] = cs
@@ -269,11 +272,8 @@ class GraphIndependence(object):
                 self._update_graph(x_name, y_name, cond_set)
                 return x_name, y_name, cond_set
 
-            # Debug msg when not independent
-            msg = "{}- [{:02d}/{:02d}] {}⫫{}|({}) - Not independent"
-            msg = msg.format("    ", idx + 1, L, x_name,
-                             y_name, ','.join(cond_set))
-            print(msg) if self.verbose else None
+            log.debug("    - [%02d/%02d] %s⫫%s|(%s) - Not independent",
+                      idx + 1, L, x_name, y_name, ','.join(cond_set))
 
         return None
 
@@ -283,11 +283,9 @@ class GraphIndependence(object):
 
         neighbors = list(self.G_skl.neighbors(x))
         neighbors_str = ",".join(list(neighbors))
-        print(
-            f"> Iterating over neighbors: {neighbors_str}") if self.verbose else None
+        log.debug("> Iterating over neighbors: %s", neighbors_str)
         for ny, y in enumerate(neighbors):
-            print(
-                f"+ y = {y}; {ny + 1}/{len(neighbors)}") if self.verbose else None
+            log.debug("+ y = %s; %d/%d", y, ny + 1, len(neighbors))
             # Generate the conditioning sets needed for independence tests
             condSets = self._gen_cond_sets(x, y, condsize)
             if len(condSets) == 0:
@@ -296,7 +294,7 @@ class GraphIndependence(object):
             # Test for independence with each conditioning set
             cs = ",".join([f"({','.join(cs)})" for cs in condSets])
             msg = f"  > Check {x}⫫{y} over {len(condSets)} CS: [{cs}]"
-            print(msg) if self.verbose else None
+            log.debug("%s", msg)
             tup = self._test_cond_independence(x, y, condSets)
             if tup is not None:
                 self._update_actions(tup)
@@ -310,10 +308,9 @@ class GraphIndependence(object):
         `cond_indep_pvals`
         """
         self.cond_indep_pvals = {}
-        if self.verbose and self.data.shape[0] > self.max_rows:
-            print(
-                f"[INFO] Data has more than {self.max_rows} rows. "
-                f"Sampling {self.max_rows} rows for cond. indep. test.")
+        if self.data.shape[0] > self.max_rows:
+            log.debug("Data has more than %d rows. Sampling for cond. indep. test.",
+                      self.max_rows)
 
         for x in self.feature_names:
             for y in self.feature_names:

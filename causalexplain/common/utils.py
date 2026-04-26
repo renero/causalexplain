@@ -13,6 +13,7 @@ Utility functions for causalexplain
 import glob
 import io
 import json
+import logging
 import os
 import pickle
 import types
@@ -31,6 +32,8 @@ from rich.console import Console
 from rich.pretty import Pretty
 
 AnyGraph = Union[nx.Graph, nx.DiGraph]
+
+log = logging.getLogger(__name__)
 
 
 def save_experiment(
@@ -194,7 +197,7 @@ def graph_from_dot_file(dot_file: Union[str, Path]) -> Optional[nx.DiGraph]:
 
         return final_graph
     except Exception as e:
-        print(f"Error processing dot file: {str(e)}")
+        log.error("Error processing dot file: %s", e)
         return None
 
 
@@ -596,8 +599,7 @@ def digraph_from_connected_features(
         module.
 
     """
-    if verbose:
-        print("-----\n> digraph_from_connected_features()")
+    log.debug("digraph_from_connected_features()")
     unoriented_graph = nx.Graph()
     for target in feature_names:
         for peer in connections[target]:
@@ -617,8 +619,7 @@ def digraph_from_connected_features(
     # Determine edge orientation for each edge
     if X.shape[0] > max_anm_samples:
         X = X.sample(max_anm_samples)
-        if verbose:
-            print(f"  > Reduced number of samples to {max_anm_samples}")
+        log.debug("  > Reduced number of samples to %d", max_anm_samples)
     for u, v in unoriented_graph.edges():
         # Set orientation to 0 ~ unknown
         orientation = 0
@@ -628,16 +629,16 @@ def digraph_from_connected_features(
             orientation = correct_edge_from_prior(dag, u, v, prior, verbose)
 
         if orientation == 0:
-            print(f"  > Checking edge {u} -> {v}...") if verbose else None
+            log.debug("  > Checking edge %s -> %s...", u, v)
             # Import locally to avoid requiring heavy deps (hyppo/numba) unless needed
             from ..independence.edge_orientation import get_edge_orientation
             orientation = get_edge_orientation(
                 X, u, v, iters=anm_iterations, method="gpr", verbose=verbose)
             if orientation == +1:
-                print(f"    > Edge {u} -> {v} added from ANM") if verbose else None
+                log.debug("    > Edge %s -> %s added from ANM", u, v)
                 dag.add_edge(u, v)
             elif orientation == -1:
-                print(f"    > Edge {v} -> {u} added from ANM") if verbose else None
+                log.debug("    > Edge %s -> %s added from ANM", v, u)
                 dag.add_edge(v, u)
             else:
                 pass
@@ -648,11 +649,10 @@ def digraph_from_connected_features(
     if root_causes:
         changes = []
         for parent_node in root_causes:
-            print(f"Checking root cause {parent_node}...") if verbose else None
+            log.debug("Checking root cause %s...", parent_node)
             for cause, effect in dag.edges():
                 if effect == parent_node:
-                    print(
-                        f"Reverting edge {cause} -> {effect}") if verbose else None
+                    log.debug("Reverting edge %s -> %s", cause, effect)
                     changes.append((cause, effect))
         for cause, effect in changes:
             dag.remove_edge(cause, effect)
@@ -668,25 +668,22 @@ def correct_edge_from_prior(dag, u, v, prior, verbose):
     if not any([u in p for p in prior]) or not any([v in p for p in prior]):
         return 0
 
-    print(f"  > Checking edge {u} -> {v}...") if verbose else None
+    log.debug("  > Checking edge %s -> %s...", u, v)
     idx_u = [i for i, l in enumerate(prior) if u in l][0]
     idx_v = [i for i, l in enumerate(prior) if v in l][0]
     both_in_top_list = idx_u == 0 and idx_v == 0
     u_is_before_v = idx_u - idx_v < 0
     v_is_before_u = idx_v - idx_u < 0
     if both_in_top_list:
-        print(
-            f"    > Edge {u} -x- {v} removed: both top list") if verbose else None
+        log.debug("    > Edge %s -x- %s removed: both top list", u, v)
         dag.remove_edge(u, v) if dag.has_edge(u, v) else None # Experimental XXX Beware of this line!
         return +1
     elif u_is_before_v:
-        print(
-            f"    > Edge {u} -> {v} added: {u} before {v}") if verbose else None
+        log.debug("    > Edge %s -> %s added: %s before %s", u, v, u, v)
         dag.add_edge(u, v) if not dag.has_edge(v, u) else None
         return +1
     elif v_is_before_u:
-        print(
-            f"    > Edge {v} -> {u} added: {v} before {u}") if verbose else None
+        log.debug("    > Edge %s -> %s added: %s before %s", v, u, v, u)
         dag.remove_edge(u, v) if dag.has_edge(u, v) else None
         return -1
     else:
@@ -761,13 +758,11 @@ def break_cycles_using_prior(
 
     new_dag = original_dag.copy()
 
-    if verbose:
-        print("  > Prior knowledge:", prior)
+    log.debug("  > Prior knowledge: %s", prior)
     cycles = list(nx.simple_cycles(new_dag))
     while len(cycles) > 0:
         cycle = cycles.pop(0)
-        if verbose:
-            print("Checking cycle", cycle)
+        log.debug("Checking cycle %s", cycle)
         for i, node in enumerate(cycle):
             if node == cycle[-1]:
                 neighbour = cycle[0]
@@ -775,17 +770,12 @@ def break_cycles_using_prior(
                 neighbour = cycle[i+1]
             # Check if the edge between the two nodes is in the prior knowledge
             if [node, neighbour] not in prior:
-                if verbose:
-                    print(
-                        f"↳ Checking '{node} -> {neighbour}' in the prior knowledge")
+                log.debug("↳ Checking '%s -> %s' in the prior knowledge", node, neighbour)
                 idx_node = [i for i, l in enumerate(prior) if node in l][0]
                 idx_neighbour = [i for i, l in enumerate(
                     prior) if neighbour in l][0]
                 if idx_neighbour - idx_node < 0:
-                    if verbose:
-                        print(
-                            f"  ↳ Breaking cycle, removing edge {node} -> {neighbour}")
-                        print("** Recomputing cycles **")
+                    log.debug("  ↳ Breaking cycle, removing edge %s -> %s", node, neighbour)
                     new_dag.remove_edge(node, neighbour)
                     cycles = list(nx.simple_cycles(new_dag))
                     break
@@ -831,11 +821,10 @@ def potential_misoriented_edges(
         if orientation == -1:
             potential_misoriented_edges.append(
                 (node, neighbor, fwd_gof - bwd_gof))
-        if verbose:
+        if log.isEnabledFor(logging.DEBUG):
             direction = "-->" if fwd_gof < bwd_gof else "<--"
-            print(
-                f"Edge: {node}{direction}{neighbor} FWD:{fwd_gof:.3f} "
-                f"BWD:{bwd_gof:.3f}")
+            log.debug("Edge: %s%s%s FWD:%.3f BWD:%.3f",
+                      node, direction, neighbor, fwd_gof, bwd_gof)
 
     return sorted(potential_misoriented_edges, key=lambda x: x[2], reverse=True)
 
@@ -846,8 +835,7 @@ def break_cycles_if_present(
         prior: Optional[List[List[str]]] = None,
         verbose: bool = False) -> nx.DiGraph:
     """Break cycles in a DAG using discrepancies and optional priors."""
-    if verbose:
-        print("-----\n> break_cycles_if_present()")
+    log.debug("break_cycles_if_present()")
 
     # If prior is set, then break cycles using the prior knowledge
     if prior:
@@ -861,8 +849,7 @@ def break_cycles_if_present(
     # This might be important, to remove first double edges
     cycles.sort(key=len)
     if len(cycles) == 0:
-        if verbose:
-            print("  > No cycles found")
+        log.debug("  > No cycles found")
         return new_dag
 
     # Traverse all cycles, fixing them
@@ -892,10 +879,10 @@ def break_cycles_if_present(
         potential_misoriented = potential_misoriented_edges(
             cycle, discrepancies, verbose)
         if len(potential_misoriented) > 0:
-            if verbose:
-                print("  > Potential misoriented edges in the cycle:")
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug("  > Potential misoriented edges in the cycle:")
                 for edge in potential_misoriented:
-                    print(f"    > {edge[0]} --> {edge[1]} ({edge[2]:.3f})")
+                    log.debug("    > %s --> %s (%.3f)", edge[0], edge[1], edge[2])
             # Check if changing the orientation of the edge would break
             # the cycle
             test_dag = new_dag.copy()
@@ -907,10 +894,8 @@ def break_cycles_if_present(
             test_dag.add_edge(*potential_misoriented[0][1::-1])
             test_cycles = list(nx.simple_cycles(test_dag))
             if len(test_cycles) == len(cycles):
-                if verbose:
-                    print(
-                        f"    > Breaking cycle {cycle} by changing orientation of "
-                        f"edge {min_edge}")
+                log.debug("    > Breaking cycle %s by changing orientation of edge %s",
+                          cycle, min_edge)
                 new_dag.remove_edge(*min_edge)
                 new_dag.add_edge(*potential_misoriented[0][1::-1])
                 continue
@@ -918,9 +903,7 @@ def break_cycles_if_present(
         # Remove the edge with the lowest SHAP discrepancy, checking that
         # the edge still exists
         if min_edge in new_dag.edges:
-            if verbose:
-                print(
-                    f"    > Breaking cycle {cycle} by removing edge {min_edge}")
+            log.debug("    > Breaking cycle %s by removing edge %s", cycle, min_edge)
             new_dag.remove_edge(*min_edge)
 
         # Recompute whether there're cycles in the DAG after this change
@@ -1295,10 +1278,10 @@ def read_json_file(file_path: str):
             prior = data.get("prior", [])
             return prior
     except FileNotFoundError:
-        print(f"Error: File '{file_path}' not found.")
+        log.error("File '%s' not found.", file_path)
         return []
     except json.JSONDecodeError:
-        print("Error: Invalid JSON format.")
+        log.error("Invalid JSON format in file '%s'.", file_path)
         return []
 
 def pretty_print(obj: object, prefix:str="") -> str:

@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import time
@@ -25,8 +26,11 @@ from causalexplain.common import (DEFAULT_BOOTSTRAP_TOLERANCE,
                                   DEFAULT_BOOTSTRAP_TRIALS, DEFAULT_HPO_TRIALS,
                                   DEFAULT_SEED, DEFAULT_MAX_CSV_LINES,
                                   HEADER_ASCII, SUPPORTED_METHODS, utils)
+from causalexplain.common.logs import setup as setup_logs
 from causalexplain.gui.graph_utils import dag_is_valid
 from causalexplain.gui.settings import default_generate_settings
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import networkx as nx
@@ -504,8 +508,7 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
            for arg in sys.argv) or \
             any(arg.startswith("--no-precompute-target-matrices")
                 for arg in sys.argv):
-        print("WARNING: --precompute-target-matrices is deprecated; "
-              "use --gbt-optimization instead.")
+        log.warning("--precompute-target-matrices is deprecated; use --gbt-optimization instead.")
     run_values['precompute_target_matrices'] = getattr(
         args, "precompute_target_matrices", False)
 
@@ -524,14 +527,12 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
         args.adaptive_shap_sampling
         if hasattr(args, 'adaptive_shap_sampling') else True)
     if any(arg.startswith("--shap-budget") for arg in sys.argv):
-        print("WARNING: --shap-budget is deprecated; "
-              "use --shap-optimization-limit instead.")
+        log.warning("--shap-budget is deprecated; use --shap-optimization-limit instead.")
     shap_budget = getattr(args, "shap_budget", None)
     legacy_max_shap = getattr(args, "max_shap_samples", None)
     if shap_budget is None or shap_budget <= 0:
         if legacy_max_shap is not None and legacy_max_shap > 0:
-            print("WARNING: --max-shap-samples is deprecated; "
-                  "use --shap-optimization-limit instead.")
+            log.warning("--max-shap-samples is deprecated; use --shap-optimization-limit instead.")
             shap_budget = legacy_max_shap
         else:
             shap_budget = None
@@ -742,10 +743,8 @@ def _resolve_rex_for_diagnostics(
 
     if len(rex_candidates) > 1:
         trainer_name, candidate = rex_candidates[0]
-        print(
-            "Multiple Rex estimators are available; exporting diagnostics from "
-            f"the first fitted trainer '{trainer_name}'."
-        )
+        log.warning("Multiple Rex estimators are available; exporting diagnostics from "
+                    "the first fitted trainer '%s'.", trainer_name)
         return candidate
 
     return rex_candidates[0][1]
@@ -795,13 +794,12 @@ def _check_csv_size_warning(
     if not run_values.get('adaptive_shap_sampling', True):
         data = getattr(discoverer, "data", None)
         if data is not None and len(data) > DEFAULT_MAX_CSV_LINES:
-            warning_text = (
-                "Adaptive SHAP sampling is disabled and the dataset has "
-                f"{len(data)} rows (>2000). SHAP computation may take a very "
-                "long time, use excessive memory, or fail to halt. Consider "
-                "enabling adaptive_shap_sampling=True or reducing rows via "
-                "--shap-optimization-limit, max_explain_samples, or subsampling.")
-            print(warning_text, file=sys.stderr)
+            log.warning(
+                "Adaptive SHAP sampling is disabled and the dataset has %d rows (>2000). "
+                "SHAP computation may take a very long time, use excessive memory, or "
+                "fail to halt. Consider enabling adaptive_shap_sampling=True or reducing "
+                "rows via --shap-optimization-limit, max_explain_samples, or subsampling.",
+                len(data))
 
 
 def _generate_dataset(run_values: Dict[str, Any]) -> Dict[str, Any]:
@@ -863,7 +861,7 @@ def main() -> None:
     args = parse_args()
     compat_warning = getattr(args, "compat_warning", None)
     if compat_warning:
-        print(compat_warning, file=sys.stderr)
+        log.warning("%s", compat_warning)
     if getattr(args, "command", None) is None:
         parser = getattr(args, "_parser", None)
         if parser is not None:
@@ -875,6 +873,7 @@ def main() -> None:
         return
     header_()
     run_values = check_args_validity(args)
+    setup_logs(verbose=run_values.get('verbose', False))
     start_time = time.time()
     if run_values.get("mode") == "generate":
         payload = _generate_dataset(run_values)
@@ -912,8 +911,8 @@ def main() -> None:
 # TODO
 # [ ] Ensure that the method works with discrete variables (alternative to RMSE and regressors)
 # [ ] Update / Check the Notebook API
-# [ ] Update the debug / logging to use a proper logging service.
-# [ ] Re-check the saving of models. Experiments duplicate data in all the pickles.
+# [X] Update the debug / logging to use a proper logging service.
+# [X] Re-check the saving of models. Experiments duplicate data in all the pickles.
 # [X] Add option to save the regressors' errors to a CSV file
 # [X] Add option to save the bootstrapped adjacency matrix to a CSV file
 # [X] Add option to save the SHAP values to a CSV file

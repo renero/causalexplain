@@ -8,6 +8,7 @@ features and the target variable.
 
 """
 
+import logging
 from collections import Counter
 from typing import Dict, List, Tuple
 
@@ -30,6 +31,8 @@ from causalexplain.models._models import MLPModel
 
 # pylint: disable=too-many-locals, consider-using-enumerate
 
+log = logging.getLogger(__name__)
+
 
 def extract_weights(model: torch.nn.Module, verbose: bool = False) -> List[np.ndarray]:
     """
@@ -45,8 +48,7 @@ def extract_weights(model: torch.nn.Module, verbose: bool = False) -> List[np.nd
     """
     weights = []
     for name, prm in model.named_parameters():
-        if verbose:
-            print(name)
+        log.debug("%s", name)
         if "weight" in name:
             w = prm.detach().numpy()
             weights.append(w)
@@ -333,8 +335,7 @@ def _find_shap_elbow(avg_shaps: np.array, plot=False, verbose=False) -> float:
 
     if plot:
         knee.plot_knee(figsize=(4, 3))
-    if verbose:
-        print(f"Cutoff pos.: {knee.elbow}; Threshold: {threshold:.4f}")
+    log.debug("Cutoff pos.: %s; Threshold: %.4f", knee.elbow, threshold)
 
     return threshold
 
@@ -356,8 +357,7 @@ def _identify_edges(avg_shaps: np.array,
 def _orient_edges_based_on_shap(G_shap: nx.DiGraph, verbose=False) -> nx.DiGraph:
     g = nx.DiGraph()
     already_checked = []
-    if verbose:
-        print("Orienting edges based on SHAP values ratio")
+    log.debug("Orienting edges based on SHAP values ratio")
     for u, v, data in G_shap.edges(data=True):
         if G_shap.has_edge(v, u):
             if f"{u}->{v}" in already_checked:
@@ -365,10 +365,8 @@ def _orient_edges_based_on_shap(G_shap: nx.DiGraph, verbose=False) -> nx.DiGraph
             already_checked.append(f"{v}->{u}")
             reverse = G_shap.get_edge_data(v, u)
             diff = reverse['weight'] / data['weight']
-            if verbose:
-                print(f"{u}->{v}: {data['weight']:.3f} | ", end="")
-                print(f"{v}->{u}: {reverse['weight']:.3f} | ")
-                print(f"ratio: {diff:.2f}")
+            log.debug("%s->%s: %.3f | %s->%s: %.3f | ratio: %.2f",
+                      u, v, data['weight'], v, u, reverse['weight'], diff)
             if diff < 0.95:
                 g.add_edge(u, v, weight=data['weight'])
             elif diff > 1.05:
@@ -399,8 +397,7 @@ def _remove_asymmetric_shap_edges(
                 if key not in asymmetric_edges:
                     asymmetric_edges[key] = []
                 asymmetric_edges[key].append(potential_relation)
-                if verbose:
-                    print(f"{key} -X-> {potential_relation} has NO symmetric")
+                log.debug("%s -X-> %s has NO symmetric", key, potential_relation)
 
     # Now remove those who are asymmetric.
     for target in shap_relationships.keys():

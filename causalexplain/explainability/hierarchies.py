@@ -12,6 +12,7 @@ of variables linked together?
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
+import logging
 from collections import defaultdict
 from typing import List, Tuple, Union
 
@@ -24,6 +25,8 @@ from scipy.cluster.hierarchy import dendrogram, fcluster, linkage
 from scipy.spatial.distance import squareform
 
 from causalexplain.independence.mic import pairwise_mic
+
+log = logging.getLogger(__name__)
 
 
 class Hierarchies:
@@ -216,42 +219,32 @@ class Hierarchies:
             self.linkage_mat, self.data.columns)
         correlations = np.abs(self.data.corr("spearman"))
         for i, feature in enumerate(self.data.columns):
-            print(f"{feature}")
+            log.debug("%s", feature)
             conn = "└─"
             for j, (name, fwd_PI) in enumerate(pi.feature_importances_[feature].items()):
-                # check if this the last item in the list
                 conn = "└─> " if j == len(pi.feature_importances_[
                     feature]) - 1 else "├─> "
-                print(f" {conn}{name:>4s}: {fwd_PI:.02f}", end="")
+                parts = [f" {conn}{name:>4s}: {fwd_PI:.02f}"]
                 if feature in pi.feature_importances_[name].keys():
                     bwd_PI = pi.feature_importances_[name][feature]
-                    print(
-                        f" r({bwd_PI:.02f},∂={np.abs(fwd_PI-bwd_PI):.02f})", end="")
+                    parts.append(f" r({bwd_PI:.02f},∂={np.abs(fwd_PI-bwd_PI):.02f})")
                     reverse = True
                 else:
-                    print(" r(0.00,∂=0.00)", end="")
+                    parts.append(" r(0.00,∂=0.00)")
                     reverse = False
-                print(f" | c({correlations.loc[feature, name]:.02f})", end="")
-                print(f" | R2({pi.regression_importances_[i]:.2f})", end="")
+                parts.append(f" | c({correlations.loc[feature, name]:.02f})")
+                parts.append(f" | R2({pi.regression_importances_[i]:.2f})")
                 degree = self._are_connected(clusters, feature, name)
-                connected = True if degree is not None else False
-                if connected:
-                    print(f" | d{degree:.02f}", end="")
-                else:
-                    print(" | d0.00", end="")
-                if ground_truth is None:
-                    print("")
+                connected = degree is not None
+                parts.append(f" | d{degree:.02f}" if connected else " | d0.00")
                 if reverse:
                     if fwd_PI > bwd_PI:
-                        check = "✅" if ground_truth.has_edge(
-                            feature, name) else "❌"
-                        print(f" | {feature:4s} -> {name:4s} {check}")
+                        check = "✅" if ground_truth.has_edge(feature, name) else "❌"
+                        parts.append(f" | {feature:4s} -> {name:4s} {check}")
                     else:
-                        check = "✅" if ground_truth.has_edge(
-                            name, feature) else "❌"
-                        print(f" | {feature:4s} <- {name:4s} {check}")
-                else:
-                    print("")
+                        check = "✅" if ground_truth.has_edge(name, feature) else "❌"
+                        parts.append(f" | {feature:4s} <- {name:4s} {check}")
+                log.debug("%s", "".join(parts))
 
     def _cluster_features(self, method, threshold):
         """
@@ -598,8 +591,7 @@ def connect_isolated_nodes(G, linkage_mat, feature_names, verbose=False):
         features_cluster = True if num == 2 else False
         if direction is None and features_cluster:
             G_h.add_edge(u, v, weight=None)
-            if verbose:
-                print(f"Adding edge {u} {arrow} {v}")
+            log.debug("Adding edge %s %s %s", u, arrow, v)
 
     return G_h
 
@@ -610,9 +602,7 @@ def connect_hierarchies(G, linkage_mat, feature_names, verbose=False):
     clusters = {}
     G_h = nx.DiGraph()
     G_h.add_edges_from(G.edges(data=True))
-    if verbose:
-        print(
-            f"{'from':>4s}  :  {'to':<4s}  {'weight':6s}  {'n.items':7s} {'names':5s}")
+    log.debug("%4s  :  %-4s  %6s  %7s %5s", "from", "to", "weight", "n.items", "names")
     for i in range(linkage_mat.shape[0]):
         u, v = node_names[int(linkage_mat[i][0])
                           ], node_names[int(linkage_mat[i][1])]
@@ -621,15 +611,11 @@ def connect_hierarchies(G, linkage_mat, feature_names, verbose=False):
         kname = f"K#{cluster_id}"
         node_names.append(kname)
         clusters[kname] = (u, v)
-        if verbose:
-            print(f"{u:>4s} {arrow:^s} {v:<4s}  {weight:6.4f}  {str(num):^7s} {kname:^5s}",
-                  end="")
+        log.debug("%4s %s %-4s  %6.4f  %7s %5s", u, arrow, v, weight, str(num), kname)
         cluster_id += 1
 
         # If I'm forming the first cluster, nothing to do.
         if cluster_id <= len(feature_names)+1:
-            if verbose:
-                print()
             continue
 
         # Determine if source is a node or a cluster
@@ -646,21 +632,14 @@ def connect_hierarchies(G, linkage_mat, feature_names, verbose=False):
             if pair is not None:
                 target = pair[0]
             else:
-                if verbose:
-                    print()
                 continue
         else:
-            if verbose:
-                print()
             continue
 
         if _get_directed_pair(G_h, source, target) is None:
-            if verbose:
-                print(f" Add {source} --> {target}")
+            log.debug(" Add %s --> %s", source, target)
             G_h.add_edge(source, target)
         else:
-            if verbose:
-                print()
             continue
 
     return G_h

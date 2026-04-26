@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 
 import networkx as nx
@@ -11,6 +12,8 @@ from typing import Any, Optional, Protocol
 
 # from causalexplain.common.utils import graph_from_dot_file, load_experiment
 from ...common import utils
+
+log = logging.getLogger(__name__)
 
 # pylint: disable=E1101:no-member, W0201:attribute-defined-outside-init, W0511:fixme
 # pylint: disable=C0103:invalid_name, C0116:missing-function-docstring
@@ -159,7 +162,7 @@ if __name__ == "__main__":
 
     custom = utils.load_experiment(f"{experiment_name}", output_path)
     custom.is_fitted_ = True
-    print(f"Loaded experiment {experiment_name}")
+    log.info("Loaded experiment %s", experiment_name)
 
     custom.feature_names = list(data.columns)
     custom.models.score(data)

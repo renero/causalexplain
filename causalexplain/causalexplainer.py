@@ -5,6 +5,7 @@ This module contains the GraphDiscovery class which is responsible for
 creating, fitting, and evaluating causal discovery experiments.
 """
 import importlib
+import logging
 import os
 import pickle
 import re
@@ -21,6 +22,8 @@ from causalexplain.common import (
     utils,
 )
 from causalexplain.common.progress import ProgressManager
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
@@ -761,7 +764,7 @@ class GraphDiscovery:
         saved_as = utils.save_experiment(
             os.path.basename(full_filename_path), full_dir_path,
             self.trainer, overwrite=False)
-        print(f"Saved model as: {saved_as}", flush=True)
+        log.info("Saved model as: %s", saved_as)
 
     def load(self, model_path: str) -> Dict[str, Experiment]:
         """
@@ -792,7 +795,7 @@ class GraphDiscovery:
         """
         with open(model_path, 'rb') as f:
             self.trainer = pickle.load(f)
-            print(f"Loaded model from: {model_path}", flush=True)
+            log.info("Loaded model from: %s", model_path)
 
         # Set the dag and metrics
         self.dag = self.trainer[list(self.trainer.keys())[-1]].dag
