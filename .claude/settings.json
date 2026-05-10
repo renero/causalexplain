@@ -22,7 +22,15 @@
       "Bash(python -m pytest --co -q tests/test_causalexplain_models_gbt_xgboost.py)",
       "Read(//Users/renero/.pyenv/versions/**)",
       "Read(//Users/renero/.pyenv/versions/3.13.11/envs/causality/lib/**)",
-      "Bash(python -c \"import causalexplain; print\\(causalexplain.__file__\\)\")"
+      "Bash(python -c \"import causalexplain; print\\(causalexplain.__file__\\)\")",
+      "Bash(git stash *)",
+      "Bash(git restore *)",
+      "Bash(git push *)",
+      "Bash(git branch *)",
+      "Bash(grep -rn \"Lock\\\\|thread\\\\|_lock\\\\|RLock\\\\|Event\\\\|Semaphore\" /Users/renero/code/mlforge/mlforge/progbar.py 2>/dev/null | head -20)",
+      "Read(//Users/renero/code/mlforge/mlforge/**)",
+      "Bash(python3 -m pytest tests/ -x -q --tb=short)",
+      "Bash(python3 -m causalexplain run --help)"
     ]
   }
 }

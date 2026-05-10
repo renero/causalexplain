@@ -1449,6 +1449,13 @@ class ShapEstimator(BaseEstimator):
                 state[key] = None
         return state
 
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        # shap_explainer is cleared to None by __getstate__ (SHAP objects are not
+        # picklable). Restore it to an empty dict so workers can populate it.
+        if self.shap_explainer is None:
+            self.shap_explainer = {}
+
     def _select_background(
             self,
             X_train: np.ndarray,

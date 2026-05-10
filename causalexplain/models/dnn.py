@@ -14,6 +14,7 @@ source of random noise.
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 # pylint: disable=W0102:dangerous-default-value
 
+import copy
 import inspect
 import logging
 import warnings
@@ -166,6 +167,28 @@ class NNRegressor(BaseEstimator):
 
         if self.verbose:
             self.prog_bar = False
+
+    def __getstate__(self) -> dict:
+        # MLPModel tensors on MPS/CUDA cannot be pickled by multiprocessing's
+        # ForkingPickler (_share_filename_cpu_ is CPU-only). Move the inner
+        # nn.Module weights to CPU so worker processes can run inference safely.
+        # The originals on the accelerator in the main process are not touched.
+        state = self.__dict__.copy()
+        if self.regressor is not None and str(self.device).lower() != 'cpu':
+            cpu_regressor = {}
+            for name, mlp_model in self.regressor.items():
+                mlp_copy = copy.deepcopy(mlp_model)
+                if hasattr(mlp_copy, 'model') and hasattr(mlp_copy.model, 'cpu'):
+                    mlp_copy.model = mlp_copy.model.cpu()
+                if hasattr(mlp_copy, 'trainer'):
+                    mlp_copy.trainer = None
+                cpu_regressor[name] = mlp_copy
+            state['regressor'] = cpu_regressor
+            state['device'] = 'cpu'
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
 
     def _downsample_for_hpo(
         self,

@@ -85,6 +85,7 @@ class GraphDiscovery:
         bootstrap_parallel_jobs: int = 0,
         max_shap_samples: Optional[int] = None,
         gbt_backend: str = 'sklearn',
+        regressors: Optional[List[str]] = None,
     ) -> None:
         """
         Initialize a graph discovery workflow and optionally load dataset metadata.
@@ -110,6 +111,9 @@ class GraphDiscovery:
             max_shap_samples (Optional[int], optional): Deprecated name for the SHAP
                 workload budget; use --shap-optimization-limit in the CLI. A
                 non-positive or missing value disables the budget.
+            regressors (List[str], optional): Subset of regressors to use when
+                model_type is 'rex'. Must be a non-empty subset of ['nn', 'gbt'].
+                Defaults to None (use all regressors in DEFAULT_REGRESSORS).
 
         Returns:
             None: This method does not return a value.
@@ -129,6 +133,9 @@ class GraphDiscovery:
                 seed, resolved_device, parallel_jobs, bootstrap_parallel_jobs,
                 resolved_max_shap)
             self.gbt_backend = gbt_backend
+            if regressors is not None:
+                self._validate_regressors(regressors)
+                self.regressors = list(regressors)
             return
 
         self._validate_experiment_inputs(normalized_experiment, normalized_csv)
@@ -159,6 +166,9 @@ class GraphDiscovery:
         self.train_idx, self.test_idx = self._build_split_indices(
             self.data, self.train_size, self.random_state)
         self._validate_dag_nodes(self.ref_graph, self.data_columns)
+        if regressors is not None:
+            self._validate_regressors(regressors)
+        self._requested_regressors = list(regressors) if regressors is not None else None
         self.regressors = self._select_regressors()
         self._cy_positions: Dict[str, Dict[str, float]] = {}
 
@@ -216,6 +226,8 @@ class GraphDiscovery:
         self.bootstrap_parallel_jobs = bootstrap_parallel_jobs
         self.max_shap_samples = max_shap_samples
         self.trainer: Dict[str, Experiment] = {}
+        self._requested_regressors: Optional[List[str]] = None
+        self.regressors: List[str] = DEFAULT_REGRESSORS
         self._cy_positions: Dict[str, Dict[str, float]] = {}
 
     def _validate_experiment_inputs(
@@ -440,12 +452,24 @@ class GraphDiscovery:
                 + ", ".join(extra)
             )
 
+    @staticmethod
+    def _validate_regressors(regressors: List[str]) -> None:
+        """Raise ValueError if regressors is not a valid non-empty subset of DEFAULT_REGRESSORS."""
+        invalid = set(regressors) - set(DEFAULT_REGRESSORS)
+        if invalid:
+            raise ValueError(
+                f"Invalid regressors: {sorted(invalid)}. "
+                f"Must be a subset of {DEFAULT_REGRESSORS}."
+            )
+        if not regressors:
+            raise ValueError("regressors must contain at least one entry.")
+
     def _select_regressors(self) -> List[str]:
         """
         Select regressors based on the estimator type.
 
-        ReX requires multiple regressors for ensembling, while other estimators
-        run as a single model type.
+        ReX uses DEFAULT_REGRESSORS unless overridden via the regressors
+        constructor argument. Other estimators run as a single model type.
 
         Args:
             None.
@@ -454,7 +478,8 @@ class GraphDiscovery:
             List[str]: The list of regressor names to instantiate.
         """
         if self.estimator == 'rex':
-            return DEFAULT_REGRESSORS
+            return self._requested_regressors if self._requested_regressors is not None \
+                else DEFAULT_REGRESSORS
         return [self.estimator]
 
     def create_experiments(self) -> Dict[str, Experiment]:
@@ -637,21 +662,27 @@ class GraphDiscovery:
             self.metrics = self.trainer[trainer_key].metrics
             return self.trainer[trainer_key]
 
-        # For ReX, we need to combine the DAGs. Hardcoded for now to combine
-        # the first and second DAGs
-        estimator1 = getattr(self.trainer[list(self.trainer.keys())[0]], 'rex')
-        estimator2 = getattr(self.trainer[list(self.trainer.keys())[1]], 'rex')
-        union_dag, inter_dag, union_cycles_removed, inter_cycles_removed = utils.combine_dags(
-            estimator1.dag, estimator2.dag,
-            discrepancies=estimator1.shaps.shap_discrepancies,
-            prior=prior
-        )
-        if combine_op not in {'union', 'intersection'}:
-            raise ValueError("combine_op must be 'union' or 'intersection'")
-        if combine_op == 'union':
-            dag = union_cycles_removed
+        # For ReX, combine DAGs from all trained regressors.
+        rex_trainer_keys = [k for k in self.trainer if not k.endswith('_rex')]
+        if len(rex_trainer_keys) == 1:
+            # Single-regressor REX: no combining needed, use the DAG directly.
+            rex_obj = getattr(self.trainer[rex_trainer_keys[0]], 'rex', None)
+            if rex_obj is None:
+                raise RuntimeError(
+                    f"REX estimator not found on trainer '{rex_trainer_keys[0]}'. "
+                    "Training may have failed silently.")
+            dag = rex_obj.dag
         else:
-            dag = inter_cycles_removed
+            estimator1 = getattr(self.trainer[rex_trainer_keys[0]], 'rex')
+            estimator2 = getattr(self.trainer[rex_trainer_keys[1]], 'rex')
+            union_dag, inter_dag, union_cycles_removed, inter_cycles_removed = utils.combine_dags(
+                estimator1.dag, estimator2.dag,
+                discrepancies=estimator1.shaps.shap_discrepancies,
+                prior=prior
+            )
+            if combine_op not in {'union', 'intersection'}:
+                raise ValueError("combine_op must be 'union' or 'intersection'")
+            dag = union_cycles_removed if combine_op == 'union' else inter_cycles_removed
 
         # Create a new Experiment object for the combined DAG
         experiment_class = _resolve_experiment_class()

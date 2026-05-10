@@ -153,6 +153,11 @@ def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
         help="Method to used. If not specified, the method will be ReX.\n" +
         "Other options are: 'pc', 'fci', 'ges', 'lingam', 'cam', 'notears'. "
         "Note: 'pc' and 'cam' are currently unsupported public interfaces.")
+    parser.add_argument(
+        '--regressors', type=str, required=False,
+        dest='regressors',
+        help="Comma-separated subset of regressors to use with ReX "
+             "(e.g. 'nn', 'gbt', or 'nn,gbt'). Defaults to all regressors.")
     device_group.add_argument(
         '-M', '--mps', action='store_true', required=False,
         help='Run on Apple Silicon MPS (requires MPS support).')
@@ -549,6 +554,17 @@ def check_args_validity(args: argparse.Namespace) -> Dict[str, Any]:
     run_values['bootstrap_parallel_jobs'] = getattr(
         args, "bootstrap_parallel_jobs", 0)
     run_values['gbt_backend'] = getattr(args, "gbt_backend", 'sklearn')
+    raw_regressors = getattr(args, "regressors", None)
+    if raw_regressors is not None:
+        parsed = [r.strip() for r in raw_regressors.split(',') if r.strip()]
+        invalid = set(parsed) - {'nn', 'gbt'}
+        if invalid or not parsed:
+            raise ValueError(
+                f"--regressors must be a non-empty comma-separated subset of "
+                f"['nn', 'gbt']. Got: {raw_regressors!r}")
+        run_values['regressors'] = parsed
+    else:
+        run_values['regressors'] = None
     if getattr(args, "cuda", False):
         requested_device = "cuda"
     elif getattr(args, "mps", False):
@@ -627,6 +643,7 @@ def _init_discoverer(run_values: Dict[str, Any]) -> GraphDiscoveryType:
         device=run_values['device'],
         max_shap_samples=run_values.get('shap_budget'),
         gbt_backend=run_values.get('gbt_backend', 'sklearn'),
+        regressors=run_values.get('regressors'),
     )
     _check_csv_size_warning(discoverer, run_values)
 

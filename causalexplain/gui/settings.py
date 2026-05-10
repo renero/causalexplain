@@ -90,5 +90,9 @@ def merge_settings(stored: Any, defaults: Dict[str, Any]) -> Dict[str, Any]:
     merged = defaults.copy()
     if isinstance(stored, dict):
         for key, value in stored.items():
+            # Skip None values for list-type defaults to avoid overwriting
+            # with None when e.g. a multi-select widget returns None on clear.
+            if value is None and isinstance(defaults.get(key), list):
+                continue
             merged[key] = value
     return merged
