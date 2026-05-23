@@ -13,6 +13,7 @@ is then used to build the graph.
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
 import inspect
+import logging
 import math
 import multiprocessing
 import warnings
@@ -42,6 +43,8 @@ from sklearn.model_selection import StratifiedShuffleSplit, train_test_split
 
 from ..independence.feature_selection import select_features
 from ..common import DEFAULT_MAX_SAMPLES, utils
+
+log = logging.getLogger(__name__)
 
 RED = colorama.Fore.RED
 GREEN = colorama.Fore.GREEN
@@ -930,8 +933,6 @@ def compute_shap_adaptive(
             "max_shap_samples, max_explain_samples, or subsampling.")
         warn_messages.append(warning_text)
         warnings.warn(warning_text, UserWarning)
-        if verbose:
-            print(warning_text)
 
     if not adaptive_shap_sampling:
         mode: SamplingMode = "no_sampling"
@@ -1112,8 +1113,6 @@ def compute_shap_adaptive(
             "stratify for rare groups.")
         warn_messages.append(warning_text)
         warnings.warn(warning_text)
-        if verbose:
-            print(warning_text)
     elif not adaptive_shap_sampling:
         topN = min(int(topN_important), n_features)
         imp_mean = imp_vectors[0]
@@ -1442,6 +1441,21 @@ class ShapEstimator(BaseEstimator):
         self.prior: list[list[str]] | None = None
         self.is_fitted_ = False
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for key in ('X_train', 'X_test', 'shap_explainer',
+                    'corr_matrix', 'all_mean_shap_values'):
+            if key in state:
+                state[key] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        # shap_explainer is cleared to None by __getstate__ (SHAP objects are not
+        # picklable). Restore it to an empty dict so workers can populate it.
+        if self.shap_explainer is None:
+            self.shap_explainer = {}
+
     def _select_background(
             self,
             X_train: np.ndarray,
@@ -1595,24 +1609,19 @@ class ShapEstimator(BaseEstimator):
             np.sum(np.abs(shap_values_target), axis=0))
         shap_mean_values_target = np.abs(shap_values_target).mean(0)
 
-        # Optionally, print verbose output
-        if verbose:
-            feature_order_str = ", ".join(
-                str(idx) for idx in feature_order_target.tolist()
-            )
-            print(f"    > Feature order for '{target_name}': [{feature_order_str}]")
-            print(f"      Target({target_name}) -> ", end="")
+        # Optionally, log verbose output
+        if log.isEnabledFor(logging.DEBUG):
+            feature_order_str = ", ".join(str(idx) for idx in feature_order_target.tolist())
             srcs = [src for src in feature_names if src != target_name]
             shap_mean_values_display = np.asarray(shap_mean_values_target)
             if shap_mean_values_display.ndim > 1:
-                # Reduce any extra axes so each feature prints a single scalar.
                 shap_mean_values_display = shap_mean_values_display.mean(
-                    axis=tuple(range(1, shap_mean_values_display.ndim))
-                )
-            for i in range(len(shap_mean_values_display)):
-                value = float(shap_mean_values_display[i])
-                print(f"{srcs[i]}:{value:.3f};", end="")
-            print()
+                    axis=tuple(range(1, shap_mean_values_display.ndim)))
+            values_str = ";".join(
+                f"{srcs[i]}:{float(shap_mean_values_display[i]):.3f}"
+                for i in range(len(shap_mean_values_display)))
+            log.debug("Feature order for '%s': [%s]", target_name, feature_order_str)
+            log.debug("Target(%s) -> %s", target_name, values_str)
 
         # Return results
         return target_name, shap_values_target, feature_order_target, \
@@ -1902,8 +1911,7 @@ class ShapEstimator(BaseEstimator):
         Returns:
             The inferred causal graph.
         """
-        if self.verbose:
-            print("-----\nshap.predict()")
+        log.debug("shap.predict()")
 
         if not self.is_fitted_:
             raise ValueError("This Rex instance is not fitted yet. \
@@ -1964,11 +1972,8 @@ class ShapEstimator(BaseEstimator):
             # feature_names_wo_target = [
             #     f for f in candidate_causes if f != target]
 
-            # Debug output
-            if self.verbose:
-                print(
-                    f"> Selecting features for target {target}...")
-                print(f"  > Candidate causes for target '{target}': {candidate_causes}")
+            log.debug("Selecting features for target %s; candidates: %s",
+                      target, candidate_causes)
 
             # Select the features that are connected to the target
             shap_values_for_target = self.shap_values[target]
@@ -2363,8 +2368,7 @@ class ShapEstimator(BaseEstimator):
         m1 = "(*)" if det < -0.5 else "   "
         m2 = "(*)" if norm > .7 else "   "
         m3 = "(*)" if cond > 1500 else "   "
-        if self.verbose:
-            print(f"    {m2}{norm=:.2f} & ({m1}{det=:.2f} | {m3}{cond=:.2f})")
+        log.debug("%s norm=%.2f & (%s det=%.2f | %s cond=%.2f)", m2, norm, m1, det, m3, cond)
         if norm > 7.0 and (det < -0.5 or cond > 2000):
             return True
         return False
@@ -2550,22 +2554,23 @@ class ShapEstimator(BaseEstimator):
         Returns:
             None.
         """
-        if not self.verbose:
+        if not log.isEnabledFor(logging.DEBUG):
             return
         forward_sd, reverse_sd, diff, _, _, _, _ = vector
-        fwd_bwd = f"{GREEN}<{RESET}" if forward_sd < reverse_sd else f"{RED}≮{RESET}"
-        fwd_tgt = f"{GREEN}<{RESET}" if forward_sd < target_threshold + \
-            tolerance else f"{RED}>{RESET}"
-        diff_upper = f"{GREEN}<{RESET}" if diff < sd_upper else f"{RED}>{RESET}"
-        print(f" -  {msg:<17s}: {feature} -> {target}",
-              f"fwd|bwd({forward_sd:.3f}{fwd_bwd}{reverse_sd:.3f});",
-              f"fwd{fwd_tgt}⍴({target_threshold:.3f}+{tolerance:.2f});",
-              f"𝛿({diff:.3f}){diff_upper}Up({sd_upper:.2f}); "
-              # f"𝛿({diff:.3f}){diff_tol}tol({sd_tol:.2f});",
-              f"µ:{forward_sd/target_threshold:.3f}"
-              )
+        fwd_bwd = "<" if forward_sd < reverse_sd else "≮"
+        fwd_tgt = "<" if forward_sd < target_threshold + tolerance else ">"
+        diff_upper = "<" if diff < sd_upper else ">"
+        log.debug(
+            " -  %-17s: %s -> %s  fwd|bwd(%.3f%s%.3f); fwd%s⍴(%.3f+%.2f); "
+            "𝛿(%.3f)%sUp(%.2f); µ:%.3f",
+            msg, feature, target,
+            forward_sd, fwd_bwd, reverse_sd,
+            fwd_tgt, target_threshold, tolerance,
+            diff, diff_upper, sd_upper,
+            forward_sd / target_threshold,
+        )
         if len(cycles) > 0 and self._nodes_in_cycles(cycles, feature, target):
-            print(f"    ~~ Cycles: {cycles}")
+            log.debug("    ~~ Cycles: %s", cycles)
 
     def _get_method_caller_name(self) -> str:
         """
@@ -2720,7 +2725,7 @@ def custom_main(
 
     rex = utils.load_experiment(f"{exp_name}_nn", output_path)
     rex.is_fitted_ = True
-    print(f"Loaded experiment {exp_name}")
+    log.info("Loaded experiment %s", exp_name)
 
     rex.shaps = ShapEstimator(
         explainer="gradient",
@@ -2764,13 +2769,13 @@ def sachs_main() -> None:
     rex = utils.load_experiment(f"{experiment_name}_gbt", output_path)
     rex.is_fitted_ = True
     rex.shaps.is_fitted_ = True
-    print(f"Loaded experiment {experiment_name}")
+    log.info("Loaded experiment %s", experiment_name)
 
     rex.shaps.prog_bar = False
     rex.shaps.verbose = True
     rex.shaps.iters = 100
     rex.shaps.predict(test, rex.root_causes)
-    print("fininshed")
+    log.info("finished")
 
 
 if __name__ == "__main__":

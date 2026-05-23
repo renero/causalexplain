@@ -7,6 +7,7 @@ import contextlib
 import io
 import os
 import time
+import traceback
 from typing import Any, Dict, Optional
 
 from causalexplain.causalexplainer import GraphDiscovery
@@ -691,6 +692,12 @@ class TrainTab:
             shap_budget = int(raw_budget)
             if shap_budget <= 0:
                 shap_budget = None
+            regressors = None
+            if settings["method"] == "rex":
+                regressors = settings.get("regressors", DEFAULT_REGRESSORS)
+                if not regressors:
+                    raise ValueError(
+                        "At least one regressor must be selected for ReX.")
             discoverer = GraphDiscovery(
                 experiment_name=dataset_name,
                 model_type=settings["method"],
@@ -704,12 +711,8 @@ class TrainTab:
                     settings["bootstrap_parallel_jobs"]
                 ),
                 max_shap_samples=shap_budget,
+                regressors=regressors,
             )
-            if settings["method"] == "rex":
-                regressors = settings.get("regressors", DEFAULT_REGRESSORS)
-                if len(regressors) != 2:
-                    raise ValueError("ReX requires exactly two regressors.")
-                discoverer.regressors = regressors
             start_time = time.time()
             discoverer.run(
                 hpo_iterations=int(settings["hpo_iterations"]),
@@ -757,7 +760,7 @@ class TrainTab:
                     hpo_trials=int(self.settings["hpo_iterations"]),
                     bootstrap_trials=int(self.settings["bootstrap_iterations"]),
                     regressor_count=len(
-                        self.settings.get("regressors", DEFAULT_REGRESSORS)
+                        self.settings.get("regressors") or DEFAULT_REGRESSORS
                     ),
                 )
                 progress = ProgressManager(
@@ -766,7 +769,7 @@ class TrainTab:
                     render_cli=False,
                 )
             result_task = asyncio.create_task(
-                self.run.io_bound(self._train_job, self.settings, progress)
+                self.run.io_bound(self._train_job, dict(self.settings), progress)
             )
             while not result_task.done():
                 self._update_progress_snapshot(progress.snapshot())
@@ -780,6 +783,9 @@ class TrainTab:
         except Exception as exc:
             if self.train_log is not None:
                 self.train_log.push(f"Error: {str(exc)}")
+                lines = traceback.format_exception(type(exc), exc, exc.__traceback__)
+                for line in "".join(lines).splitlines():
+                    self.train_log.push(line)
             self._set_progress_state(False)
             return
         finally:

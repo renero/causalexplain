@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(python -c \"import causalexplain.models.gbt as g; print\\(g.GBTRegressor.__bases__\\); b = g.SklearnGBTBackend\\(\\); print\\(b\\); m = g.GBTRegressor\\(n_estimators=2, prog_bar=False\\); print\\(m.backend\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline.from_list\\); print\\(src[:3000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._get_step_components\\); print\\(src[:4000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._run_stage\\); print\\(src[:4000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._run_step\\); print\\(src[:5000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._parse_step\\); print\\(src\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline.run\\); print\\(src[:5000]\\)\")",
+      "Bash(python -c \"import mlforge.mlforge; import inspect; src = inspect.getsource\\(mlforge.mlforge.Pipeline._build_params\\); print\\(src\\)\")",
+      "Bash(python -c \"import xgboost; print\\(xgboost.__version__\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c ' *)",
+      "Bash(python experiments/config_d_experiment.py)",
+      "Bash(tee experiments/config_d_log.txt)",
+      "Bash(python -c \"import causalexplain\")",
+      "Bash(python -c \"import sys; [print\\(p\\) for p in sys.path]\")",
+      "Bash(pip show *)",
+      "Read(//Users/renero/.pyenv/versions/3.13.11/envs/causality/lib/python3.13/site-packages/**)",
+      "Bash(python -m pytest --co -q tests/test_causalexplain_models_gbt_xgboost.py)",
+      "Read(//Users/renero/.pyenv/versions/**)",
+      "Read(//Users/renero/.pyenv/versions/3.13.11/envs/causality/lib/**)",
+      "Bash(python -c \"import causalexplain; print\\(causalexplain.__file__\\)\")",
+      "Bash(git stash *)",
+      "Bash(git restore *)",
+      "Bash(git push *)",
+      "Bash(git branch *)",
+      "Bash(grep -rn \"Lock\\\\|thread\\\\|_lock\\\\|RLock\\\\|Event\\\\|Semaphore\" /Users/renero/code/mlforge/mlforge/progbar.py 2>/dev/null | head -20)",
+      "Read(//Users/renero/code/mlforge/mlforge/**)",
+      "Bash(python3 -m pytest tests/ -x -q --tb=short)",
+      "Bash(python3 -m causalexplain run --help)"
+    ]
+  }
+}

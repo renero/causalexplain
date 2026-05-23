@@ -10,6 +10,7 @@ Example:
 (C) 2023, 2024 J. Renero
 """
 
+import logging
 import os
 import time
 import warnings
@@ -23,6 +24,8 @@ from sklearn.preprocessing import StandardScaler
 
 from . import utils
 from ..estimators.cam.cam import CAM
+
+log = logging.getLogger(__name__)
 from ..estimators.fci.fci import FCI
 from ..estimators.ges.ges import GES
 from ..estimators.lingam.lingam import DirectLiNGAM as LiNGAM
@@ -206,7 +209,7 @@ class BaseExperiment:
         """Create an estimator instance from the registry."""
         estimator_class = estimators.get(estimator_name)
         if estimator_class is None:
-            print(f"Estimator '{estimator_name}' not found.")
+            log.error("Estimator '%s' not found.", estimator_name)
             return None
 
         # Special case: when estimator is ReX, model_type needs also to be
@@ -396,16 +399,13 @@ class Experiment(BaseExperiment):
 
         if self.model_type is None:
             self.model_type = 'rex'  # Default model type
-        if self.verbose:
-            print(f"Loaded '{exp_name}' ({self.model_type.upper()}) "
-                  f"from '{self.output_path}'")
-            if isinstance(exp_object, Rex):
-                fit_time = utils.format_time(exp_object.fit_time)
-                predict_time = utils.format_time(exp_object.predict_time)
-                print(
-                    f"This model took {fit_time[0]:.1f}{fit_time[1]}. to fit, and "
-                    f"{predict_time[0]:.1f}{predict_time[1]}. to build predicted DAGs"
-                )
+        log.info("Loaded '%s' (%s) from '%s'", exp_name,
+                 self.model_type.upper(), self.output_path)
+        if isinstance(exp_object, Rex) and hasattr(exp_object, 'fit_time'):
+            fit_time = utils.format_time(exp_object.fit_time)
+            predict_time = utils.format_time(exp_object.predict_time)
+            log.info("This model took %.1f%s to fit, and %.1f%s to build predicted DAGs",
+                     fit_time[0], fit_time[1], predict_time[0], predict_time[1])
 
         return self
 
@@ -419,8 +419,7 @@ class Experiment(BaseExperiment):
             self.output_path, getattr(self, self.estimator_name),
             overwrite)
 
-        if self.verbose:
-            print(f"Saved '{self.experiment_name}' to '{where_to}'")
+        log.info("Saved '%s' to '%s'", self.experiment_name, where_to)
 
         return where_to
 

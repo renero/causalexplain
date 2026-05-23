@@ -53,7 +53,9 @@ Example:
 
 
 import inspect
+import logging
 import os
+from typing import Any, Protocol
 
 import numpy as np
 import optuna  # type: ignore
@@ -72,8 +74,172 @@ from ._optuna_storage import (
     _is_readonly_storage_error,
 )
 
+log = logging.getLogger(__name__)
 
-class GBTRegressor(GradientBoostingRegressor):
+
+class GBTBackend(Protocol):
+    """Interface a GBT backend must satisfy."""
+
+    def make_regressor(self, **hparams: Any) -> Any: ...
+    def make_classifier(self, **hparams: Any) -> Any: ...
+    def is_classifier(self, model: Any) -> bool: ...
+    def suggest_hparams(self, trial: Any) -> dict: ...
+    def apply_best_params(self, best_params: dict) -> None: ...
+    def build_regressor_args(self, best_params: dict) -> dict: ...
+
+
+class SklearnGBTBackend:
+    """Sklearn GradientBoosting backend (default).
+
+    Methods reference GradientBoostingRegressor/GradientBoostingClassifier via
+    module-level names so that monkeypatching gbt.GradientBoostingRegressor in
+    tests continues to work as expected.
+    """
+
+    def make_regressor(self, **hparams: Any) -> Any:
+        return GradientBoostingRegressor(**hparams)
+
+    def make_classifier(self, **hparams: Any) -> Any:
+        return GradientBoostingClassifier(**hparams)
+
+    def is_classifier(self, model: Any) -> bool:
+        return model.__class__.__name__ == "GradientBoostingClassifier"
+
+    def suggest_hparams(self, trial: Any) -> dict:
+        return {
+            'learning_rate': trial.suggest_float("learning_rate", 0.001, 0.2),
+            'n_estimators': trial.suggest_int("n_estimators", 10, 1000),
+            'subsample': trial.suggest_float("subsample", 0.1, 1.0),
+            'min_samples_split': trial.suggest_int("min_samples_split", 2, 10),
+            'min_samples_leaf': trial.suggest_int("min_samples_leaf", 1, 10),
+            'min_weight_fraction_leaf': trial.suggest_float(
+                "min_weight_fraction_leaf", 0.0, 0.5),
+            'max_depth': trial.suggest_int("max_depth", 3, 20),
+            'max_leaf_nodes': trial.suggest_int("max_leaf_nodes", 10, 1000),
+            'min_impurity_decrease': trial.suggest_float(
+                "min_impurity_decrease", 0.0, 0.5),
+        }
+
+    def apply_best_params(self, best_params: dict) -> None:
+        pass  # sklearn params flow through GBTRegressor attrs; nothing to update here
+
+    def build_regressor_args(self, best_params: dict) -> dict:
+        keys = (
+            'learning_rate', 'n_estimators', 'subsample', 'min_samples_split',
+            'min_samples_leaf', 'min_weight_fraction_leaf', 'max_depth',
+            'max_leaf_nodes', 'min_impurity_decrease',
+        )
+        return {k: best_params[k] for k in keys}
+
+
+class XGBoostGBTBackend:
+    """XGBoost backend for GBTRegressor.
+
+    Hyperparameter search-space decisions (vs sklearn backend):
+    - learning_rate, n_estimators, max_depth: same ranges as sklearn backend.
+    - subsample: [0.5, 1.0] — XGBoost rarely benefits below 0.5 (sklearn uses [0.1, 1.0]).
+    - colsample_bytree, colsample_bylevel: [0.5, 1.0] — standard XGBoost community range;
+      no sklearn equivalent.
+    - min_child_weight: [1, 10] — mirrors sklearn min_samples_leaf [1, 10] in spirit;
+      controls minimum leaf weight rather than sample count.
+    - gamma: [0.0, 5.0] — minimum split loss; community standard for balanced pruning.
+    - reg_lambda: [1e-3, 10.0] log-scale — L2 regularization; default 1.0, log scale
+      needed to explore both small and large values meaningfully.
+    - reg_alpha: [0.0, 1.0] — L1 regularization; kept small since XGBoost is primarily
+      L2-regularized by default.
+    """
+
+    def __init__(self) -> None:
+        self.learning_rate = 0.1
+        self.n_estimators = 100
+        self.max_depth = 3
+        self.subsample = 1.0
+        self.min_child_weight = 1
+        self.gamma = 0.0
+        self.colsample_bytree = 1.0
+        self.colsample_bylevel = 1.0
+        self.reg_lambda = 1.0
+        self.reg_alpha = 0.0
+
+    def _xgb_common_kwargs(self, hparams: dict, random_state: int) -> dict:
+        return dict(
+            n_estimators=hparams.get('n_estimators', self.n_estimators),
+            max_depth=hparams.get('max_depth', self.max_depth),
+            learning_rate=hparams.get('learning_rate', self.learning_rate),
+            subsample=hparams.get('subsample', self.subsample),
+            min_child_weight=self.min_child_weight,
+            gamma=self.gamma,
+            colsample_bytree=self.colsample_bytree,
+            colsample_bylevel=self.colsample_bylevel,
+            reg_lambda=self.reg_lambda,
+            reg_alpha=self.reg_alpha,
+            random_state=random_state,
+            verbosity=0,
+        )
+
+    def make_regressor(self, **hparams: Any) -> Any:
+        try:
+            import xgboost as xgb  # type: ignore
+        except ImportError as exc:
+            raise ImportError(
+                "xgboost is required for XGBoostGBTBackend. "
+                "Install it with: pip install xgboost") from exc
+        kwargs = self._xgb_common_kwargs(hparams, hparams.get('random_state', 42))
+        return xgb.XGBRegressor(
+            **kwargs,
+            objective='reg:squarederror',
+            eval_metric='rmse',
+        )
+
+    def make_classifier(self, **hparams: Any) -> Any:
+        try:
+            import xgboost as xgb  # type: ignore
+        except ImportError as exc:
+            raise ImportError(
+                "xgboost is required for XGBoostGBTBackend. "
+                "Install it with: pip install xgboost") from exc
+        kwargs = self._xgb_common_kwargs(hparams, hparams.get('random_state', 42))
+        return xgb.XGBClassifier(
+            **kwargs,
+            objective='binary:logistic',
+            eval_metric='logloss',
+        )
+
+    def is_classifier(self, model: Any) -> bool:
+        return model.__class__.__name__ == "XGBClassifier"
+
+    def suggest_hparams(self, trial: Any) -> dict:
+        # Store XGBoost-specific params on self so make_regressor/make_classifier
+        # pick them up during the trial's fit call.
+        self.min_child_weight = trial.suggest_int("min_child_weight", 1, 10)
+        self.gamma = trial.suggest_float("gamma", 0.0, 5.0)
+        self.colsample_bytree = trial.suggest_float("colsample_bytree", 0.5, 1.0)
+        self.colsample_bylevel = trial.suggest_float("colsample_bylevel", 0.5, 1.0)
+        self.reg_lambda = trial.suggest_float("reg_lambda", 1e-3, 10.0, log=True)
+        self.reg_alpha = trial.suggest_float("reg_alpha", 0.0, 1.0)
+        # Return only the GBTRegressor-compatible subset (overlapping params).
+        return {
+            'learning_rate': trial.suggest_float("learning_rate", 0.001, 0.2),
+            'n_estimators': trial.suggest_int("n_estimators", 10, 1000),
+            'max_depth': trial.suggest_int("max_depth", 3, 20),
+            'subsample': trial.suggest_float("subsample", 0.5, 1.0),
+        }
+
+    def apply_best_params(self, best_params: dict) -> None:
+        for attr in (
+            'learning_rate', 'n_estimators', 'max_depth', 'subsample',
+            'min_child_weight', 'gamma', 'colsample_bytree', 'colsample_bylevel',
+            'reg_lambda', 'reg_alpha',
+        ):
+            if attr in best_params:
+                setattr(self, attr, best_params[attr])
+
+    def build_regressor_args(self, best_params: dict) -> dict:
+        overlapping = ('learning_rate', 'n_estimators', 'max_depth', 'subsample')
+        return {k: best_params[k] for k in overlapping if k in best_params}
+
+
+class GBTRegressor:
 
     random_state = 42
 
@@ -108,7 +274,8 @@ class GBTRegressor(GradientBoostingRegressor):
             precompute_target_matrices: bool = False,
             hpo_optimization: bool = False,
             hpo_optimization_limit: int | None = None,
-            progress: ProgressManager | None = None):
+            progress: ProgressManager | None = None,
+            backend: "GBTBackend | None" = None):
         """
         Initialize the gradient boosting regressor wrapper.
 
@@ -180,6 +347,7 @@ class GBTRegressor(GradientBoostingRegressor):
         self.hpo_optimization = hpo_optimization
         self.hpo_optimization_limit = hpo_optimization_limit
         self.progress = progress
+        self.backend = backend if backend is not None else SklearnGBTBackend()
         self.regressor = None
         self._estimator_name = 'gbt'
         self._estimator_class = GradientBoostingRegressor
@@ -262,14 +430,14 @@ class GBTRegressor(GradientBoostingRegressor):
 
         self._setup_feature_columns(X_original)
 
-        model_class_by_target = {}
+        use_classifier_by_target = {}
         loss_by_target = {}
         for target_name in self.feature_names:
             if self.feature_types[target_name] in {'categorical', 'binary'}:
-                model_class_by_target[target_name] = GradientBoostingClassifier
+                use_classifier_by_target[target_name] = True
                 loss_by_target[target_name] = 'log_loss'
             else:
-                model_class_by_target[target_name] = GradientBoostingRegressor
+                use_classifier_by_target[target_name] = False
                 loss_by_target[target_name] = 'squared_error'
 
         # Who is calling me?
@@ -304,8 +472,8 @@ class GBTRegressor(GradientBoostingRegressor):
                 for target in self.feature_names
             }
 
-        def _fit_target(target_name: str, loss_value: str, gbt_model):
-            model = gbt_model(
+        def _fit_target(target_name: str, loss_value: str, use_cls: bool):
+            hparams = dict(
                 loss=loss_value,
                 learning_rate=self.learning_rate,
                 n_estimators=self.n_estimators,
@@ -326,8 +494,10 @@ class GBTRegressor(GradientBoostingRegressor):
                 validation_fraction=self.validation_fraction,
                 n_iter_no_change=self.n_iter_no_change,
                 tol=self.tol,
-                ccp_alpha=self.ccp_alpha
+                ccp_alpha=self.ccp_alpha,
             )
+            model = (self.backend.make_classifier(**hparams)
+                     if use_cls else self.backend.make_regressor(**hparams))
             if X_by_target is not None:
                 X_target = X_by_target[target_name]
             else:
@@ -347,7 +517,7 @@ class GBTRegressor(GradientBoostingRegressor):
                         _fit_target,
                         name,
                         loss_by_target[name],
-                        model_class_by_target[name],
+                        use_classifier_by_target[name],
                     )
                     for name in self.feature_names
                 ]
@@ -368,7 +538,7 @@ class GBTRegressor(GradientBoostingRegressor):
                 target_name, model = _fit_target(
                     target_name,
                     loss_by_target[target_name],
-                    model_class_by_target[target_name],
+                    use_classifier_by_target[target_name],
                 )
                 self.regressor[target_name] = model
                 pbar.update_subtask(pbar_name, target_idx+1) if pbar else None
@@ -509,7 +679,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     prog_bar=True,
                     verbose=False,
                     precompute_target_matrices: bool = False,
-                    enable_pruning: bool = False):
+                    enable_pruning: bool = False,
+                    backend=None):
                 """
                 Initialize the Optuna objective.
 
@@ -534,6 +705,7 @@ class GBTRegressor(GradientBoostingRegressor):
                 self.verbose = verbose
                 self.precompute_target_matrices = precompute_target_matrices
                 self.enable_pruning = enable_pruning
+                self.backend = backend if backend is not None else SklearnGBTBackend()
                 self._feature_cols_by_target = {
                     target: [
                         col for col in train_data.columns if col != target
@@ -559,44 +731,35 @@ class GBTRegressor(GradientBoostingRegressor):
                 """
                 This method is called by Optuna to evaluate the objective function.
                 """
-                # Define the model hyperparameters
                 self.n_iter_no_change = 5
                 self.tol = 0.0001
 
-                # Define the hyperparameters to optimize
-                self.learning_rate = trial.suggest_float(
-                    "learning_rate", 0.001, 0.2)
-                self.n_estimators = trial.suggest_int("n_estimators", 10, 1000)
-                self.subsample = trial.suggest_float("subsample", 0.1, 1.0)
-                self.min_samples_split = trial.suggest_int(
-                    "min_samples_split", 2, 10)
-                self.min_samples_leaf = trial.suggest_int(
-                    "min_samples_leaf", 1, 10)
-                self.min_weight_fraction_leaf = trial.suggest_float(
-                    "min_weight_fraction_leaf", 0.0, 0.5)
-                self.max_depth = trial.suggest_int("max_depth", 3, 20)
-                self.max_leaf_nodes = trial.suggest_int(
-                    "max_leaf_nodes", 10, 1000)
-                self.min_impurity_decrease = trial.suggest_float(
-                    "min_impurity_decrease", 0.0, 0.5)
+                # Delegate hyperparameter suggestions to the backend so different
+                # backends (sklearn vs XGBoost) can expose their own search spaces.
+                # Returns only the GBTRegressor-compatible subset of params.
+                gbt_hparams = self.backend.suggest_hparams(trial)
+                for k, v in gbt_hparams.items():
+                    setattr(self, k, v)
 
                 self.models = GBTRegressor(
-                    learning_rate=self.learning_rate,
-                    n_estimators=self.n_estimators,
-                    subsample=self.subsample,
-                    min_samples_split=self.min_samples_split,
-                    min_samples_leaf=self.min_samples_leaf,
-                    min_weight_fraction_leaf=self.min_weight_fraction_leaf,
-                    max_depth=self.max_depth,
-                    min_impurity_decrease=self.min_impurity_decrease,
+                    learning_rate=getattr(self, 'learning_rate', 0.1),
+                    n_estimators=getattr(self, 'n_estimators', 100),
+                    subsample=getattr(self, 'subsample', 1.0),
+                    min_samples_split=getattr(self, 'min_samples_split', 2),
+                    min_samples_leaf=getattr(self, 'min_samples_leaf', 1),
+                    min_weight_fraction_leaf=getattr(
+                        self, 'min_weight_fraction_leaf', 0.0),
+                    max_depth=getattr(self, 'max_depth', 3),
+                    min_impurity_decrease=getattr(self, 'min_impurity_decrease', 0.0),
                     random_state=self.random_state,
                     verbose=False,
-                    max_leaf_nodes=self.max_leaf_nodes,
+                    max_leaf_nodes=getattr(self, 'max_leaf_nodes', None),
                     n_iter_no_change=self.n_iter_no_change,
                     tol=self.tol,
                     prog_bar=True & (not self.verbose) & (self.prog_bar),
                     silent=True,
-                    precompute_target_matrices=self.precompute_target_matrices)
+                    precompute_target_matrices=self.precompute_target_matrices,
+                    backend=self.backend)
 
                 self.models.fit(self.train_data)
 
@@ -608,33 +771,20 @@ class GBTRegressor(GradientBoostingRegressor):
                 ):
                     model = self.models.regressor[target_name]
                     # For regressors, this is R2, for classifiers this is accuracy
-                    if model.__class__.__name__ == "GradientBoostingClassifier":
-                        # Get the F1 score of the model
-                        X_features = (
-                            self._X_test_by_target[target_name]
-                            if self._X_test_by_target is not None
-                            else X_test.loc[
-                                :, self._feature_cols_by_target[target_name]
-                            ]
-                        )
+                    X_features = (
+                        self._X_test_by_target[target_name]
+                        if self._X_test_by_target is not None
+                        else X_test.loc[
+                            :, self._feature_cols_by_target[target_name]
+                        ]
+                    )
+                    if self.backend.is_classifier(model):
                         goodness_of_fit = f1_score(
                             X_test[target_name],
                             model.predict(X_features))
-                    elif model.__class__.__name__ == "GradientBoostingRegressor":
-                        X_features = (
-                            self._X_test_by_target[target_name]
-                            if self._X_test_by_target is not None
-                            else X_test.loc[
-                                :, self._feature_cols_by_target[target_name]
-                            ]
-                        )
+                    else:
                         goodness_of_fit = model.score(
                             X_features, X_test[target_name])
-                    else:
-                        raise ValueError(
-                            f"Model {model.__class__.__name__} is not supported."
-                            f"Only GradientBoostingClassifier and"
-                            f"GradientBoostingRegressor are supported.")
 
                     # Append 1.0 if R2 is negative, or 1.0 - R2 otherwise since we're
                     # in the minimization mode of the error function.
@@ -688,7 +838,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     hpo_train, hpo_test, prog_bar=self.prog_bar,
                     verbose=self.verbose,
                     precompute_target_matrices=self.precompute_target_matrices,
-                    enable_pruning=use_optimization),
+                    enable_pruning=use_optimization,
+                    backend=self.backend),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (
@@ -699,10 +850,8 @@ class GBTRegressor(GradientBoostingRegressor):
                 raise
             if fallback_storage == resolved_storage:
                 raise
-            if self.verbose and not self.silent:
-                print(
-                    "Optuna storage is read-only; retrying with "
-                    f"storage={fallback_storage}")
+            log.warning("Optuna storage is read-only; retrying with storage=%s",
+                        fallback_storage)
             study = optuna.create_study(
                 direction='minimize', study_name=study_name,
                 storage=fallback_storage, load_if_exists=load_if_exists,
@@ -712,7 +861,8 @@ class GBTRegressor(GradientBoostingRegressor):
                     hpo_train, hpo_test, prog_bar=self.prog_bar,
                     verbose=self.verbose,
                     precompute_target_matrices=self.precompute_target_matrices,
-                    enable_pruning=use_optimization),
+                    enable_pruning=use_optimization,
+                    backend=self.backend),
                 n_trials=n_trials,
                 gc_after_trial=True,
                 show_progress_bar=(self.optuna_prog_bar & (
@@ -727,23 +877,13 @@ class GBTRegressor(GradientBoostingRegressor):
         self.best_params = best_trials[0].params
         self.min_tunned_loss = best_trials[0].values[0]
 
-        if self.verbose and not self.silent:
-            print(
-                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("Best params (min loss:%.6f):", self.min_tunned_loss)
             for k, v in self.best_params.items():
-                print(f"            > {k:<15s}: {v}")
+                log.debug("  > %-15s: %s", k, v)
 
-        regressor_args = {
-            'learning_rate': self.best_params['learning_rate'],
-            'n_estimators': self.best_params['n_estimators'],
-            'subsample': self.best_params['subsample'],
-            'min_samples_split': self.best_params['min_samples_split'],
-            'min_samples_leaf': self.best_params['min_samples_leaf'],
-            'min_weight_fraction_leaf': self.best_params['min_weight_fraction_leaf'],
-            'max_depth': self.best_params['max_depth'],
-            'max_leaf_nodes': self.best_params['max_leaf_nodes'],
-            'min_impurity_decrease': self.best_params['min_impurity_decrease']
-        }
+        self.backend.apply_best_params(self.best_params)
+        regressor_args = self.backend.build_regressor_args(self.best_params)
 
         return regressor_args
 
@@ -773,11 +913,10 @@ class GBTRegressor(GradientBoostingRegressor):
             hpo_optimization=hpo_optimization,
             hpo_optimization_limit=hpo_optimization_limit)
 
-        if self.verbose and not self.silent:
-            print(
-                f"          > Best params (min loss:{self.min_tunned_loss:.6f}):")
+        if log.isEnabledFor(logging.DEBUG):
+            log.debug("Best params (min loss:%.6f):", self.min_tunned_loss)
             for k, v in regressor_args.items():
-                print(f"            > {k:<15s}: {v}")
+                log.debug("  > %-15s: %s", k, v)
 
         # Set the object parameters to the best parameters found.
         for k, v in regressor_args.items():

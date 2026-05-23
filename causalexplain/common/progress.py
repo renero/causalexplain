@@ -116,6 +116,19 @@ class ProgressManager:
             "percent": fraction * 100.0,
         }
 
+    def __getstate__(self) -> dict:
+        # threading.Lock and ProgBar (which holds an RLock) cannot be pickled.
+        # Worker processes don't render progress, so drop both and recreate the
+        # lock on the other side; _render_progress already guards pbar is None.
+        state = self.__dict__.copy()
+        del state['_lock']
+        state['pbar'] = None
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        self.__dict__.update(state)
+        self._lock = threading.Lock()
+
     def _render_progress(self) -> None:
         if self.pbar is None:
             return

@@ -5,6 +5,7 @@
 # Author: Jesús Renero
 #
 import itertools
+import logging
 from typing import List, Optional, Union
 import networkx as nx
 try:
@@ -15,6 +16,8 @@ try:
     from networkx.algorithms.d_separation import is_d_separator as nx_is_d_separator
 except Exception:  # pragma: no cover - fallback for older NX layouts
     nx_is_d_separator = None
+
+log = logging.getLogger(__name__)
 
 
 def _d_separated(graph, x, y, z):
@@ -152,11 +155,11 @@ def get_backdoor_paths(dag: nx.DiGraph, x: str, y: str):
     # Check if x or y are not in the graph
     if x not in dag.nodes() or y not in dag.nodes():
         return []
-    
+
     # If x and y are the same node, return empty list
     if x == y:
         return []
-        
+
     undirected_graph = dag.to_undirected()
     # list all paths between 'x' and 'y'
     paths = (p for p in nx.all_simple_paths(
@@ -181,11 +184,11 @@ def get_paths(graph: nx.DiGraph, x: str, y: str):
     # Check if x or y are not in the graph
     if x not in graph.nodes() or y not in graph.nodes():
         return []
-    
+
     # If x and y are the same node, return empty list
     if x == y:
         return []
-        
+
     return list(nx.all_simple_paths(graph, source=x, target=y))
 
 
@@ -227,7 +230,7 @@ def get_sufficient_sets_for_pair(dag, x, y, verbose=False):
     y: str
         A node in the graph
     verbose: bool
-        If True, print additional information
+        Unused; kept for API compatibility.
 
     Returns:
     --------
@@ -235,22 +238,20 @@ def get_sufficient_sets_for_pair(dag, x, y, verbose=False):
         A list of sufficient sets for the pair of nodes (x, y)
     """
     backdoor_paths = get_backdoor_paths(dag, x, y)
-    if verbose:
-        if backdoor_paths:
-            print(f" Found {len(backdoor_paths)} backdoor paths")
-        else:
-            print(" No backdoor paths found")
+    if backdoor_paths:
+        log.debug(" Found %d backdoor paths", len(backdoor_paths))
+    else:
+        log.debug(" No backdoor paths found")
+
     sufficient_sets = []
     for path in backdoor_paths:
-        print(f"  Checking backdoor path: {path}") if verbose else None
+        log.debug("  Checking backdoor path: %s", path)
         # get all nodes in the path except the first and last
         sufficient_set = path[1:-1]
         # check that no node in sufficient_set is descendant of x
         descendants = nx.descendants(dag, x)
         if any([d in descendants for d in sufficient_set]):
-            if verbose:
-                print(
-                    f"Path {path} discarded because it contains a descendant of x")
+            log.debug("Path %s discarded because it contains a descendant of x", path)
             continue
 
         sufficient_sets.append(sufficient_set)
@@ -259,68 +260,50 @@ def get_sufficient_sets_for_pair(dag, x, y, verbose=False):
     # between x and y
     final_suff_set = []
     for sufficient_set in sufficient_sets:
-        if verbose:
-            print(
-                f"     ",
-                f"Checking that {sufficient_set} blocks all backdoor paths "
-                f"between {x} and {y}")
+        log.debug("     Checking that %s blocks all backdoor paths between %s and %s",
+                  sufficient_set, x, y)
         # Check if any of the nodes in the sufficient set is in a collider in the path
         colliders = find_colliders_in_path(dag, [x] + sufficient_set + [y])
         # If any of the nodes in the sufficient set is a collider, then continue
         if len(colliders) > 0:
-            if verbose:
-                print(
-                    f"        {sufficient_set} contains a collider: {colliders}")
+            log.debug("        %s contains a collider: %s", sufficient_set, colliders)
             continue
         all_conditions = True
         for path in backdoor_paths:
-            if verbose:
-                print(f"      Checking path {path}")
+            log.debug("      Checking path %s", path)
             # Check that this path can be blocked by any node in the sufficient set
             # The path is blocked if any of the nodes in the sufficient set
             # is in the path
             colliders = find_colliders_in_path(dag, path)
-            if verbose:
-                if colliders:
-                    print(f"        ! Colliders in path: {colliders}")
-                else:
-                    print("        - No colliders in path")
+            if colliders:
+                log.debug("        ! Colliders in path: %s", colliders)
+            else:
+                log.debug("        - No colliders in path")
             # Find what nodes from the sufficient set are in the path
             nodes_in_path = set(sufficient_set).intersection(set(path))
-            if verbose:
-                if nodes_in_path:
-                    print(
-                        f"        + Nodes from sufficient set in path: {nodes_in_path}")
-                else:
-                    print(f"        - No nodes from sufficient set in path")
+            if nodes_in_path:
+                log.debug("        + Nodes from sufficient set in path: %s", nodes_in_path)
+            else:
+                log.debug("        - No nodes from sufficient set in path")
             if len(nodes_in_path) > 0:
                 # Check that at least one of the nodes in the path is NOT a collider
                 if nodes_in_path.intersection(colliders) == set():
-                    if verbose:
-                        print(
-                            f"          Path {path} blocked by nodes in "
-                            f"{sufficient_set} ")
+                    log.debug("          Path %s blocked by nodes in %s", path, sufficient_set)
                 elif len(nodes_in_path) == len(colliders):
-                    if verbose:
-                        print(f"      ALL nodes in {sufficient_set} are colliders "
-                              f"in {path} \n"
-                              f"      => {nodes_in_path.intersection(colliders)} == "
-                              f"{colliders}")
+                    log.debug("      ALL nodes in %s are colliders in %s\n"
+                              "      => %s == %s",
+                              sufficient_set, path,
+                              nodes_in_path.intersection(colliders), colliders)
                     all_conditions = False
                 else:
-                    if verbose:
-                        print(f"      Some nodes in {sufficient_set} are NOT colliders "
-                              f"in {path} ")
+                    log.debug("      Some nodes in %s are NOT colliders in %s",
+                              sufficient_set, path)
             else:
-                if verbose:
-                    print(f"        No nodes in {sufficient_set} are in {path}, "
-                          f"so they do not block this path ")
+                log.debug("        No nodes in %s are in %s, so they do not block this path",
+                          sufficient_set, path)
                 all_conditions = False
         if all_conditions:
-            if verbose:
-                print(
-                    f"          {sufficient_set} blocks all backdoor paths "
-                    f"between x and y")
+            log.debug("          %s blocks all backdoor paths between x and y", sufficient_set)
             final_suff_set.append(sufficient_set)
 
     return final_suff_set
@@ -335,7 +318,7 @@ def get_sufficient_sets(dag, verbose=False):
     G: nx.DiGraph
         A directed graph
     verbose: bool
-        If True, print additional information
+        Unused; kept for API compatibility.
 
     Returns:
     --------
@@ -344,17 +327,16 @@ def get_sufficient_sets(dag, verbose=False):
     """
     suff_sets = SufficientSets()
     for x, y in itertools.combinations(dag.nodes(), 2):
-        if verbose:
-            print(f"Checking pair ({x}, {y})...", end="", sep="")
-        sufficient_set = get_sufficient_sets_for_pair(dag, x, y, verbose)
+        log.debug("Checking pair (%s, %s)...", x, y)
+        sufficient_set = get_sufficient_sets_for_pair(dag, x, y)
         if sufficient_set:
-            print(f"  Adding sufficient set: {sufficient_set}") if verbose else None
+            log.debug("  Adding sufficient set: %s", sufficient_set)
             suff_sets.add(sufficient_set)
 
     return suff_sets
 
 #
-# XXX: This is not used, and should be removed or replaced by the NX 
+# XXX: This is not used, and should be removed or replaced by the NX
 # implementation of d-separation or DoWhy implementation.
 #
 def get_conditional_independencies(dag, verbose=False):
@@ -367,7 +349,7 @@ def get_conditional_independencies(dag, verbose=False):
         The directed acyclic graph representing the causal relationships
         between the variables.
     verbose : bool, optional
-        If True, prints additional information about the computation.
+        Unused; kept for API compatibility.
 
     Returns:
     --------
@@ -382,13 +364,11 @@ def get_conditional_independencies(dag, verbose=False):
         if dag.has_edge(x, y) or dag.has_edge(y, x):
             continue
         if not _d_separated(dag, {x}, {y}, set()):
-            if verbose:
-                print(f"Pair ({x}, {y})")
+            log.debug("Pair (%s, %s)", x, y)
             paths = get_paths(dag, x, y)
             # Check if any of the paths contains a collider
             for path in paths:
-                if verbose:
-                    print("  Path:", path)
+                log.debug("  Path: %s", path)
                 colliders = find_colliders_in_path(dag, path)
                 if len(colliders) == 0:
                     blockers = set(path[1:-1])
@@ -399,32 +379,23 @@ def get_conditional_independencies(dag, verbose=False):
                         # without "x" and "y"
                         if blockers != set(dag.nodes()) - {x, y}:
                             cond_indeps.add(x, y, tuple(blockers))
-                            if verbose:
-                                print(f"    (no colliders on path {path})\n"
-                                      f"     {x} ⊥ {y} | {blockers}")
+                            log.debug("    (no colliders on path %s)\n     %s ⊥ %s | %s",
+                                      path, x, y, blockers)
                         else:
-                            if verbose:
-                                print(f"    The set of blockers is the entire graph. ")
+                            log.debug("    The set of blockers is the entire graph.")
                 else:
-                    if verbose:
-                        print(f"    Colliders in path: {colliders}")
+                    log.debug("    Colliders in path: %s", colliders)
                     for blocker in path[1:-1]:
-                        if verbose:
-                            print(f"    Blocking on {blocker}")
+                        log.debug("    Blocking on %s", blocker)
                         if blocker not in colliders:
                             cond_indeps.add(x, y, blocker)
-                            if verbose:
-                                print(f"       {x} ⊥ {y} | {blocker}")
+                            log.debug("       %s ⊥ %s | %s", x, y, blocker)
                         else:
-                            if verbose:
-                                print(
-                                    f"    Blocking on {blocker} is Collider: "
-                                    f"{colliders}")
+                            log.debug("    Blocking on %s is Collider: %s",
+                                      blocker, colliders)
         else:
             cond_indeps.add(x, y)
-            if verbose:
-                print(f"Pair ({x}, {y})\n"
-                      f"   {x} ⊥ {y} | ∅")
+            log.debug("Pair (%s, %s)\n   %s ⊥ %s | ∅", x, y, x, y)
 
     return cond_indeps
 
@@ -439,9 +410,9 @@ def custom_main():
             ('x2', 'x4')
         ]
     )
-    ss = get_sufficient_sets(G, verbose=True)
+    ss = get_sufficient_sets(G)
     print(ss)
-    cond_independencies = get_conditional_independencies(G, verbose=True)
+    cond_independencies = get_conditional_independencies(G)
     print(cond_independencies)
 
 
@@ -450,10 +421,10 @@ def main():
     G.add_edges_from([('z1', 'x'), ('z1', 'z3'), ('z3', 'x'),
                      ('z3', 'y'), ('x', 'y'), ('z2', 'z3'), ('z2', 'y')])
 
-    ss = get_sufficient_sets(G, verbose=True)
+    ss = get_sufficient_sets(G)
     print(ss)
 
-    cond_independencies = get_conditional_independencies(G, verbose=False)
+    cond_independencies = get_conditional_independencies(G)
     print(cond_independencies)
 
 

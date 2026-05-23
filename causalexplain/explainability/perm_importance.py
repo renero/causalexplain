@@ -33,6 +33,7 @@ silent: bool
 # pylint: disable=R0914:too-many-locals, R0915:too-many-statements
 # pylint: disable=W0106:expression-not-assigned, R1702:too-many-branches
 
+import logging
 from typing import List, Tuple
 
 import networkx as nx
@@ -49,6 +50,8 @@ from causalexplain.common import utils
 from causalexplain.common.plot import subplots
 from causalexplain.independence.feature_selection import select_features
 from causalexplain.models._models import MLPModel
+
+log = logging.getLogger(__name__)
 
 
 class PermutationImportance(BaseEstimator):
@@ -150,10 +153,10 @@ class PermutationImportance(BaseEstimator):
         Fit the model to compute the base loss for each feature for pyTorch models.
         """
         pbar = ProgBar().start_subtask("Perm.Imp_fit", len(self.feature_names))
-        print("Computing base loss (PyTorch)") if self.verbose else None
+        log.debug("Computing base loss (PyTorch)")
 
         for feature_idx, feature in enumerate(self.feature_names):
-            print(f"Feature: {feature} ", end="") if self.verbose else None
+            log.debug("Feature: %s", feature)
 
             regressor = self.regressors[feature]
             model = regressor.model.to(self.device).float()
@@ -163,9 +166,9 @@ class PermutationImportance(BaseEstimator):
             self.base_loss[feature] = avg_loss
             self.base_std[feature] = std_loss
 
-            if (self.verbose) and (not self.silent):
-                print(f"Base loss: {self.base_loss[feature]:.6f} ", end="")
-                print(f"+/- {self.base_std[feature]:.6f}")
+            if not self.silent:
+                log.debug("Base loss: %.6f +/- %.6f",
+                          self.base_loss[feature], self.base_std[feature])
 
             pbar.update_subtask("Perm.Imp_fit", feature_idx + 1)
 
@@ -222,8 +225,7 @@ class PermutationImportance(BaseEstimator):
         G_pi: nx.DiGraph
             The DAG representing the permutation importance for the features.
         """
-        if self.verbose:
-            print("-----\npermutation_importance.predict()")
+        log.debug("permutation_importance.predict()")
 
         self.prior = prior
         first_key = self.feature_names[0]
@@ -239,7 +241,7 @@ class PermutationImportance(BaseEstimator):
         under the PyTorch implementation of the algorithm.
         """
         pbar = ProgBar().start_subtask("Perm.Imp_predict", len(self.feature_names))
-        print("Computing permutation loss (PyTorch)") if self.verbose else None
+        log.debug("Computing permutation loss (PyTorch)")
 
         self.all_pi = []
         num_vars = len(self.feature_names)
@@ -250,9 +252,7 @@ class PermutationImportance(BaseEstimator):
                 f for f in self.feature_names if f != target]
             candidate_causes = utils.valid_candidates_from_prior(
                 self.feature_names, target, self.prior)
-            if self.verbose:
-                print(
-                    f"Target: {target} (base loss: {self.base_loss[target]:.6f})")
+            log.debug("Target: %s (base loss: %.6f)", target, self.base_loss[target])
 
             # Create the dictionary to store the permutation importance, same way
             # as the sklearn implementation
@@ -286,12 +286,11 @@ class PermutationImportance(BaseEstimator):
         Predict the permutation importance for each feature, for each target,
         under the PyTorch implementation of the algorithm.
         """
-        print("Computing permutation loss (SKLearn)") if self.verbose else None
+        log.debug("Computing permutation loss (SKLearn)")
 
         self.connections = {}
         for target in self.feature_names:
-            if self.verbose:
-                print(f"Target: {target} ")
+            log.debug("Target: %s", target)
             candidate_causes = [f for f in self.feature_names if f != target]
             self.connections[target] = select_features(
                 values=self.pi[target]['importances_mean'],
@@ -344,8 +343,7 @@ class PermutationImportance(BaseEstimator):
         importances_std = []
         for shuffle_col in range(num_vars-1):
             feature = regressor.columns[shuffle_col]
-            print(
-                f"  ↳ Feature: {feature} ", end="") if self.verbose else None
+            log.debug("  ↳ Feature: %s", feature)
 
             _, _, losses = self._compute_loss_shuffling_column(
                 model, regressor.train_loader, shuffle_col=shuffle_col)
@@ -362,10 +360,8 @@ class PermutationImportance(BaseEstimator):
                 importances_std.append(
                     np.abs(np.std(losses) - self.base_loss[target]))
 
-            if self.verbose:
-                print(
-                    f"Perm.imp.: {importances_mean[-1]:.6f} "
-                    f"+/- {importances_std[-1]:.6f}")
+            log.debug("Perm.imp.: %.6f +/- %.6f",
+                      importances_mean[-1], importances_std[-1])
 
         return np.array(importances_mean), np.array(importances_std)
 
@@ -414,8 +410,7 @@ class PermutationImportance(BaseEstimator):
         """
         mse = np.array([])
         num_batches = 0
-        print(
-            f"(Repeats: {self.n_repeats}) ", end="") if self.verbose else None
+        log.debug("(Repeats: %d)", self.n_repeats)
         for _ in range(self.n_repeats):
             loss = []
             # Loop over all batches in train loader
@@ -547,7 +542,7 @@ if __name__ == "__main__":
     scaler = StandardScaler()
     data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
     rex = utils.load_experiment(f"{experiment_name}_gbt", output_path)
-    print(f"Loaded experiment {experiment_name}")
+    log.info("Loaded experiment %s", experiment_name)
 
     #  Run the permutation importance algorithm
     pi = PermutationImportance(
